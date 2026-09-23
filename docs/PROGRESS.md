@@ -276,3 +276,89 @@ Primeira execução do CI: Linux aprovado; macOS falhou porque o teste do Keycha
 verdade num Mac e o backend não existe (AT-006.3). O teste passou a ser falha esperada estrita
 no macOS. Segunda execução: `core-linux` e `core-macos` aprovados
 (macOS: 331 passed, 1 skipped, 1 xfailed).
+
+---
+
+## Continuação após a revisão do commit 21422f3 — 2026-09-23
+
+Branch `impl/alpha-continuation` (sem merge). Base conferida: HEAD era o próprio 21422f3, sem diff
+intermediário. Baseline: Windows 11 x86_64, Python 3.14.2, suíte 331 passed / 2 skipped
+(unit 87, contract 87, integration 96+1 skip, security 48+1 skip, recovery 13).
+
+### Etapa 0 — achados reproduzidos antes de corrigir
+
+| Achado | Reprodução no código da revisão | Correção |
+| --- | --- | --- |
+| R-03 | Manifesto com `timeout_s=1`; `submit` só retornou após 3,0 s, quando o teste liberou o adaptador | 41f9a1c + `tests/security/test_broker_deadlines.py` |
+| R-04 | Adaptador lançou `ConnectionResetError`: exceção vazou e a reserva ficou RESERVED sem registro da tentativa | 5047b00 + `tests/integration/test_inference_attempts.py` |
+| R-02 | `test_real_provider_intelligence_check` chamava `pytest.skip` incondicional | ea79619: teste real opt-in; ausência de pré-requisito falha como BLOQUEADO |
+| CI | Comentário do workflow dizia que não havia remoto | corrigido em 41f9a1c |
+
+### Etapa 1 — robustez
+
+**1A (R-03).** O broker aplica o prazo do manifesto. O modo thread serve adaptadores confiáveis e
+cooperativos: o evento de cancelamento dispara e, depois de uma tolerância, o resultado tardio é
+registrado. O modo processo serve código não cooperativo: o processo é encerrado no prazo, não
+recebe credenciais e não é sandbox de segurança. Escrita interrompida vira UNKNOWN; só leitura pura
+vira falha repetível. `request_cancel` alcança a operação em voo sem tocar no banco.
+Testes: adaptador que nunca retorna, timeout antes do efeito, resposta perdida após o efeito,
+cancelamento em voo, conclusão tardia (inclusive após cancelar a tarefa), worker obsoleto, reinício
+sem duplicação, processo morto antes e depois de efeito possível.
+
+**1B (R-04).** Tentativa de inferência registrada com a reserva antes do envio (migração 0005).
+Estados RELEASED, SETTLED, ESTIMATED, UNKNOWN e RESOLVED. Reconciliação exige evidência e autoridade.
+Janela de retenção liquida de forma conservadora e auditável. Não há liberação cega em `finally`.
+Testes cobrem todos os casos listados pela revisão, inclusive concorrência e reinício.
+
+### Etapa 2 — adaptador real de modelo
+
+`runtime/models/openai_responses.py` segue a documentação oficial consultada em 2026-09-23. O
+formato foi conferido para `POST /v1/responses`, `text.format` json_schema estrito, recusa como
+conteúdo `refusal`, SSE `response.output_text.delta` e `response.completed`, e `x-request-id`. Os
+testes usam um servidor HTTP local controlado, sem rede e sem custo.
+`scripts/intelligence_check.py` executa o "Testar inteligência" do proprietário com teto explícito.
+
+**NÃO EXECUTADO:** chamada real. Falta conta de API, teto e consentimento (D-03). **Custos
+incorridos: zero.**
+
+### Etapa 3 — tarefa completa no núcleo
+
+- Artifact Manager do host (6f8c33a): importação e exportação explícitas, conteúdo contra extensão,
+  arquivos compactados inspecionados, versões, detecção de adulteração, exportação que nunca sobrescreve.
+- Verificador (6f8c33a): uma tarefa só conclui com evidência objetiva.
+- Laço do agente (bee1ff9): plano persistido, decisão em JSON estrito, memória e saídas não
+  confiáveis no contexto, despacho pelo broker com lease, limites, reparo e entrega verificada.
+  Ferramentas internas de produção: `artifact.read_text`, `artifact.write_text`, `memory.search`.
+- IPC (f4b6a48): sessões por token, ator vindo da sessão, 17 métodos, "pare" muda estado, resposta
+  só cita tarefa existente. O CI do macOS achou o limite de 104 bytes do caminho do socket (corrigido).
+
+**Evidência do fluxo** (`tests/integration/test_agent_loop.py`, com modelo roteirizado identificado
+como falso): o proprietário importa duas propostas sintéticas e confirma a preferência "resumo na
+primeira linha". O agente lê as duas propostas pelo broker e escreve o relatório, que começa com o
+resumo porque a memória chegou ao contexto. O verificador confere hash, abertura, conteúdo, fontes e
+ausência de placeholders, e a tarefa fica COMPLETED. Um "terminei" sem arquivo termina BLOCKED
+(NO_PROGRESS). "Pare" no meio encerra o laço. Um documento com instrução injetada não consegue
+enviar e-mail: a ação é negada com `TASK_FORBIDS_EXTERNAL_WRITES`.
+
+**Esse fluxo não prova qualidade de um modelo real, pesquisa na web nem autonomia real.**
+
+### Evidência de testes
+
+```text
+local (Windows):  413 passed, 4 skipped
+CI core-linux:    415 passed, 2 skipped
+CI core-macos:    415 passed, 1 skipped, 1 xfailed   (xfail = Keychain backend ainda inexistente)
+ruff, mypy --strict (5 pacotes), varredura de segredos: PASS
+```
+
+### Riscos remanescentes
+
+- Nenhum modelo real foi chamado; comportamento e custo reais desconhecidos.
+- O modo thread não mata adaptador que ignore o cancelamento; só adaptadores confiáveis podem usá-lo.
+- O modo processo não isola o disco; código não confiável exige a VM (D-01).
+- Não há app, Supervisor, Keychain de produção, VM, browser, voz nem canal remoto.
+
+### Próxima etapa
+
+Etapa 4 no runner macOS: pacote Swift com cliente IPC e Keychain, compilado e testado no CI, e teste
+entre linguagens contra o núcleo Python. A experiência interativa e a VM continuam exigindo Mac real (D-01).
