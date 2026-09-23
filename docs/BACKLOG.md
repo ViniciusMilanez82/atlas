@@ -30,7 +30,7 @@ Estados: `FEITO` (testes executados e aprovados), `EM CURSO`, `A FAZER`, `BLOQUE
 | AT-005.5 | Backup consistente + manifesto + restore com verificação e revogação de autorizações | 005.2 | any | hash/versão conferidos; aprovações revogadas | FEITO |
 | AT-006.1 | `CredentialRef`, interface `VaultBackend`, uso escopado por finalidade/destino | 005.2 | any | ferramenta genérica não obtém segredo | FEITO |
 | AT-006.2 | Filtro de redação para logs e eventos | 006.1 | any | segredo nunca aparece em log | FEITO |
-| AT-006.3 | Backend Keychain via Supervisor Swift | 006.1 | mac | teste com Keychain real | BLOQUEADO (D-01) |
+| AT-006.3 | Backend Keychain via Supervisor Swift | 006.1 | mac | teste com Keychain real | FEITO no runner macOS; ciclo de vida do Supervisor no Mac do proprietário: D-01 |
 | AT-005.6 | Criptografia do banco (SQLCipher ou equivalente) | 005.5 | mac | restore cifrado; chave no Keychain | BLOQUEADO (D-01, D-09) |
 
 ## M3 — Autoridade
@@ -85,7 +85,7 @@ Estados: `FEITO` (testes executados e aprovados), `EM CURSO`, `A FAZER`, `BLOQUE
 | E3c | Laço do agente + ferramentas internas | FEITO com modelo falso (bee1ff9) |
 | E3d | IPC autenticado + serviço atlas-core | FEITO (f4b6a48, correção de caminho no macOS) |
 | E4a | Swift AtlasKit: framing, cliente IPC, KeychainStore, teste Swift<->Python | FEITO no runner macOS (b7e95af) |
-| E4b | Ponte Keychain do Supervisor para o Vault Python (retira o xfail) | A FAZER (testável no runner macOS) |
+| E4b | Ponte Keychain do Supervisor para o Vault Python (retira o xfail) | FEITO e testado no runner macOS |
 | E4c | App SwiftUI, Supervisor (SMAppService), empacotamento do núcleo | A FAZER; validação interativa BLOQUEADA (D-01) |
 | E4d | Criptografia do banco e backups | A FAZER; escolha de biblioteca D-09 |
 | E4e | Workspace Linux ARM64 (Virtualization.framework), guest agent, rede mediada | BLOQUEADO (D-01: runner de CI não substitui Mac com virtualização) |

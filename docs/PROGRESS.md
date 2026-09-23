@@ -381,3 +381,28 @@ test_swift_ipc_probe: o cliente Swift compilado criou uma tarefa no núcleo Pyth
 
 **O que isso NÃO prova:** app interativo, Supervisor, retomada no Mac do proprietário, VM, rede
 mediada. O runner não substitui o Mac de desenvolvimento (D-01).
+
+### Etapa 4 — ponte Keychain → Vault (AT-006.3) — 2026-09-23
+
+`atlas-keychain-agent` (Swift) é o serviço de Keychain do Supervisor:
+- diretório 0700, socket 0600 e UID do par verificado com `getpeereid`;
+- token de sessão lido de arquivo 0600;
+- operações put, get e delete num serviço de Keychain dedicado.
+
+`KeychainAgentBackend` (Python) implementa o `VaultBackend`. `platform_backend()` passa a usá-lo no
+macOS quando o Supervisor configura `ATLAS_KEYCHAIN_SOCKET` e `ATLAS_KEYCHAIN_TOKEN_FILE`.
+
+Evidência (CI macos-15): `test_keychain_backend_round_trip` executado de verdade.
+- O banco guarda só a referência.
+- O segredo volta do Keychain no uso escopado.
+- A revogação apaga o item do Keychain.
+- Um token errado é recusado.
+
+O `xfail` estrito foi removido porque backend e teste agora são reais.
+
+```text
+CI core-macos: 418 passed, 1 skipped (chamada real opt-in, D-03)
+CI core-linux: 416 passed, 3 skipped (testes de macOS não executados)
+```
+
+**Ainda não prova:** o Supervisor iniciando o serviço via launchd/SMAppService no Mac do proprietário (D-01).

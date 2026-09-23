@@ -52,7 +52,7 @@ Todo conteúdo que cruza 3, 4, 5 ou 6 é **dado não confiável**, nunca instru�
 | T-15 | Restauração de backup reativa autorizações antigas | Restore revoga aprovações APPROVED/RESERVED e mandatos | `tests/recovery/test_backup_restore.py` |
 | T-16 | Mudança de dinheiro por arredondamento de float | Floats proibidos no JSON canônico e em dinheiro | `tests/unit/test_shared_primitives.py` |
 | T-17 | Segredo commitado no repositório | `scripts/scan_secrets.py` no check e em teste | `tests/contract/test_repository_hygiene.py` |
-| T-18 | Host de desenvolvimento Windows sem Keychain | Nenhum segredo real é usado; backend de produção do Vault é só o Keychain (macOS) | ADR-009 |
+| T-18 | Host de desenvolvimento Windows sem Keychain | Nenhum segredo real é usado; backend de produção do Vault é só o Keychain (macOS), via serviço Swift com socket 0600, UID do par e token | ADR-009; `test_keychain_backend_round_trip` (CI macOS) |
 
 ## 5. Regras invariantes (auditáveis em código)
 
