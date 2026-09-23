@@ -362,3 +362,22 @@ ruff, mypy --strict (5 pacotes), varredura de segredos: PASS
 
 Etapa 4 no runner macOS: pacote Swift com cliente IPC e Keychain, compilado e testado no CI, e teste
 entre linguagens contra o núcleo Python. A experiência interativa e a VM continuam exigindo Mac real (D-01).
+
+### Etapa 4 (parcial) — Swift no runner macOS — commit b7e95af
+
+`platform/macos/AtlasKit` (SwiftPM) com o mesmo enquadramento do núcleo Python, cliente IPC por
+Unix socket com handshake de sessão, `KeychainStore` (senha genérica, somente neste dispositivo,
+acessível só com o Mac desbloqueado) e a ferramenta `atlas-ipc-probe`.
+
+Evidência no CI (run 35865863494, macos-15, Apple Swift 6.1.2):
+
+```text
+swift test: Executed 6 tests, with 0 failures   (framing, limites, caminho do socket,
+            Keychain real: gravar, ler, atualizar, excluir, isolamento por serviço)
+pytest macOS: 416 passed, 1 skipped (chamada real opt-in, D-03), 1 xfailed (ponte Keychain->Vault)
+test_swift_ipc_probe: o cliente Swift compilado criou uma tarefa no núcleo Python pelo socket;
+            um campo "actor" forjado foi rejeitado com INVALID_INPUT
+```
+
+**O que isso NÃO prova:** app interativo, Supervisor, retomada no Mac do proprietário, VM, rede
+mediada. O runner não substitui o Mac de desenvolvimento (D-01).
