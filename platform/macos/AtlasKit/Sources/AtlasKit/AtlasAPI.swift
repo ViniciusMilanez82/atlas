@@ -6,6 +6,11 @@ public struct AtlasAPIError: Error, CustomStringConvertible {
     public let code: String
     public let message: String
     public var description: String { "\(code): \(message)" }
+
+    public init(code: String, message: String) {
+        self.code = code
+        self.message = message
+    }
 }
 
 public final class AtlasAPI {
