@@ -6,7 +6,6 @@ import io
 import json
 import logging
 import pickle
-import sys
 
 import pytest
 
@@ -177,13 +176,64 @@ def test_used_secret_is_redacted_from_logs(
 
 
 @pytest.mark.macos
-@pytest.mark.xfail(
-    sys.platform == "darwin",
-    raises=VaultUnavailable,
-    strict=True,
-    reason="AT-006.3 pending: Keychain backend lives in the Swift Supervisor, not built yet",
-)
-def test_keychain_backend_round_trip() -> None:
-    """NÃO EXECUTADO fora do macOS. Requer o backend Keychain do Supervisor Swift (AT-006.3, D-01)."""
-    assert sys.platform == "darwin"
-    platform_backend()
+def test_keychain_backend_round_trip(world: World) -> None:
+    """REAL macOS Keychain through the Swift keychain service (AT-006.3). Runs on the macOS CI runner.
+
+    Proves: the Vault stores only a reference in SQLite, the secret round-trips through the Keychain,
+    revocation deletes it from the Keychain, a wrong session token is rejected. It does NOT prove the
+    Supervisor lifecycle (launchd/SMAppService) on the owner's Mac.
+    """
+    import os
+    import shutil
+    import subprocess
+    import tempfile
+    import time
+    import uuid
+    from pathlib import Path
+
+    from security.vault.keychain_backend import KeychainAgentBackend, KeychainAgentError
+
+    agent = os.environ.get("ATLAS_KEYCHAIN_AGENT")
+    if not agent or not Path(agent).is_file():
+        pytest.skip("NAO EXECUTADO: build platform/macos/AtlasKit and set ATLAS_KEYCHAIN_AGENT")
+    short = Path(tempfile.mkdtemp(prefix="akc", dir="/tmp"))
+    os.chmod(short, 0o700)
+    token_file = short / "token"
+    token = uuid.uuid4().hex
+    token_file.write_text(token, encoding="utf-8")
+    os.chmod(token_file, 0o600)
+    sock = short / "kc.sock"
+    service = f"com.atlas.tests.vault.{uuid.uuid4().hex}"
+    proc = subprocess.Popen([agent, str(sock), str(token_file), service])
+    try:
+        for _ in range(100):
+            if sock.exists():
+                break
+            time.sleep(0.05)
+        backend = KeychainAgentBackend(sock, token)
+        vault = Vault(world.conn, backend, world.clock, Redactor())
+        ref = register(world, vault)
+        assert SECRET.decode() not in "\n".join(world.conn.iterdump())  # DB holds only the reference
+        with vault.use(
+            ref, actor=CP, purpose="model_inference", destination="https://api.openai.com/v1/responses"
+        ) as s:
+            assert s.reveal() == SECRET  # really came back from the Keychain
+        locator = world.conn.execute(
+            "SELECT backend_locator FROM credential_refs WHERE id=?", (ref,)
+        ).fetchone()[0]
+        assert backend.get(locator) == SECRET
+        vault.revoke(ref, world.owner, world.employee.id)
+        assert backend.get(locator) is None  # deleted from the Keychain
+        with pytest.raises(KeychainAgentError):
+            KeychainAgentBackend(sock, "wrong-token").get(locator)
+    finally:
+        proc.terminate()
+        proc.wait(5)
+        shutil.rmtree(short, ignore_errors=True)
+
+
+def test_platform_backend_needs_configured_service_on_macos(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ATLAS_KEYCHAIN_SOCKET", raising=False)
+    monkeypatch.delenv("ATLAS_KEYCHAIN_TOKEN_FILE", raising=False)
+    with pytest.raises(VaultUnavailable):
+        platform_backend()

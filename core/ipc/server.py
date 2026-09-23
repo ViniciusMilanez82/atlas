@@ -15,9 +15,9 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
-from core.ipc.framing import FrameError, recv_frame, send_frame
 from core.ipc.sessions import SessionRegistry
 from core.service import CoreService
+from shared.framing import FrameError, recv_frame, send_frame
 
 PROTOCOL = "1.0"
 MAX_SUN_PATH = 103  # macOS sockaddr_un.sun_path is 104 bytes including NUL (Linux: 108)

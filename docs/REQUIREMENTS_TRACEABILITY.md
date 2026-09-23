@@ -97,7 +97,7 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 | REQ-11-4 | Objeto de aprovação 11.2; status; reserva atômica | M3 | `approval.schema.json`, `security/approvals` | contrato + `test_broker.py` | OK |
 | REQ-11-5 | Mudança material invalida aprovação | M3 | hash canônico | `test_broker.py` | OK |
 | REQ-11-6 | LLM não emite autorização; texto externo não autoriza; R4 com confirmação forte | M3/M4 | `decide` exige ator owner autenticado localmente | `test_broker.py`, `test_prompt_injection.py` | PARCIAL (autoridade OK; cartão de aprovação na UI: M4) |
-| REQ-11-7 | Vault: Keychain; banco guarda só credential_ref; sem `read_secret` | M2 | `security/vault`, `platform/macos/AtlasKit/.../KeychainStore.swift` | `test_vault.py`; XCTest `KeychainStoreTests` (CI macOS) | PARCIAL (Keychain real testado em Swift; ponte para o Vault Python pendente) |
+| REQ-11-7 | Vault: Keychain; banco guarda só credential_ref; sem `read_secret` | M2 | `security/vault`, `platform/macos/AtlasKit/.../KeychainStore.swift` | `test_vault.py`; XCTest `KeychainStoreTests` (CI macOS) | OK no runner macOS (`security/vault/keychain_backend.py`, `atlas-keychain-agent`, `test_keychain_backend_round_trip`); ciclo de vida do Supervisor: D-01 |
 | REQ-11-8 | Controles da tabela 11.5 | vários | THREAT_MODEL | ver T-01..T-11 | PARCIAL |
 
 ## Efeitos externos (cap. 12)

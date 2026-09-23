@@ -9,10 +9,12 @@ let package = Package(
     products: [
         .library(name: "AtlasKit", targets: ["AtlasKit"]),
         .executable(name: "atlas-ipc-probe", targets: ["atlas-ipc-probe"]),
+        .executable(name: "atlas-keychain-agent", targets: ["atlas-keychain-agent"]),
     ],
     targets: [
         .target(name: "AtlasKit"),
         .executableTarget(name: "atlas-ipc-probe", dependencies: ["AtlasKit"]),
+        .executableTarget(name: "atlas-keychain-agent", dependencies: ["AtlasKit"]),
         .testTarget(name: "AtlasKitTests", dependencies: ["AtlasKit"]),
     ]
 )

@@ -33,3 +33,4 @@ jobs:
         run: python scripts/check.py
         env:
           ATLAS_SWIFT_PROBE: ${{ github.workspace }}/platform/macos/AtlasKit/.build/debug/atlas-ipc-probe
+          ATLAS_KEYCHAIN_AGENT: ${{ github.workspace }}/platform/macos/AtlasKit/.build/debug/atlas-keychain-agent
