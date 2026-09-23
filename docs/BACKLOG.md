@@ -23,13 +23,13 @@ Estados: `FEITO` (testes executados e aprovados), `EM CURSO`, `A FAZER`, `BLOQUE
 
 | ID | Tarefa | Depende | Host | Aceite | Estado |
 | --- | --- | --- | --- | --- | --- |
-| AT-005.1 | Conexão SQLite (WAL, FK, busy_timeout) e executor de migrações versionadas | M0 | any | migração idempotente; versão registrada | A FAZER |
-| AT-005.2 | Schema relacional inicial (spec 13.2) com FKs e CHECKs | 005.1 | any | ação sem tarefa, aprovação sem ação e entrega sem artefato falham | A FAZER |
-| AT-005.3 | Journal de eventos com `sequence_id` monotônico e validação de schema | 005.2 | any | eventos retomáveis por sequence_id | A FAZER |
-| AT-005.4 | Teste de interrupção antes/depois do commit | 005.2 | any | nenhum estado inválido | A FAZER |
-| AT-005.5 | Backup consistente + manifesto + restore com verificação e revogação de autorizações | 005.2 | any | hash/versão conferidos; aprovações revogadas | A FAZER |
-| AT-006.1 | `CredentialRef`, interface `VaultBackend`, uso escopado por finalidade/destino | 005.2 | any | ferramenta genérica não obtém segredo | A FAZER |
-| AT-006.2 | Filtro de redação para logs e eventos | 006.1 | any | segredo nunca aparece em log | A FAZER |
+| AT-005.1 | Conexão SQLite (WAL, FK, busy_timeout) e executor de migrações versionadas | M0 | any | migração idempotente; versão registrada | FEITO |
+| AT-005.2 | Schema relacional inicial (spec 13.2) com FKs e CHECKs | 005.1 | any | ação sem tarefa, aprovação sem ação e entrega sem artefato falham | FEITO |
+| AT-005.3 | Journal de eventos com `sequence_id` monotônico e validação de schema | 005.2 | any | eventos retomáveis por sequence_id | FEITO |
+| AT-005.4 | Teste de interrupção antes/depois do commit | 005.2 | any | nenhum estado inválido | FEITO |
+| AT-005.5 | Backup consistente + manifesto + restore com verificação e revogação de autorizações | 005.2 | any | hash/versão conferidos; aprovações revogadas | FEITO |
+| AT-006.1 | `CredentialRef`, interface `VaultBackend`, uso escopado por finalidade/destino | 005.2 | any | ferramenta genérica não obtém segredo | FEITO |
+| AT-006.2 | Filtro de redação para logs e eventos | 006.1 | any | segredo nunca aparece em log | FEITO |
 | AT-006.3 | Backend Keychain via Supervisor Swift | 006.1 | mac | teste com Keychain real | BLOQUEADO (D-01) |
 | AT-005.6 | Criptografia do banco (SQLCipher ou equivalente) | 005.5 | mac | restore cifrado; chave no Keychain | BLOQUEADO (D-01, D-09) |
 

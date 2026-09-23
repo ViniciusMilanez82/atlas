@@ -62,3 +62,52 @@ componentes não existem. O transporte IPC (UDS, framing de 1 MiB) é M4.
 próprio (ADR-010).
 
 **Próxima tarefa.** M2: AT-005.1 (conexão SQLite e migrações).
+
+---
+
+## M2 — Dados e chaves (AT-005.1–5.5, AT-006.1–6.2) — 2026-09-23
+
+**Objetivo.** Banco local com migrações, restrições, journal, recuperação após crash, backup
+verificado e referências de credencial sem segredo bruto.
+
+**Critérios de aceite.** Dados persistem; interrupção antes/depois do commit não gera estado
+inválido; restauração confere hash e versão; credenciais não aparecem em logs; processo não
+autorizado e ferramenta genérica não recebem segredo; chave ausente gera diagnóstico.
+
+**Implementado.**
+- `storage/db.py`: WAL, `synchronous=FULL`, FK obrigatória, `BEGIN IMMEDIATE`, transação aninhada proibida.
+- `storage/migrate.py`: migrações contíguas com SHA-256; migração alterada depois de aplicada e
+  banco de build mais nova são recusados; migração com erro não deixa schema parcial.
+- `storage/migrations/0001_initial.sql`: modelo da spec 13.2 em tabelas `STRICT`, enums por CHECK,
+  dinheiro sempre com moeda, estado BLOCKED exige motivo, lease só em RUNNING, aprovação R5
+  impossível, memória SECRET proibida, FTS5 para memória, journal append-only por trigger,
+  termos de aprovação e entrada de ação imutáveis por trigger.
+- `storage/journal.py`: eventos validados pelo schema, `sequence_id` monotônico, resumo redigido.
+- `storage/backup/backup.py`: backup consistente + manifesto; verificação de hash, formato,
+  versão, `integrity_check` e contagem de linhas; restauração revoga aprovações e mandatos,
+  cancela ações não despachadas, marca em voo como UNKNOWN, bloqueia a tarefa e libera leases.
+- `security/vault/vault.py`: `credential_refs` no banco, segredo só no backend; liberação só ao
+  Control Plane, para a finalidade e destino registrados; revogação e validade; `SecretValue`
+  não imprime, não serializa e não entra em JSON canônico; diagnóstico explícito sem backend.
+- `shared/redaction.py`: filtro de logging e redação por valor registrado e por padrão.
+- `tzdata==2026.4` como dependência fixa (Windows não traz base IANA; comportamento igual no macOS).
+
+**Evidência.**
+
+```text
+$ python scripts/check.py
+ruff: All checks passed!
+secret scan: 0 finding(s)
+mypy: Success: no issues found in 27 source files
+pytest: 162 passed, 1 skipped
+SUMMARY: ruff=PASS, secrets=PASS, mypy=PASS, pytest=PASS
+```
+
+**NÃO EXECUTADO.** `tests/security/test_vault.py::test_keychain_backend_round_trip` — requer
+Mac real e o backend Keychain do Supervisor Swift (AT-006.3, D-01). Criptografia do banco e do
+backup (AT-005.6, T-12) — requer escolha de biblioteca e prova em Mac (D-01, D-09).
+
+**Limitações.** O teste de crash usa `os._exit` no processo filho; não simula queda de energia
+no nível do disco. Backups não são cifrados.
+
+**Próxima tarefa.** M3: AT-007.1 (Tool Registry confiável) e AT-007.2 (Policy Engine).

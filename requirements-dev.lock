@@ -22,3 +22,4 @@ ruff==0.16.8
 types-jsonschema==4.26.0.20260518
 types-PyYAML==6.0.12.20250915
 typing_extensions==4.16.0
+tzdata==2026.4
