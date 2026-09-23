@@ -177,6 +177,12 @@ def test_used_secret_is_redacted_from_logs(
 
 
 @pytest.mark.macos
+@pytest.mark.xfail(
+    sys.platform == "darwin",
+    raises=VaultUnavailable,
+    strict=True,
+    reason="AT-006.3 pending: Keychain backend lives in the Swift Supervisor, not built yet",
+)
 def test_keychain_backend_round_trip() -> None:
     """NÃO EXECUTADO fora do macOS. Requer o backend Keychain do Supervisor Swift (AT-006.3, D-01)."""
     assert sys.platform == "darwin"
