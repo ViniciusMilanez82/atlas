@@ -1,4 +1,4 @@
-# Never executed yet: the repository has no remote (docs/EXTERNAL_DEPENDENCIES.md D-10).
+# CI for the Python core on Linux and macOS (public repo ViniciusMilanez82/atlas). Swift/VM jobs come with M1/M4.
 name: ci
 on: [push, pull_request]
 permissions:

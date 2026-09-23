@@ -181,6 +181,22 @@ class Vault:
             revoked_at=row["revoked_at"],
         )
 
+    def find_ref(self, *, purpose: str, destination: str) -> str:
+        """The single active credential for this purpose whose destinations cover ``destination``."""
+        matches = []
+        rows = self._conn.execute(
+            "SELECT id FROM credential_refs WHERE purpose = ? AND revoked_at IS NULL", (purpose,)
+        ).fetchall()
+        for row in rows:
+            ref = self.get_ref(row["id"])
+            if any(fnmatch.fnmatchcase(destination, pat) for pat in ref.allowed_destinations):
+                matches.append(ref.id)
+        if not matches:
+            raise VaultError("no credential configured for this purpose and destination")
+        if len(matches) > 1:
+            raise VaultError("more than one credential matches; the owner must disambiguate")
+        return matches[0]
+
     def revoke(self, ref_id: str, actor: Actor, employee_id: str) -> None:
         if actor.kind != "owner":
             raise VaultError("only the owner can revoke credentials")
