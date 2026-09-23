@@ -20,6 +20,7 @@ from core.ipc.sessions import SessionRegistry
 from core.service import CoreService
 
 PROTOCOL = "1.0"
+MAX_SUN_PATH = 103  # macOS sockaddr_un.sun_path is 104 bytes including NUL (Linux: 108)
 
 
 def serve_connection(
@@ -79,6 +80,11 @@ class UnixSocketServer:
         if stat.S_IMODE(directory.stat().st_mode) != 0o700:
             raise PermissionError("IPC directory must be private (0700)")
         self.path = directory / "atlas-core.sock"
+        if len(str(self.path).encode()) > MAX_SUN_PATH:
+            raise OSError(
+                f"socket path is {len(str(self.path).encode())} bytes; the OS limit is {MAX_SUN_PATH}. "
+                "Use a shorter private directory for IPC."
+            )
         if self.path.exists():
             self.path.unlink()
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

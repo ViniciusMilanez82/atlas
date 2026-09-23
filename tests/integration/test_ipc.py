@@ -264,10 +264,16 @@ def test_settings_cannot_widen_security_over_ipc(connect: Any, world: World) -> 
 def test_unix_socket_server_in_private_directory(
     world: World, sessions: SessionRegistry, tmp_path: Path
 ) -> None:
-    server = UnixSocketServer(tmp_path / "ipc", sessions, factory(world))
+    import shutil
+    import tempfile
+
+    with pytest.raises(OSError, match="OS limit"):
+        UnixSocketServer(tmp_path / ("x" * 120), sessions, factory(world))
+    short = Path(tempfile.mkdtemp(prefix="atl", dir="/tmp"))
+    server = UnixSocketServer(short / "ipc", sessions, factory(world))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        assert oct((tmp_path / "ipc").stat().st_mode & 0o777) == "0o700"
+        assert oct((short / "ipc").stat().st_mode & 0o777) == "0o700"
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         s.connect(str(server.path))
         client = Client(s)
@@ -276,3 +282,4 @@ def test_unix_socket_server_in_private_directory(
         s.close()
     finally:
         server.close()
+        shutil.rmtree(short, ignore_errors=True)
