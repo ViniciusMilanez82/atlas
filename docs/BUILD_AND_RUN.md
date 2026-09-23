@@ -59,5 +59,7 @@ como evidência.
 
 ## 6. CI
 
-`.github/workflows/ci.yml` define os jobs. Não há repositório remoto configurado, então o CI
-**nunca foi executado**. Publicar o repositório exige autorização do proprietário.
+`.github/workflows/ci.yml` roda o núcleo Python em Linux e macOS a cada push no repositório
+privado https://github.com/ViniciusMilanez82/atlas. No runner macOS o teste do Keychain roda de
+verdade e fica como falha esperada estrita até o backend Swift existir (AT-006.3). Build Swift,
+VM e testes de isolamento ainda não fazem parte do CI (dependem de D-01).

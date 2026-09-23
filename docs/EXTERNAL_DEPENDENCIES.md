@@ -14,7 +14,7 @@ em tudo que não está bloqueado.
 | D-07 | Apple Developer Program: certificado Developer ID e credenciais de notarização | Proprietário | M16 (assinatura, notarização, instalador) | Pendente |
 | D-08 | Imagem base Linux ARM64 e sua licença de redistribuição | Decisão técnica em M1 | M1 | Pendente (decidida pela IA no Mac) |
 | D-09 | Biblioteca de criptografia do SQLite compatível com FTS5 (ex.: SQLCipher) e licença | Decisão técnica em M2, validada em Mac | T-12 | Pendente |
-| D-10 | Repositório remoto (GitHub ou outro) para CI | Proprietário | Execução do CI | Pendente; nada é enviado sem autorização |
+| D-10 | Repositório remoto (GitHub ou outro) para CI | Proprietário | Execução do CI | Resolvido em 2026-09-23: repositório privado ViniciusMilanez82/atlas, autorizado pelo proprietário |
 | D-11 | Provedor de voz (transcrição e síntese em pt-BR) e seu custo | Proprietário + validação em M13 | M13 | Pendente |
 | D-12 | API oficial do WhatsApp (elegibilidade, número, custos) | Proprietário | Pós-V1 | Fora da V1 |
 

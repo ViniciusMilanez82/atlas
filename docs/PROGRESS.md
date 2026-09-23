@@ -266,3 +266,13 @@ também depende de modelo.
 **Próxima tarefa (sem Mac nem credencial).** AT-014 parte host: Artifact Manager com hash,
 validação de caminho, tamanho, tipo, symlink e compactados; M11: validadores objetivos de
 entrega; transporte IPC JSON-RPC com framing de 1 MiB.
+
+---
+
+## Publicação e primeiro CI — 2026-09-23
+
+Repositório privado criado a pedido do proprietário: https://github.com/ViniciusMilanez82/atlas.
+Primeira execução do CI: Linux aprovado; macOS falhou porque o teste do Keychain rodou de
+verdade num Mac e o backend não existe (AT-006.3). O teste passou a ser falha esperada estrita
+no macOS. Segunda execução: `core-linux` e `core-macos` aprovados
+(macOS: 331 passed, 1 skipped, 1 xfailed).

@@ -15,7 +15,7 @@ Estados: `FEITO` (testes executados e aprovados), `EM CURSO`, `A FAZER`, `BLOQUE
 | AT-001.3 | `scripts/check.py` e `scripts/scan_secrets.py` | 001.1 | any | scanner acha chave plantada; repositório limpo | FEITO |
 | AT-001.4 | Documentos obrigatórios, ADR-001..012, backlog, dependências | 001.1 | any | teste de docs passa | FEITO |
 | AT-001.5 | Lockfile de dependências e registro de licenças | 001.1 | any | `requirements-dev.lock` + `THIRD_PARTY_LICENSES.md` | FEITO |
-| AT-001.6 | Workflow de CI (Linux: núcleo Python; macOS: marcado) | 001.3 | any | YAML válido; execução depende de D-10 | FEITO (não executado: sem remoto) |
+| AT-001.6 | Workflow de CI (Linux: núcleo Python; macOS: marcado) | 001.3 | any | YAML válido; execução depende de D-10 | FEITO (CI verde em Linux e macOS) |
 | AT-002.1 | Schemas: common, Task, ActionProposal, ToolResult, Approval, JournalEvent, IPC, config | 001.1 | any | fixtures válidas passam; extras, enums e dinheiro sem moeda falham | FEITO |
 | AT-002.2 | Primitivas: JSON canônico, Money por moeda, relógio UTC, IDs, erros normalizados | 002.1 | any | testes unitários | FEITO |
 
