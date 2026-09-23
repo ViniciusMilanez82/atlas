@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "task_id": "2b3c4d5e-6f7a-4b2c-9d3e-4f5a6b7c8d9e",
+  "step_id": "3c4d5e6f-7a8b-4c3d-ae4f-5a6b7c8d9eaf",
+  "tool_id": "messaging.send_owner_artifact",
+  "tool_version": "1.0.0",
+  "input": {
+    "recipient_ref": "owner-verified-channel",
+    "artifact_id": "5e6f7a8b-9cad-4e5f-8a6b-7c8d9eafb0c1",
+    "message": "Relatorio concluido e conferido."
+  },
+  "expected_outcome": "Entrega aceita pelo canal do proprietario",
+  "verification": {
+    "kind": "provider_receipt",
+    "required": true
+  }
+}

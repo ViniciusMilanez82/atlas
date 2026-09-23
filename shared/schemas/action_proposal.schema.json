@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.local/schemas/action_proposal.schema.json",
+  "title": "ActionProposal (spec 13.6)",
+  "description": "Proposed by the LLM/Runtime. Effect, risk, canonical hash, credentials and approval needs are computed by the broker from the trusted registry and are NOT accepted here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "task_id", "step_id", "tool_id", "tool_version", "input",
+    "expected_outcome", "verification"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schema_version" },
+    "task_id": { "$ref": "common.schema.json#/$defs/uuid" },
+    "step_id": { "$ref": "common.schema.json#/$defs/uuid" },
+    "tool_id": { "$ref": "common.schema.json#/$defs/tool_id" },
+    "tool_version": { "$ref": "common.schema.json#/$defs/semver" },
+    "input": { "type": "object" },
+    "expected_outcome": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "required"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "provider_receipt", "artifact_hash", "file_opens", "deterministic_check",
+            "source_check", "human_confirmation", "none"
+          ]
+        },
+        "required": { "type": "boolean" }
+      }
+    }
+  }
+}

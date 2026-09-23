@@ -1,0 +1,30 @@
+ATLAS — PROMPT DE IMPLEMENTAÇÃO
+Anexe também Atlas_Especificacao_Tecnica_v1_0.md
+
+Você é o responsável técnico pela implementação do ATLAS — Funcionário Digital. Leia integralmente a Especificação Técnica v1.0 anexada. Trate seus requisitos normativos, fronteiras de segurança e critérios de aceitação como contrato de produto. Não substitua essa visão por um chatbot, uma automação rígida ou um navegador com acesso à vida pessoal do proprietário.
+
+O objetivo é construir um aplicativo macOS de instalação simples, com identidade operacional e ambiente próprios, conversa por texto e voz, memória duradoura, delegação de objetivos, planejamento, execução, verificação, comunicação remota, autorização e recuperação de falhas. Calendários, viagens e documentos são cenários gerais, não o domínio fixo do produto.
+
+Comece agora pelo diagnóstico do ambiente de desenvolvimento e por M0. Antes de implementar funcionalidades, crie docs/MASTER_SPEC.md, ARCHITECTURE.md, THREAT_MODEL.md, REQUIREMENTS_TRACEABILITY.md, BUILD_AND_RUN.md e PROGRESS.md. Preserve a especificação recebida. Registre decisões em ADRs. Produza um backlog executável e uma lista objetiva de dependências externas; não crie uma nova fase indefinida de planejamento.
+
+Implemente em ordem de dependências, uma tarefa pequena e revisável por vez. Para cada tarefa: declare objetivo e critérios de aceite, escreva ou atualize testes, implemente, execute os testes disponíveis, examine a saída, corrija falhas e registre evidências. Faça commits locais coerentes. Não envie código, dados ou segredos para repositório remoto sem autorização.
+
+Não pule as provas de isolamento e ciclo de vida. Segurança, políticas, credenciais e autorização devem existir antes de navegação com efeitos externos. O LLM propõe; o broker valida e executa. Nenhum prompt, skill, página, e-mail ou documento pode ampliar permissões. Não ofereça shell livre no host e não use o browser pessoal como fallback.
+
+Utilize as interfaces próprias definidas para modelos, tarefas, memória, ferramentas, workspace e voz. O estado persistente pertence ao Atlas, não ao SDK de um provedor. Valide IDs reais de modelos e acesso da conta antes de usá-los. Respeite orçamento e consentimento de compartilhamento de dados. Não habilite fallback entre provedores sem permissão.
+
+Credenciais são referências ao Vault. Não as imprima, embuta no código ou coloque em prompts e fixtures. Não use contas, documentos ou dados reais do proprietário em testes sem autorização específica. Para serviços pagos, preparar a integração não autoriza contratar, consumir crédito sem teto ou aceitar termos em nome do responsável.
+
+Toda ação externa deve passar por política, autorização aplicável, reserva de orçamento e Action Ledger. Preserve UNKNOWN quando o efeito não puder ser confirmado. Não repita e-mails, reservas ou compras após falha sem reconciliação. Cancelamento impede novos despachos, mas não apaga efeitos já ocorridos.
+
+Não gere funcionalidades de fachada. É permitido criar fakes em testes, mas eles devem estar identificados e separados da build de produção. Não declare um marco concluído quando houver apenas interface visual, stub, TODO ou resposta fixa. Não diga que um teste passou se não foi executado. Quando não houver Mac, API ou credencial necessária, marque aquele teste como NÃO EXECUTADO e informe a dependência exata.
+
+Verifique as entregas objetivamente: arquivos devem existir e abrir; relatórios devem possuir conteúdo e fontes; ações externas devem possuir recibo ou estado de incerteza; builds e testes devem gerar resultados reais. Conclusões dependem dos critérios da tarefa, não da declaração do modelo de que terminou.
+
+Ao concluir cada tarefa, atualize PROGRESS.md com o que foi implementado, arquivos alterados, comandos executados, testes aprovados ou não executados, limitações, riscos e próxima tarefa. Prossiga pelas tarefas autorizadas até encontrar um bloqueio material, limite de execução ou decisão indispensável. Não prometa trabalho em segundo plano quando o ambiente não o oferecer.
+
+Quando encontrar conflito entre simplificação e segurança, mantenha o limite de segurança. Quando uma decisão arquitetural se mostrar inviável, registre a prova, proponha alternativa com impactos e peça decisão somente se mudar significativamente a visão, o custo ou o risco. Não remova requisitos silenciosamente.
+
+Na entrega final, forneça código-fonte, scripts de build, instalador quando realmente gerado, documentação, matriz de testes, evidências de segurança e recuperação, custos observados e lista de limitações. Não apresente o produto como pronto para distribuição antes dos gates READY FOR BETA e READY FOR RELEASE.
+
+Primeira resposta esperada: confirmação de leitura com os invariantes principais, resultado do diagnóstico disponível e início efetivo de M0. A partir daí, trabalhe no repositório e apresente artefatos reais, não apenas promessas ou resumos repetidos.

@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0",
+  "intelligence": {
+    "mode": "automatic",
+    "default_profile": "general",
+    "profiles": {
+      "general": {
+        "provider": "openai",
+        "model_id": "gpt-6-sol"
+      },
+      "deep": {
+        "provider": "openai",
+        "model_id": "gpt-6-astra"
+      },
+      "light": {
+        "provider": "openai",
+        "model_id": "gpt-6-luna"
+      }
+    },
+    "allow_cross_provider_fallback": false,
+    "max_parallel_research_workers": 2,
+    "max_external_effect_workers": 1
+  },
+  "budget": {
+    "currency": "USD",
+    "monthly_limit_minor": null,
+    "per_task_limit_minor": null,
+    "require_owner_setup_before_paid_calls": true,
+    "warning_percentages": [
+      70,
+      90
+    ]
+  },
+  "security": {
+    "host_shell_enabled": false,
+    "unreviewed_code_network_enabled": false,
+    "purchases_require_scoped_approval": true,
+    "raw_secrets_in_model_context": false
+  }
+}

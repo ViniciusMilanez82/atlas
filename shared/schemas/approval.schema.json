@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.local/schemas/approval.schema.json",
+  "title": "Approval (spec 11.2)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "approval_id", "task_id", "action_id", "requested_by", "action_type",
+    "destination", "params_hash", "max_cost", "recurrence", "expires_at", "max_uses", "uses",
+    "policy_version", "risk_class", "status", "created_at", "nonce"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schema_version" },
+    "approval_id": { "$ref": "common.schema.json#/$defs/uuid" },
+    "task_id": { "$ref": "common.schema.json#/$defs/uuid" },
+    "action_id": { "$ref": "common.schema.json#/$defs/uuid" },
+    "requested_by": { "type": "string", "enum": ["runtime", "owner"] },
+    "action_type": { "$ref": "common.schema.json#/$defs/tool_id" },
+    "destination": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "params_hash": { "$ref": "common.schema.json#/$defs/sha256" },
+    "max_cost": {
+      "oneOf": [{ "type": "null" }, { "$ref": "common.schema.json#/$defs/money" }]
+    },
+    "recurrence": { "type": "string", "enum": ["ONCE", "MANDATE"] },
+    "expires_at": { "$ref": "common.schema.json#/$defs/utc_timestamp" },
+    "max_uses": { "type": "integer", "minimum": 1, "maximum": 1000 },
+    "uses": { "type": "integer", "minimum": 0 },
+    "policy_version": { "type": "string", "minLength": 1 },
+    "risk_class": { "$ref": "common.schema.json#/$defs/risk_class" },
+    "status": { "$ref": "common.schema.json#/$defs/approval_status" },
+    "created_at": { "$ref": "common.schema.json#/$defs/utc_timestamp" },
+    "decided_at": {
+      "oneOf": [{ "type": "null" }, { "$ref": "common.schema.json#/$defs/utc_timestamp" }]
+    },
+    "decided_by": {
+      "oneOf": [{ "type": "null" }, { "$ref": "common.schema.json#/$defs/uuid" }]
+    },
+    "nonce": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+    "purchase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["vendor", "items", "known_fees", "material_terms"],
+      "properties": {
+        "vendor": { "type": "string", "minLength": 1 },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "known_fees": {
+          "type": "array",
+          "items": { "$ref": "common.schema.json#/$defs/money" }
+        },
+        "material_terms": { "type": "string" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "description": "R5 actions are always DENY; an approval object for them cannot exist.",
+      "if": { "properties": { "risk_class": { "const": "R5" } }, "required": ["risk_class"] },
+      "then": false
+    },
+    {
+      "description": "Purchases must carry vendor, items, fees, terms and a concrete max cost.",
+      "if": {
+        "properties": { "action_type": { "pattern": "^commerce\\." } },
+        "required": ["action_type"]
+      },
+      "then": {
+        "required": ["purchase"],
+        "properties": { "max_cost": { "$ref": "common.schema.json#/$defs/money" } }
+      }
+    }
+  ]
+}

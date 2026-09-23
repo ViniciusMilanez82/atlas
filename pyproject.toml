@@ -1,0 +1,46 @@
+[project]
+name = "atlas-core"
+version = "0.0.1"
+description = "ATLAS - Funcionario Digital: runtime, control plane and storage core (Python)"
+requires-python = ">=3.12"
+dependencies = [
+  "jsonschema==4.26.0",
+  "PyYAML==6.0.3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.1.1",
+  "ruff==0.16.8",
+  "mypy==2.3.1",
+  "types-PyYAML==6.0.12.20250915",
+  "types-jsonschema==4.26.0.20260518",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+  "macos: requires a real macOS host (Virtualization.framework, Keychain, Swift)",
+  "provider: performs a real, billable call to an external model provider",
+  "slow: long-running test",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+extend-exclude = ["docs", "packaging"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "RUF"]
+ignore = ["S101", "RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "B011"]
+"scripts/**" = ["S603", "S607"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["shared"]

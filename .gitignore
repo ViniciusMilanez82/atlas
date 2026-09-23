@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+*.egg-info/
+build/
+dist/
+# Runtime data (never commit real state, keys or artifacts)
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
+var/
+.atlas-data/
+# Secrets
+.env
+.env.*
+*.pem
+*.p12
+*.key
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+# Swift / Xcode
+.build/
+DerivedData/
+*.xcuserstate
+xcuserdata/

@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.local/schemas/tool_result.schema.json",
+  "title": "ToolResult (spec 13.7)",
+  "description": "External content stays marked untrusted. A success flag alone never proves an external effect; COMPLETED requires the verifiers.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "action_id", "success", "operation_status", "data_refs",
+    "evidence_refs", "external_reference", "retry_class", "error", "observability"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schema_version" },
+    "action_id": { "$ref": "common.schema.json#/$defs/uuid" },
+    "success": { "type": "boolean" },
+    "operation_status": { "type": "string", "enum": ["SUCCEEDED", "FAILED", "UNKNOWN"] },
+    "data_refs": { "type": "array", "items": { "$ref": "#/$defs/data_ref" } },
+    "evidence_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/uuid" } },
+    "external_reference": { "type": ["string", "null"], "maxLength": 512 },
+    "retry_class": {
+      "type": "string",
+      "enum": ["NONE", "TRANSIENT", "AFTER_RECONCILIATION", "NEVER"]
+    },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "message"],
+          "properties": {
+            "code": { "$ref": "common.schema.json#/$defs/error_code" },
+            "message": { "type": "string", "maxLength": 2000 }
+          }
+        }
+      ]
+    },
+    "observability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool_id", "tool_version", "duration_ms"],
+      "properties": {
+        "tool_id": { "$ref": "common.schema.json#/$defs/tool_id" },
+        "tool_version": { "$ref": "common.schema.json#/$defs/semver" },
+        "duration_ms": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "$defs": {
+    "data_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "trust"],
+      "properties": {
+        "ref": { "$ref": "common.schema.json#/$defs/uuid" },
+        "trust": { "type": "string", "enum": ["untrusted", "verified"] }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "operation_status": { "const": "UNKNOWN" } } },
+      "then": {
+        "properties": {
+          "success": { "const": false },
+          "retry_class": { "enum": ["AFTER_RECONCILIATION", "NEVER"] }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "success": { "const": true } } },
+      "then": {
+        "properties": { "operation_status": { "const": "SUCCEEDED" }, "error": { "type": "null" } }
+      }
+    }
+  ]
+}

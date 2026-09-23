@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.local/schemas/journal_event.schema.json",
+  "title": "JournalEvent (spec 17.1)",
+  "description": "Audit event. Holds decisions and effects, never raw prompts, secrets or cookies.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "event_id", "sequence_id", "timestamp", "employee_id", "task_id",
+    "action_id", "actor", "type", "policy_version", "model", "duration_ms", "evidence_refs",
+    "summary"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schema_version" },
+    "event_id": { "$ref": "common.schema.json#/$defs/uuid" },
+    "sequence_id": { "type": "integer", "minimum": 1 },
+    "timestamp": { "$ref": "common.schema.json#/$defs/utc_timestamp" },
+    "employee_id": { "$ref": "common.schema.json#/$defs/uuid" },
+    "task_id": { "oneOf": [{ "type": "null" }, { "$ref": "common.schema.json#/$defs/uuid" }] },
+    "action_id": { "oneOf": [{ "type": "null" }, { "$ref": "common.schema.json#/$defs/uuid" }] },
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["owner", "device", "runtime", "worker", "supervisor", "control_plane", "system"]
+        },
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "type": { "type": "string", "pattern": "^[a-z][a-z_]*(\\.[a-z][a-z_]*)+$", "maxLength": 96 },
+    "policy_version": { "type": ["string", "null"] },
+    "model": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["provider", "model_id"],
+          "properties": {
+            "provider": { "type": "string", "minLength": 1 },
+            "model_id": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "duration_ms": { "type": ["integer", "null"], "minimum": 0 },
+    "evidence_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/uuid" } },
+    "summary": { "type": "string", "maxLength": 1000 }
+  }
+}

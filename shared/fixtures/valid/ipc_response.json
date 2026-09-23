@@ -1,0 +1,15 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req-0000000001",
+  "error": {
+    "code": -32004,
+    "message": "Budget exhausted",
+    "data": {
+      "atlas_code": "BUDGET_EXCEEDED",
+      "retryable": false,
+      "persisted": "task checkpoint saved",
+      "recommended_action": "Raise the task budget or cancel",
+      "correlation_id": "corr-0000000001"
+    }
+  }
+}

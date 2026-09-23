@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "event_id": "7a8b9cad-becf-4a7b-ac8d-9eafb0c1d2e3",
+  "sequence_id": 1,
+  "timestamp": "2026-09-22T12:00:01.250Z",
+  "employee_id": "0f1e2d3c-4b5a-4968-8776-655443322110",
+  "task_id": "2b3c4d5e-6f7a-4b2c-9d3e-4f5a6b7c8d9e",
+  "action_id": null,
+  "actor": {
+    "kind": "owner",
+    "id": "1a2b3c4d-5e6f-4a1b-8c2d-3e4f5a6b7c8d"
+  },
+  "type": "task.created",
+  "policy_version": null,
+  "model": null,
+  "duration_ms": null,
+  "evidence_refs": [],
+  "summary": "Tarefa criada pelo proprietario"
+}

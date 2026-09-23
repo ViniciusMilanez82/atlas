@@ -1,0 +1,847 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.local/schemas/ipc_request.schema.json",
+  "title": "IPC control request (spec 13.4 / 13.5)",
+  "description": "JSON-RPC 2.0 control message. Max 1 MiB framed (enforced by transport). The actor is derived from the authenticated channel; any actor/actor_id field in params is rejected.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "jsonrpc",
+    "id",
+    "method",
+    "params"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "method": {
+      "type": "string",
+      "enum": [
+        "system.health",
+        "conversations.send",
+        "tasks.create",
+        "tasks.get",
+        "tasks.list",
+        "tasks.pause",
+        "tasks.resume",
+        "tasks.cancel",
+        "approvals.get",
+        "approvals.decide",
+        "memories.search",
+        "memories.propose",
+        "memories.correct",
+        "memories.delete",
+        "artifacts.import",
+        "artifacts.export",
+        "workspace.observe",
+        "workspace.takeover",
+        "workspace.release",
+        "settings.validate",
+        "settings.update",
+        "events.subscribe"
+      ]
+    },
+    "params": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "system.health"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_base"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "conversations.send"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_conversations_send"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "tasks.create"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_tasks_create"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "tasks.get"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_task_ref"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "tasks.list"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_tasks_list"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "enum": [
+              "tasks.pause",
+              "tasks.resume",
+              "tasks.cancel"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_task_mutation"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "approvals.get"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_approval_ref"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "approvals.decide"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_approvals_decide"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "memories.search"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_memories_search"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "memories.propose"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_memories_propose"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "memories.correct"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_memories_correct"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "memories.delete"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_memory_ref"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "artifacts.import"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_artifacts_import"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "artifacts.export"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_artifacts_export"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "enum": [
+              "workspace.observe",
+              "workspace.takeover",
+              "workspace.release"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_workspace"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "enum": [
+              "settings.validate",
+              "settings.update"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_settings"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "events.subscribe"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_events_subscribe"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "uuid": {
+      "$ref": "common.schema.json#/$defs/uuid"
+    },
+    "p_base": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        }
+      }
+    },
+    "p_conversations_send": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id",
+        "employee_id",
+        "conversation_id",
+        "text",
+        "client_message_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "employee_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "conversation_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "client_message_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32000
+        },
+        "artifact_ids": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "$ref": "#/$defs/uuid"
+          }
+        }
+      }
+    },
+    "p_tasks_create": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id",
+        "employee_id",
+        "objective",
+        "artifact_ids",
+        "constraints"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "employee_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "objective": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "artifact_ids": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "$ref": "#/$defs/uuid"
+          }
+        },
+        "constraints": {
+          "$ref": "task.schema.json#/$defs/constraints"
+        },
+        "priority": {
+          "$ref": "common.schema.json#/$defs/priority"
+        },
+        "deadline": {
+          "$ref": "common.schema.json#/$defs/utc_timestamp"
+        },
+        "budget_limit": {
+          "$ref": "common.schema.json#/$defs/money"
+        }
+      }
+    },
+    "p_task_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id",
+        "task_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "task_id": {
+          "$ref": "#/$defs/uuid"
+        }
+      }
+    },
+    "p_tasks_list": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id",
+        "employee_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "employee_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "states": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/task_state"
+          }
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        }
+      }
+    },
+    "p_task_mutation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id",
+        "task_id",
+        "expected_version"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "task_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "expected_version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "p_approval_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id",
+        "approval_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "approval_id": {
+          "$ref": "#/$defs/uuid"
+        }
+      }
+    },
+    "p_approvals_decide": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id",
+        "approval_id",
+        "decision",
+        "params_hash",
+        "nonce"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "approval_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "decision": {
+          "type": "string",
+          "enum": [
+            "APPROVE",
+            "REJECT"
+          ]
+        },
+        "params_hash": {
+          "$ref": "common.schema.json#/$defs/sha256"
+        },
+        "nonce": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      }
+    },
+    "p_memories_search": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id",
+        "employee_id",
+        "query"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "employee_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      }
+    },
+    "p_memories_propose": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id",
+        "employee_id",
+        "memory_type",
+        "content",
+        "source_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "employee_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "memory_type": {
+          "type": "string",
+          "enum": [
+            "IDENTITY",
+            "PREFERENCE",
+            "FACT",
+            "EPISODE",
+            "PROCEDURE"
+          ]
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8000
+        },
+        "source_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "valid_from": {
+          "$ref": "common.schema.json#/$defs/utc_timestamp"
+        },
+        "valid_until": {
+          "$ref": "common.schema.json#/$defs/utc_timestamp"
+        }
+      }
+    },
+    "p_memories_correct": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id",
+        "memory_id",
+        "expected_version",
+        "content",
+        "source_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "memory_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "expected_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8000
+        },
+        "source_id": {
+          "$ref": "#/$defs/uuid"
+        }
+      }
+    },
+    "p_memory_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id",
+        "memory_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "memory_id": {
+          "$ref": "#/$defs/uuid"
+        }
+      }
+    },
+    "p_artifacts_import": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id",
+        "employee_id",
+        "upload_ref",
+        "declared_name"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "employee_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "upload_ref": {
+          "$ref": "#/$defs/uuid"
+        },
+        "declared_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "pattern": "^[^/\\\\\\u0000]+$"
+        },
+        "task_id": {
+          "$ref": "#/$defs/uuid"
+        }
+      }
+    },
+    "p_artifacts_export": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id",
+        "artifact_id",
+        "expected_sha256"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "artifact_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "expected_sha256": {
+          "$ref": "common.schema.json#/$defs/sha256"
+        }
+      }
+    },
+    "p_workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id",
+        "employee_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "employee_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "lease_token": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "p_settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id",
+        "expected_revision",
+        "settings"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "settings": {
+          "$ref": "config.schema.json"
+        }
+      }
+    },
+    "p_events_subscribe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id",
+        "employee_id",
+        "after_sequence_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "employee_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "after_sequence_id": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

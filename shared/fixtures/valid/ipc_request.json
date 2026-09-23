@@ -1,0 +1,18 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req-0000000001",
+  "method": "tasks.create",
+  "params": {
+    "schema_version": "1.0",
+    "correlation_id": "corr-0000000001",
+    "employee_id": "0f1e2d3c-4b5a-4968-8776-655443322110",
+    "objective": "Comparar duas propostas e gerar um relatorio",
+    "artifact_ids": [
+      "5e6f7a8b-9cad-4e5f-8a6b-7c8d9eafb0c1"
+    ],
+    "constraints": {
+      "external_writes": false,
+      "purchases": false
+    }
+  }
+}

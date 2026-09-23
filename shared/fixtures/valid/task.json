@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "task_id": "2b3c4d5e-6f7a-4b2c-9d3e-4f5a6b7c8d9e",
+  "owner_id": "1a2b3c4d-5e6f-4a1b-8c2d-3e4f5a6b7c8d",
+  "employee_id": "0f1e2d3c-4b5a-4968-8776-655443322110",
+  "objective": "Comparar duas propostas sinteticas e gerar um relatorio",
+  "constraints": {
+    "external_writes": false,
+    "purchases": false
+  },
+  "priority": "NORMAL",
+  "data_policy": "INTERNAL",
+  "budget_limit": {
+    "amount_minor": 500,
+    "currency": "USD"
+  },
+  "completion_criteria": [
+    {
+      "criterion_id": "8b9cadbe-cfd0-4b8c-bd9e-afb0c1d2e3f4",
+      "description": "Relatorio abre e cita as duas propostas",
+      "required": true
+    }
+  ],
+  "state": "CREATED",
+  "blocked_reason": null,
+  "version": 1,
+  "parent_task_id": null,
+  "deadline": null,
+  "created_at": "2026-09-22T12:00:00.000Z",
+  "updated_at": "2026-09-22T12:00:00.000Z"
+}
