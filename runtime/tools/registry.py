@@ -143,7 +143,7 @@ class ToolManifest:
 
 
 class ToolAdapter(Protocol):
-    def __call__(self, tool_input: dict[str, Any], context: Any) -> dict[str, Any]: ...
+    def __call__(self, tool_input: dict[str, Any], context: Any) -> Any: ...
 
 
 class ToolRegistry:
