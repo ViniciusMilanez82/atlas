@@ -36,8 +36,13 @@ def test_swift_client_talks_to_python_core(world: World) -> None:
     token_file.write_text(sessions.issue(world.owner, world.employee.id), encoding="utf-8")
     os.chmod(token_file, 0o600)
     try:
-        proc = subprocess.run([probe, str(server.path), str(token_file), world.employee.id],
-                              capture_output=True, text=True, timeout=60, check=False)
+        proc = subprocess.run(
+            [probe, str(server.path), str(token_file), world.employee.id],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
         assert proc.returncode == 0, proc.stderr
         out = json.loads(proc.stdout)
         assert out["health"]["result"]["status"] == "ok"

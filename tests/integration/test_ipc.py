@@ -16,7 +16,6 @@ from typing import Any
 
 import pytest
 
-from core.ipc.framing import MAX_FRAME, recv_frame, send_frame
 from core.ipc.server import PROTOCOL, UnixSocketServer, serve_connection
 from core.ipc.sessions import SessionRegistry
 from core.service import CoreService
@@ -26,6 +25,7 @@ from security.budget.budget import BudgetLimits, BudgetManager
 from security.policy.engine import PolicyEngine
 from shared.actors import Actor
 from shared.contracts import errors_for
+from shared.framing import MAX_FRAME, recv_frame, send_frame
 from shared.ids import new_id
 from storage.store import open_store
 from tests.conftest import World

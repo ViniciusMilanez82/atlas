@@ -90,9 +90,15 @@ def platform_backend() -> VaultBackend:
     import sys
 
     if sys.platform == "darwin":
-        raise VaultUnavailable(
-            "Keychain backend is implemented by the Swift Supervisor (AT-006.3) and is not built yet."
-        )
+        from security.vault.keychain_backend import from_environment
+
+        backend = from_environment()
+        if backend is None:
+            raise VaultUnavailable(
+                "Keychain service not configured: the Supervisor must start atlas-keychain-agent and set "
+                "ATLAS_KEYCHAIN_SOCKET and ATLAS_KEYCHAIN_TOKEN_FILE."
+            )
+        return backend
     raise VaultUnavailable(
         f"No secure credential backend for platform {sys.platform!r}. The Atlas product targets macOS "
         "Keychain; on this development host only synthetic test credentials may be used."
