@@ -22,15 +22,28 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - run: python -m pip install -r requirements-dev.lock
       - name: Swift toolchain
         run: swift --version
-      - name: Build Swift package
+      - name: Build Swift package (library, app, Keychain service, tools)
         run: swift build --package-path platform/macos/AtlasKit
-      - name: Swift tests (framing, IPC client, real Keychain round trip)
-        run: swift test --package-path platform/macos/AtlasKit
-      - run: python -m pip install -r requirements-dev.lock
-      - name: Python checks including the Swift<->Python IPC test
+      - name: Swift tests (framing, IPC, real Keychain, Supervisor with real processes)
+        run: |
+          ATLAS_PYTHON="$(which python)" ATLAS_REPO="$GITHUB_WORKSPACE"           ATLAS_KEYCHAIN_AGENT="$GITHUB_WORKSPACE/platform/macos/AtlasKit/.build/debug/atlas-keychain-agent"           swift test --package-path platform/macos/AtlasKit
+      - name: Python checks including Swift<->Python IPC and daemon E2E
         run: python scripts/check.py
         env:
           ATLAS_SWIFT_PROBE: ${{ github.workspace }}/platform/macos/AtlasKit/.build/debug/atlas-ipc-probe
           ATLAS_KEYCHAIN_AGENT: ${{ github.workspace }}/platform/macos/AtlasKit/.build/debug/atlas-keychain-agent
+      - name: Build development Atlas.app (embedded Python, ad-hoc signed, not notarized)
+        run: packaging/macos/build_app.sh "$RUNNER_TEMP/dist"
+      - name: Verify the bundle starts without system Python
+        run: |
+          env -i HOME="$HOME" PATH=/usr/bin:/bin             "$(swift build --package-path platform/macos/AtlasKit --show-bin-path)/atlas-bundle-check" "$RUNNER_TEMP/dist/Atlas.app"
+      - name: Package artifact
+        run: cd "$RUNNER_TEMP/dist" && ditto -c -k --keepParent Atlas.app Atlas-dev.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Atlas-dev-app
+          path: ${{ runner.temp }}/dist/Atlas-dev.zip
+          retention-days: 14

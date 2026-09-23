@@ -86,6 +86,7 @@ Estados: `FEITO` (testes executados e aprovados), `EM CURSO`, `A FAZER`, `BLOQUE
 | E3d | IPC autenticado + serviço atlas-core | FEITO (f4b6a48, correção de caminho no macOS) |
 | E4a | Swift AtlasKit: framing, cliente IPC, KeychainStore, teste Swift<->Python | FEITO no runner macOS (b7e95af) |
 | E4b | Ponte Keychain do Supervisor para o Vault Python (retira o xfail) | FEITO e testado no runner macOS |
-| E4c | App SwiftUI, Supervisor (SMAppService), empacotamento do núcleo | A FAZER; validação interativa BLOQUEADA (D-01) |
-| E4d | Criptografia do banco e backups | A FAZER; escolha de biblioteca D-09 |
+| E4c | App SwiftUI, Supervisor, pacote com Python embutido | FEITO e compilado/testado no runner macOS (Supervisor com processos reais, pacote headless); uso interativo e SMAppService: D-01 |
+| E4d | Criptografia de backups (AES-256-GCM) | FEITO; criptografia do banco em uso segue pendente (D-09) |
+| E5a | Daemon atlas-core + worker + métodos do app | FEITO; fluxo Alpha com Keychain real e modelo falso aprovado no CI macOS |
 | E4e | Workspace Linux ARM64 (Virtualization.framework), guest agent, rede mediada | BLOQUEADO (D-01: runner de CI não substitui Mac com virtualização) |

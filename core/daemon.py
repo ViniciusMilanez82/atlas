@@ -1,0 +1,204 @@
+"""atlas-core daemon (ADR-012/013): the only process that writes the database.
+
+Started by the Supervisor. On start it migrates the database, creates the identity on first run,
+recovers interrupted work (spec 12.4), issues the owner's local-app session token into a 0600 file,
+serves the IPC socket, and runs one worker that executes tasks only when intelligence is configured
+(credential in the Keychain, budget ceilings, validated model). Without intelligence, tasks stay
+queued and health says exactly why - nothing is simulated.
+
+    python -m core --data-dir DIR --ipc-dir DIR [--employee-name Atlas] [--openai-base-url URL]
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import signal
+import sys
+import threading
+from pathlib import Path
+from types import FrameType
+
+from core.intelligence import IntelligenceSetup
+from core.ipc.server import UnixSocketServer
+from core.ipc.sessions import SessionRegistry
+from core.service import CoreService
+from runtime.agent.loop import AgentRunner
+from runtime.artifacts.manager import ArtifactManager
+from runtime.memory.manager import MemoryManager
+from runtime.models.openai_responses import DEFAULT_BASE_URL
+from runtime.tasks.engine import TaskEngine
+from runtime.tools.builtin import BUILTIN_MANIFESTS, BuiltinTools
+from runtime.tools.registry import ToolRegistry
+from runtime.verification.verifier import DeliverableSpec, Verifier
+from security.broker.broker import Broker
+from security.budget.budget import BudgetLimits, BudgetManager
+from security.policy.engine import PolicyEngine
+from security.vault.vault import Vault, VaultBackend, VaultUnavailable, platform_backend
+from shared.actors import Actor
+from shared.clock import Clock, SystemClock
+from shared.errors import AtlasError
+from storage.repositories.identity import create_employee, create_owner
+from storage.store import open_store
+
+SUPERVISOR = Actor("supervisor", "atlas-supervisor", "internal")
+
+
+class Core:
+    def __init__(self, data_dir: Path, ipc_dir: Path, base_url: str, clock: Clock | None = None) -> None:
+        self.data_dir = data_dir
+        self.ipc_dir = ipc_dir
+        self.base_url = base_url
+        self.clock = clock or SystemClock()
+        self.db_path = data_dir / "atlas.sqlite"
+        self.store_root = data_dir / "artifacts"
+        self.stop = threading.Event()
+        data_dir.mkdir(parents=True, exist_ok=True)
+        self.vault_backend: VaultBackend | None
+        try:
+            self.vault_backend = platform_backend()
+            self.vault_reason = "ok"
+        except VaultUnavailable as exc:
+            self.vault_backend = None
+            self.vault_reason = str(exc)
+
+    # ---------------------------------------------------------------- wiring (one set per connection/thread)
+
+    def _components(self) -> tuple[object, Broker, IntelligenceSetup, ArtifactManager]:
+        conn = open_store(self.db_path, self.clock)
+        registry = ToolRegistry(conn, self.clock)
+        BuiltinTools(self.db_path, self.store_root, self.clock).register(registry, enabled_by=SUPERVISOR)
+        vault = Vault(conn, self.vault_backend, self.clock) if self.vault_backend else None
+        intel = IntelligenceSetup(conn, self.clock, vault, self.base_url)
+        cfg = intel.latest_config()
+        limits = BudgetLimits.from_config(cfg) if cfg else BudgetLimits("USD", None, None)
+        broker = Broker(
+            conn,
+            self.clock,
+            registry=registry,
+            policy=PolicyEngine(),
+            budget=BudgetManager(conn, self.clock, limits),
+            vault=vault,
+        )
+        return conn, broker, intel, ArtifactManager(conn, self.clock, self.store_root)
+
+    def service(self) -> CoreService:
+        _, broker, intel, artifacts = self._components()
+        return CoreService(broker.conn, self.clock, broker, intelligence=intel, artifacts=artifacts)
+
+    # ---------------------------------------------------------------- lifecycle
+
+    def bootstrap(self, owner_name: str, employee_name: str, locale: str, timezone: str) -> tuple[str, str]:
+        conn = open_store(self.db_path, self.clock)
+        try:
+            row = conn.execute("SELECT id, owner_id FROM employees ORDER BY created_at LIMIT 1").fetchone()
+            if row is None:
+                owner_id = create_owner(conn, self.clock, owner_name)
+                emp = create_employee(
+                    conn, self.clock, owner_id=owner_id, name=employee_name, locale=locale, timezone=timezone
+                )
+                return owner_id, emp.id
+            TaskEngine(conn, self.clock).recover_after_restart()
+            return str(row[1]), str(row[0])
+        finally:
+            conn.close()
+
+    def write_session(
+        self, sessions: SessionRegistry, owner_id: str, employee_id: str, socket_path: Path
+    ) -> Path:
+        token = sessions.issue(Actor("owner", owner_id, "local_app", strong_auth=False), employee_id)
+        path = self.ipc_dir / "session.json"
+        tmp = path.with_suffix(".tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "protocol": "1.0",
+                    "socket": str(socket_path),
+                    "owner_token": token,
+                    "employee_id": employee_id,
+                },
+                f,
+            )
+        os.replace(tmp, path)
+        return path
+
+    def worker(self, employee_id: str, interval: float) -> None:
+        _, broker, intel, artifacts = self._components()
+        memory = MemoryManager(broker.conn, self.clock)
+        verifier = Verifier(broker.conn, self.clock, artifacts)
+        tools = [m.tool_id for m in BUILTIN_MANIFESTS]
+        recovered = False
+        while not self.stop.is_set():
+            broker.collect_late_results()
+            try:
+                client = intel.build_client()
+            except AtlasError:
+                self.stop.wait(interval)
+                continue
+            if not recovered:
+                client.recover_attempts()
+                recovered = True
+            row = broker.conn.execute(
+                "SELECT id FROM tasks WHERE employee_id = ? AND state IN ('CREATED','READY')"
+                " ORDER BY CASE priority WHEN 'URGENT' THEN 0 WHEN 'HIGH' THEN 1 WHEN 'NORMAL' THEN 2 ELSE 3 END,"
+                " created_at LIMIT 1",
+                (employee_id,),
+            ).fetchone()
+            if row is None:
+                self.stop.wait(interval)
+                continue
+            inputs = broker.conn.execute(
+                "SELECT COUNT(*) FROM artifact_links WHERE task_id = ? AND relation = 'input'", (row[0],)
+            ).fetchone()[0]
+            spec = DeliverableSpec(min_chars=200, min_sources=min(int(inputs), 5))
+            runner = AgentRunner(
+                broker.conn,
+                self.clock,
+                broker=broker,
+                model=client,
+                memory=memory,
+                verifier=verifier,
+                tools=tools,
+                worker_id=f"worker-{os.getpid()}",
+            )
+            try:
+                runner.run(row[0], spec)
+            except AtlasError:
+                self.stop.wait(interval)
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="atlas-core")
+    ap.add_argument("--data-dir", type=Path, required=True)
+    ap.add_argument("--ipc-dir", type=Path, required=True)
+    ap.add_argument("--owner-name", default="Proprietario")
+    ap.add_argument("--employee-name", default="Atlas")
+    ap.add_argument("--locale", default="pt-BR")
+    ap.add_argument("--timezone", default="America/Sao_Paulo")
+    ap.add_argument("--openai-base-url", default=DEFAULT_BASE_URL)
+    ap.add_argument("--worker-interval", type=float, default=1.0)
+    args = ap.parse_args(argv)
+    if sys.platform == "win32":
+        print("atlas-core requires macOS or Linux (Unix domain sockets)", file=sys.stderr)
+        return 2
+    core = Core(args.data_dir, args.ipc_dir, args.openai_base_url)
+    owner_id, employee_id = core.bootstrap(args.owner_name, args.employee_name, args.locale, args.timezone)
+    sessions = SessionRegistry()
+    server = UnixSocketServer(args.ipc_dir, sessions, core.service)
+    core.write_session(sessions, owner_id, employee_id, server.path)
+    worker = threading.Thread(target=core.worker, args=(employee_id, args.worker_interval), daemon=True)
+    worker.start()
+
+    def shutdown(signum: int, frame: FrameType | None) -> None:
+        core.stop.set()
+        server.close()
+
+    signal.signal(signal.SIGTERM, shutdown)
+    signal.signal(signal.SIGINT, shutdown)
+    print(json.dumps({"event": "ready", "socket": str(server.path), "vault": core.vault_reason}), flush=True)
+    server.serve_forever()
+    worker.join(timeout=5)
+    (args.ipc_dir / "session.json").unlink(missing_ok=True)
+    return 0

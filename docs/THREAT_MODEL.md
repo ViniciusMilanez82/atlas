@@ -46,7 +46,7 @@ Todo conteúdo que cruza 3, 4, 5 ou 6 é **dado não confiável**, nunca instru�
 
 | ID | Ameaça | Controle | Estado |
 | --- | --- | --- | --- |
-| T-12 | Banco copiado do disco revela dados | Criptografia em repouso com chave no Keychain | **Pendente M2**: requer escolha de implementação auditada compatível com FTS5 e prova em Mac. Até lá, o banco depende do FileVault. |
+| T-12 | Banco ou backup copiado do disco revela dados | Backups: AES-256-GCM (`cryptography`), plaintext removido, adulteração detectada (`tests/recovery/test_backup_restore.py`). Banco em uso: pendente (D-09); até lá depende do FileVault. | PARCIAL |
 | T-13 | Segredo vazado em log | Filtro de redação em todo logger; JournalEvent sem campos livres de payload | `tests/security/test_redaction.py` |
 | T-14 | Runtime se autoeleva via settings | `settings.update` rejeita ampliação de segurança por schema (`const`) | `tests/contract/test_schemas.py::test_config_cannot_widen_security` |
 | T-15 | Restauração de backup reativa autorizações antigas | Restore revoga aprovações APPROVED/RESERVED e mandatos | `tests/recovery/test_backup_restore.py` |

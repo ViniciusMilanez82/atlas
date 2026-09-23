@@ -119,6 +119,10 @@ class ToolContext:
         self._secret = None
 
 
+_INFLIGHT: dict[str, tuple[str, ToolContext]] = {}
+_INFLIGHT_LOCK = threading.Lock()
+
+
 class Broker:
     def __init__(
         self,
@@ -144,8 +148,9 @@ class Broker:
         self.mandates = MandateStore(conn, clock)
         self.ledger = Ledger(conn, clock)
         self.grace_s = grace_s
-        self._inflight: dict[str, tuple[str, ToolContext]] = {}
-        self._inflight_lock = threading.Lock()
+        # Process-wide: a stop received on one IPC connection must reach work running in the worker.
+        self._inflight = _INFLIGHT
+        self._inflight_lock = _INFLIGHT_LOCK
         self._late: queue.Queue[tuple[str, AdapterOutcome]] = queue.Queue()
 
     # ================================================================== submit

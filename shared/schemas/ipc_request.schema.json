@@ -45,7 +45,12 @@
         "workspace.release",
         "settings.validate",
         "settings.update",
-        "events.subscribe"
+        "events.subscribe",
+        "identity.get",
+        "credentials.register",
+        "intelligence.check",
+        "artifacts.list",
+        "approvals.list"
       ]
     },
     "params": {
@@ -332,6 +337,86 @@
         "properties": {
           "params": {
             "$ref": "#/$defs/p_events_subscribe"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "identity.get"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_base"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "credentials.register"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_credentials_register"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "intelligence.check"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_intelligence_check"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "artifacts.list"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_task_ref"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "approvals.list"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_base"
           }
         }
       }
@@ -840,6 +925,64 @@
         "after_sequence_id": {
           "type": "integer",
           "minimum": 0
+        }
+      }
+    },
+    "p_credentials_register": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id",
+        "provider",
+        "secret_b64"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "provider": {
+          "type": "string",
+          "enum": [
+            "openai"
+          ]
+        },
+        "secret_b64": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 4096,
+          "pattern": "^[A-Za-z0-9+/=]+$"
+        }
+      }
+    },
+    "p_intelligence_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id",
+        "model_id",
+        "max_cost_minor"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "model_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9.\\-]*[a-z0-9]$",
+          "maxLength": 128
+        },
+        "max_cost_minor": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
         }
       }
     }
