@@ -212,7 +212,7 @@ def test_keychain_backend_round_trip(world: World) -> None:
             time.sleep(0.05)
         backend = KeychainAgentBackend(sock, token)
         vault = Vault(world.conn, backend, world.clock, Redactor())
-        ref = register(world, vault).id
+        ref = register(world, vault)
         assert SECRET.decode() not in "\n".join(world.conn.iterdump())  # DB holds only the reference
         with vault.use(
             ref, actor=CP, purpose="model_inference", destination="https://api.openai.com/v1/responses"

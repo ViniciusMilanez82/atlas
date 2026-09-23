@@ -32,6 +32,8 @@ class KeychainAgentBackend:
         self._timeout = timeout_s
 
     def _request(self, payload: dict[str, str]) -> dict[str, object]:
+        if sys.platform == "win32":
+            raise KeychainAgentError("the Keychain service runs only on macOS")
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(self._timeout)
         try:
