@@ -93,10 +93,10 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 | --- | --- | --- | --- | --- | --- |
 | REQ-11-1 | Policy Engine ALLOW/ASK/DENY com reason_code e policy_version; fail-closed; proibições primeiro | M3 | `security/policy/engine.py` | `test_policy.py` | OK |
 | REQ-11-2 | Classes R0–R5 com padrões da tabela 11.1; dados sensíveis elevam exigência | M3 | idem | idem | OK |
-| REQ-11-3 | Mandatos limitados | M3 | `security/approvals` | `test_approvals.py` | OK |
-| REQ-11-4 | Objeto de aprovação 11.2; status; reserva atômica | M3 | `approval.schema.json`, `security/approvals` | contrato + `test_approvals.py` | OK |
-| REQ-11-5 | Mudança material invalida aprovação | M3 | hash canônico | `test_approvals.py` | OK |
-| REQ-11-6 | LLM não emite autorização; texto externo não autoriza; R4 com confirmação forte | M3/M4 | `decide` exige ator owner autenticado localmente | `test_approvals.py`, `test_prompt_injection.py` | PARCIAL (autoridade OK; cartão de aprovação na UI: M4) |
+| REQ-11-3 | Mandatos limitados | M3 | `security/approvals` | `test_broker.py` | OK |
+| REQ-11-4 | Objeto de aprovação 11.2; status; reserva atômica | M3 | `approval.schema.json`, `security/approvals` | contrato + `test_broker.py` | OK |
+| REQ-11-5 | Mudança material invalida aprovação | M3 | hash canônico | `test_broker.py` | OK |
+| REQ-11-6 | LLM não emite autorização; texto externo não autoriza; R4 com confirmação forte | M3/M4 | `decide` exige ator owner autenticado localmente | `test_broker.py`, `test_prompt_injection.py` | PARCIAL (autoridade OK; cartão de aprovação na UI: M4) |
 | REQ-11-7 | Vault: Keychain; banco guarda só credential_ref; sem `read_secret` | M2 | `security/vault` | `test_vault.py` | PARCIAL (Keychain: D-01) |
 | REQ-11-8 | Controles da tabela 11.5 | vários | THREAT_MODEL | ver T-01..T-11 | PARCIAL |
 

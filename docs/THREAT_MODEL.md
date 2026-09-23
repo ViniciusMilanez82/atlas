@@ -35,7 +35,7 @@ Todo conteúdo que cruza 3, 4, 5 ou 6 é **dado não confiável**, nunca instru�
 | T-03 | Vazamento por ferramenta | Dados mínimos, destino permitido, broker | `tests/security/test_broker.py` (destino fora do escopo) | OK (broker, destino e SECRET_DATA_EGRESS) |
 | T-04 | Escape de workspace | VM, sem pastas pessoais, sem shell de host | M1: arquivo-sentinela no host | **NÃO EXECUTADO** (requer Mac) |
 | T-05 | Código malicioso | Execution Box sem segredos e sem rede | M8 | **NÃO EXECUTADO** (requer VM) |
-| T-06 | Replay de aprovação | Nonce, validade, hash canônico, consumo atômico | `tests/security/test_approvals.py` | OK |
+| T-06 | Replay de aprovação | Nonce, validade, hash canônico, consumo atômico | `tests/security/test_broker.py` (TestApprovalFlow, TestPurchases) | OK |
 | T-07 | Worker obsoleto | Lease com fencing token verificado no broker | `tests/integration/test_task_engine.py`, `tests/security/test_broker.py` | OK |
 | T-08 | Execução duplicada | Action Ledger, UNKNOWN, reconciliação | `tests/recovery/test_ledger_recovery.py` | OK |
 | T-09 | Abuso de custo | Reservas por tarefa e período, teto obrigatório | `tests/unit/test_budget.py` | OK |
