@@ -60,14 +60,32 @@ Estados: `FEITO` (testes executados e aprovados), `EM CURSO`, `A FAZER`, `BLOQUE
 
 | ID | Tarefa | Host | Estado |
 | --- | --- | --- | --- |
-| AT-011 | Adaptador OpenAI (catálogo, health, streaming, resposta normalizada) | any + D-03 para chamada real | PARCIAL: interfaces, preços e cliente com orçamento FEITOS; adaptador OpenAI real BLOQUEADO (D-03) |
+| AT-011 | Adaptador OpenAI (catálogo, health, streaming, resposta normalizada) | any + D-03 para chamada real | FEITO sem chamada real (adaptador Responses + teste local); validação real BLOQUEADA (D-03) |
 | AT-012.2 | Router por capacidade/privacidade/orçamento; modos simples | any | FEITO |
 | AT-013 | Memória: camadas, proveniência, FTS5, correção versionada, exclusão | any | FEITO (texto/FTS5, proveniência, correção, exclusão); índice semântico: pós-M6 |
-| AT-014 | Registry de ferramentas + Artifact Broker (any) e Execution Box (mac) | any / mac | A FAZER |
+| AT-014 | Registry de ferramentas + Artifact Broker (any) e Execution Box (mac) | any / mac | PARCIAL: Artifact Manager do host FEITO; Execution Box BLOQUEADO (D-01) |
 | AT-015 | Playwright no guest, perfis, takeover | mac | BLOQUEADO (D-01) |
-| AT-016 | Planner e Verifier | any + D-03 | A FAZER |
+| AT-016 | Planner e Verifier | any + D-03 | PARCIAL: laço + verificador FEITOS com modelo falso; qualidade real depende de D-03 |
 | AT-018 | Voz e canal remoto | mac + D-05/D-06/D-11 | BLOQUEADO |
 | AT-019 | Skills, atualização assinada, rollback | mac + D-07 | BLOQUEADO |
 | AT-020 | Release e aceitação | mac + D-07 | BLOQUEADO |
 | AT-003/004 | Provas de VM, tela, rede e sentinelas de host | mac | BLOQUEADO (D-01) |
 | AT-009 | App SwiftUI, onboarding, chat, diagnóstico | mac | BLOQUEADO (D-01) |
+
+## Revisão 21422f3 — achados e continuação (branch `impl/alpha-continuation`)
+
+| ID | Tarefa | Estado |
+| --- | --- | --- |
+| R-03 | Prazo, cancelamento em voo e conclusão tardia de ferramentas | FEITO (41f9a1c) |
+| R-04 | Ciclo de vida das reservas de inferência | FEITO (5047b00) |
+| R-02 | Teste real de provedor executável e opt-in | FEITO (ea79619); execução real BLOQUEADA (D-03) |
+| E2 | Adaptador OpenAI Responses + "Testar inteligência" | FEITO sem chamada real (ea79619) |
+| E3a | Artifact Manager (host) | FEITO (6f8c33a) |
+| E3b | Verificador objetivo | FEITO (6f8c33a) |
+| E3c | Laço do agente + ferramentas internas | FEITO com modelo falso (bee1ff9) |
+| E3d | IPC autenticado + serviço atlas-core | FEITO (f4b6a48, correção de caminho no macOS) |
+| E4a | Swift AtlasKit: framing, cliente IPC, KeychainStore, teste Swift<->Python | FEITO no runner macOS (b7e95af) |
+| E4b | Ponte Keychain do Supervisor para o Vault Python (retira o xfail) | A FAZER (testável no runner macOS) |
+| E4c | App SwiftUI, Supervisor (SMAppService), empacotamento do núcleo | A FAZER; validação interativa BLOQUEADA (D-01) |
+| E4d | Criptografia do banco e backups | A FAZER; escolha de biblioteca D-09 |
+| E4e | Workspace Linux ARM64 (Virtualization.framework), guest agent, rede mediada | BLOQUEADO (D-01: runner de CI não substitui Mac com virtualização) |

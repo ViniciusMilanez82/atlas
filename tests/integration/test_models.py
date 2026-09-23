@@ -266,6 +266,29 @@ class TestContextBuilder:
 
 
 @pytest.mark.provider
-def test_real_provider_intelligence_check() -> None:
-    """NAO EXECUTADO: requires owner-authorized API credential in the Vault and budget (D-03)."""
-    pytest.skip("NAO EXECUTADO (not executed): requires D-03 (API account, budget and consent)")
+def test_real_provider_intelligence_check(tmp_path: object) -> None:
+    """REAL, billable, opt-in. Default: NAO EXECUTADO (no spend). When requested with
+    ATLAS_REAL_PROVIDER_TEST=1, every prerequisite must be present or the test FAILS as a blocker -
+    it never passes without a verified real call."""
+    import os
+    from pathlib import Path
+
+    from runtime.models.intelligence_check import run_intelligence_check
+    from security.vault.vault import SecretValue
+
+    if os.environ.get("ATLAS_REAL_PROVIDER_TEST") != "1":
+        pytest.skip("NAO EXECUTADO (not executed): opt-in real call; set ATLAS_REAL_PROVIDER_TEST=1 (D-03)")
+    needed = ("ATLAS_OPENAI_API_KEY", "ATLAS_REAL_MODEL_ID", "ATLAS_REAL_MAX_COST_CENTS")
+    missing = [v for v in needed if not os.environ.get(v)]
+    if missing:
+        pytest.fail(f"BLOQUEADO: real provider test requested but missing {missing}")
+    key = os.environ["ATLAS_OPENAI_API_KEY"].encode()
+    report = run_intelligence_check(
+        key_provider=lambda: SecretValue(key),
+        model_id=os.environ["ATLAS_REAL_MODEL_ID"],
+        max_cost_minor=int(os.environ["ATLAS_REAL_MAX_COST_CENTS"]),
+        workdir=Path(str(tmp_path)),
+    )
+    evidence = Path(os.environ.get("ATLAS_EVIDENCE_DIR", str(tmp_path))) / "intelligence_check.json"
+    evidence.write_text(report.to_json(), encoding="utf-8")
+    assert report.passed, report.to_json()

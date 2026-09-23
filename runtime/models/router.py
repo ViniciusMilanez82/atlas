@@ -12,21 +12,27 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field
+from datetime import timedelta
 
 from runtime.models.pricing import PriceTable
 from runtime.models.types import (
+    Billing,
     ModelCapabilities,
     ModelProvider,
     ModelRequest,
     ModelResponse,
+    ProviderCallError,
     ProviderErrorKind,
     Usage,
 )
 from runtime.tasks.limits import CircuitBreaker
 from security.budget.budget import BudgetManager
-from shared.clock import Clock, to_utc_str
+from shared.actors import Actor
+from shared.clock import Clock, parse_utc, to_utc_str
 from shared.errors import AtlasError, ErrorCode
 from shared.ids import new_id
+from shared.money import Money
+from storage import journal
 from storage.db import transaction
 
 MODES = ("automatic", "economic", "max_quality", "manual")
@@ -132,7 +138,18 @@ class ModelRouter:
 
 
 class BudgetedModelClient:
-    """Reserve the maximum plausible cost, call, then settle with reported usage (spec 7.4)."""
+    """Reserve, record the attempt, call, then settle by confirmed usage (spec 7.4; finding R-04).
+
+    The attempt row and its reservation are committed before the request is sent. Outcomes:
+    * proven not sent / not billed -> reservation RELEASED;
+    * usage reported -> SETTLED at the real cost (overruns are recorded, never hidden);
+    * response without usage -> ESTIMATED at the reserved maximum, reconcilable later;
+    * anything uncertain (transport error, timeout, cancellation, 5xx) -> UNKNOWN, reservation held.
+    A crash between response and commit leaves IN_FLIGHT, which ``recover_attempts`` turns into
+    UNKNOWN. UNKNOWN attempts are resolved with evidence or, after the retention window, settled
+    conservatively at the reserved amount with an auditable journal entry. There is no blanket
+    ``finally`` that releases reservations.
+    """
 
     def __init__(
         self,
@@ -143,6 +160,7 @@ class BudgetedModelClient:
         prices: PriceTable,
         budget: BudgetManager,
         breakers: dict[str, CircuitBreaker] | None = None,
+        unknown_retention: timedelta = timedelta(days=7),
     ) -> None:
         self.conn = conn
         self.clock = clock
@@ -151,6 +169,59 @@ class BudgetedModelClient:
         self.prices = prices
         self.budget = budget
         self.breakers = breakers or {}
+        self.unknown_retention = unknown_retention
+
+    # ---------------------------------------------------------------- attempt bookkeeping
+
+    def _open_attempt(self, task_id: str, entry: CatalogEntry, amount: Money) -> tuple[str, str]:
+        with transaction(self.conn):
+            reservation = self.budget.reserve_in_txn(task_id=task_id, category="inference", amount=amount)
+            attempt_id = new_id()
+            self.conn.execute(
+                "INSERT INTO inference_attempts(id, task_id, reservation_id, provider, model_id, status, created_at)"
+                " VALUES (?,?,?,?,?,'IN_FLIGHT',?)",
+                (
+                    attempt_id,
+                    task_id,
+                    reservation.id,
+                    entry.provider,
+                    entry.model_id,
+                    to_utc_str(self.clock.now()),
+                ),
+            )
+        return attempt_id, reservation.id
+
+    def _close_in_txn(
+        self, attempt_id: str, status: str, diagnostic: str, request_id: str | None = None
+    ) -> None:
+        self.conn.execute(
+            "UPDATE inference_attempts SET status = ?, diagnostic = ?, request_id = COALESCE(?, request_id),"
+            " closed_at = ? WHERE id = ?",
+            (status, diagnostic[:500], request_id, to_utc_str(self.clock.now()), attempt_id),
+        )
+
+    def _journal(self, task_id: str, type_: str, summary: str) -> None:
+        emp = self.conn.execute("SELECT employee_id FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        journal.append(
+            self.conn,
+            self.clock,
+            employee_id=emp[0],
+            task_id=task_id,
+            type=type_,
+            actor=Actor("control_plane", "model-client", "internal"),
+            summary=summary,
+        )
+
+    def _mark_unknown(self, task_id: str, attempt_id: str, why: str) -> None:
+        with transaction(self.conn):
+            self._close_in_txn(attempt_id, "UNKNOWN", why)
+            self._journal(
+                task_id,
+                "inference.billing_unknown",
+                f"attempt {attempt_id}: {why}; reservation held for reconciliation",
+            )
+
+    # ---------------------------------------------------------------- call
 
     def call(self, *, task_id: str, req: Requirements, request: ModelRequest) -> ModelResponse:
         tried: set[str] = set()
@@ -167,8 +238,7 @@ class BudgetedModelClient:
             if entry is None:
                 break
             primary = primary or entry
-            key = f"{entry.provider}/{entry.model_id}"
-            tried.add(key)
+            tried.add(f"{entry.provider}/{entry.model_id}")
             breaker = self.breakers.setdefault(entry.provider, CircuitBreaker(self.clock))
             if not breaker.allow():
                 last_error = AtlasError(ErrorCode.PROVIDER_UNAVAILABLE, f"circuit open for {entry.provider}")
@@ -185,15 +255,57 @@ class BudgetedModelClient:
             )
             estimate = provider.estimate_usage(call_req)
             reserve_amount = price.max_cost(estimate.input_tokens, call_req.max_output_tokens)
-            with transaction(self.conn):
-                reservation = self.budget.reserve_in_txn(
-                    task_id=task_id, category="inference", amount=reserve_amount
-                )
-            response = provider.generate(call_req)
+            attempt_id, reservation_id = self._open_attempt(
+                task_id, entry, reserve_amount
+            )  # BudgetError propagates
+
+            try:
+                response = provider.generate(call_req)
+            except ProviderCallError as exc:
+                breaker.failure()
+                if exc.sent is False:
+                    with transaction(self.conn):
+                        self.budget.release_in_txn(reservation_id)
+                        self._close_in_txn(attempt_id, "RELEASED", f"not sent: {exc}")
+                else:
+                    self._mark_unknown(task_id, attempt_id, f"{exc.kind}: {exc} (sent={exc.sent})")
+                if exc.kind == ProviderErrorKind.CANCELLED:
+                    raise AtlasError(
+                        ErrorCode.PROVIDER_UNAVAILABLE,
+                        "model call cancelled",
+                        persisted="attempt recorded; billing reconciled later",
+                    ) from exc
+                last_error = AtlasError(ErrorCode.PROVIDER_UNAVAILABLE, str(exc))
+                continue
+            except Exception as exc:  # unexpected adapter bug: cannot know if it was sent
+                self._mark_unknown(task_id, attempt_id, f"adapter raised {type(exc).__name__}")
+                raise AtlasError(
+                    ErrorCode.PROVIDER_UNAVAILABLE,
+                    f"model adapter failed: {type(exc).__name__}",
+                    persisted="attempt recorded as UNKNOWN; reservation held",
+                ) from exc
+
             if response.error is not None:
-                with transaction(self.conn):
-                    self.budget.release_in_txn(reservation.id)
+                billing = response.error.effective_billing
                 kind = response.error.kind
+                with transaction(self.conn):
+                    if response.usage is not None:
+                        self.budget.settle_in_txn(reservation_id, price.cost(response.usage))
+                        self._close_in_txn(
+                            attempt_id, "SETTLED", f"{kind} with reported usage", response.request_id
+                        )
+                    elif billing == Billing.NONE:
+                        self.budget.release_in_txn(reservation_id)
+                        self._close_in_txn(attempt_id, "RELEASED", f"{kind}: not billed", response.request_id)
+                    else:
+                        self._close_in_txn(
+                            attempt_id, "UNKNOWN", f"{kind}: billing {billing}", response.request_id
+                        )
+                        self._journal(
+                            task_id,
+                            "inference.billing_unknown",
+                            f"attempt {attempt_id}: {kind}; reservation held for reconciliation",
+                        )
                 if kind in (ProviderErrorKind.RATE_LIMITED, ProviderErrorKind.UNAVAILABLE):
                     breaker.failure()
                     last_error = AtlasError(
@@ -212,11 +324,22 @@ class BudgetedModelClient:
                 if kind == ProviderErrorKind.POLICY:
                     raise AtlasError(ErrorCode.POLICY_DENIED, "provider refused the request; not rerouting")
                 raise AtlasError(ErrorCode.MODEL_UNSUPPORTED, response.error.message)
+
             breaker.success()
-            usage = response.usage or estimate
-            cost = price.cost(usage)
             with transaction(self.conn):
-                self.budget.settle_in_txn(reservation.id, cost)
+                if response.usage is not None:
+                    usage = response.usage
+                    cost = price.cost(usage)
+                    status, diag = "SETTLED", "usage reported"
+                    if cost.amount_minor > reserve_amount.amount_minor:
+                        diag = f"cost {cost.amount_minor} exceeded reservation {reserve_amount.amount_minor}"
+                        self._journal(task_id, "budget.overrun", f"attempt {attempt_id}: {diag}")
+                else:
+                    usage = estimate
+                    cost = reserve_amount
+                    status, diag = "ESTIMATED", "provider reported no usage; settled at reserved maximum"
+                self.budget.settle_in_txn(reservation_id, cost)
+                self._close_in_txn(attempt_id, status, diag, response.request_id)
                 self._record_usage(
                     task_id,
                     entry,
@@ -225,7 +348,7 @@ class BudgetedModelClient:
                     reserve_amount.amount_minor,
                     cost.amount_minor,
                     cost.currency,
-                    reservation.id,
+                    reservation_id,
                 )
             return ModelResponse(
                 response.provider,
@@ -238,6 +361,75 @@ class BudgetedModelClient:
                 cost,
             )
         raise last_error or AtlasError(ErrorCode.PROVIDER_UNAVAILABLE, "no compatible model available")
+
+    # ---------------------------------------------------------------- recovery and reconciliation
+
+    def recover_attempts(self) -> list[str]:
+        """After a restart, IN_FLIGHT attempts cannot be known: mark them UNKNOWN (reservation held)."""
+        rows = self.conn.execute(
+            "SELECT id, task_id FROM inference_attempts WHERE status = 'IN_FLIGHT'"
+        ).fetchall()
+        for r in rows:
+            self._mark_unknown(r["task_id"], r["id"], "interrupted before the outcome was committed")
+        return [r["id"] for r in rows]
+
+    def resolve_attempt(self, attempt_id: str, *, actor: Actor, charged: Money | None, evidence: str) -> str:
+        """Resolve UNKNOWN/ESTIMATED with evidence (e.g. provider usage export). ``charged=None`` means
+        the evidence shows no charge."""
+        if actor.kind not in ("owner", "control_plane"):
+            raise AtlasError(
+                ErrorCode.UNAUTHORIZED, "only the owner or a trusted reconciler resolves billing"
+            )
+        if not evidence.strip():
+            raise AtlasError(ErrorCode.INVALID_INPUT, "resolution requires evidence")
+        row = self.conn.execute("SELECT * FROM inference_attempts WHERE id = ?", (attempt_id,)).fetchone()
+        if row is None or row["status"] not in ("UNKNOWN", "ESTIMATED"):
+            raise AtlasError(ErrorCode.VERSION_CONFLICT, "attempt is not awaiting reconciliation")
+        with transaction(self.conn):
+            if row["status"] == "UNKNOWN":
+                if charged is None:
+                    self.budget.release_in_txn(row["reservation_id"])
+                else:
+                    self.budget.settle_in_txn(row["reservation_id"], charged)
+            else:  # ESTIMATED: correct the settled amount to the real charge
+                self.conn.execute(
+                    "UPDATE budget_reservations SET settled_minor = ? WHERE id = ?",
+                    (charged.amount_minor if charged else 0, row["reservation_id"]),
+                )
+            self._close_in_txn(attempt_id, "RESOLVED", f"resolved by {actor.kind}: {evidence}")
+            self._journal(
+                row["task_id"],
+                "inference.reconciled",
+                f"attempt {attempt_id} resolved: {'charged' if charged else 'no charge'}",
+            )
+        return "RESOLVED"
+
+    def expire_unknown(self) -> list[str]:
+        """Retention policy: UNKNOWN older than the window is settled conservatively at the reserved
+        amount (never released blindly) and journaled, so reservations do not stay open forever."""
+        cutoff = self.clock.now() - self.unknown_retention
+        expired = []
+        for r in self.conn.execute(
+            "SELECT a.id, a.task_id, a.reservation_id, a.created_at, b.amount_minor, b.currency"
+            " FROM inference_attempts a JOIN budget_reservations b ON b.id = a.reservation_id"
+            " WHERE a.status = 'UNKNOWN'"
+        ).fetchall():
+            if parse_utc(r["created_at"]) > cutoff:
+                continue
+            with transaction(self.conn):
+                self.budget.settle_in_txn(r["reservation_id"], Money(r["amount_minor"], r["currency"]))
+                self._close_in_txn(
+                    r["id"],
+                    "RESOLVED",
+                    f"retention window {self.unknown_retention} elapsed: settled at reserved maximum",
+                )
+                self._journal(
+                    r["task_id"],
+                    "inference.reconciled",
+                    f"attempt {r['id']} settled conservatively after retention window",
+                )
+            expired.append(r["id"])
+        return expired
 
     def _record_usage(
         self,

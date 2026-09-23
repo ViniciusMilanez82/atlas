@@ -78,6 +78,27 @@ class ProviderErrorKind(StrEnum):
     POLICY = "POLICY"  # provider refused content: never route around it with another model
     INVALID_REQUEST = "INVALID_REQUEST"
     MODEL_NOT_FOUND = "MODEL_NOT_FOUND"
+    CANCELLED = "CANCELLED"
+
+
+class Billing(StrEnum):
+    """What is known about charges for a failed call."""
+
+    NONE = "none"  # rejected before processing (documented by the adapter per status/error)
+    UNKNOWN = "unknown"  # may have been processed and billed
+    CHARGED = "charged"  # usage reported despite the error
+
+
+# Conservative defaults when an adapter does not state billing explicitly.
+DEFAULT_BILLING: dict[ProviderErrorKind, Billing] = {
+    ProviderErrorKind.RATE_LIMITED: Billing.NONE,
+    ProviderErrorKind.AUTH: Billing.NONE,
+    ProviderErrorKind.INVALID_REQUEST: Billing.NONE,
+    ProviderErrorKind.MODEL_NOT_FOUND: Billing.NONE,
+    ProviderErrorKind.UNAVAILABLE: Billing.UNKNOWN,
+    ProviderErrorKind.POLICY: Billing.UNKNOWN,
+    ProviderErrorKind.CANCELLED: Billing.UNKNOWN,
+}
 
 
 @dataclass(frozen=True)
@@ -85,6 +106,23 @@ class ProviderError:
     kind: ProviderErrorKind
     message: str
     retry_after_s: float | None = None
+    billing: Billing | None = None  # None: use DEFAULT_BILLING for the kind
+
+    @property
+    def effective_billing(self) -> Billing:
+        return self.billing if self.billing is not None else DEFAULT_BILLING[self.kind]
+
+
+class ProviderCallError(Exception):
+    """Raised by adapters for transport-level failures. ``sent`` states whether the request left the
+    machine: False = proven not sent; None = unknown (e.g. timeout after the request was written)."""
+
+    def __init__(
+        self, message: str, *, sent: bool | None, kind: ProviderErrorKind = ProviderErrorKind.UNAVAILABLE
+    ):
+        super().__init__(message)
+        self.sent = sent
+        self.kind = kind
 
 
 @dataclass(frozen=True)

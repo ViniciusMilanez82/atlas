@@ -84,6 +84,7 @@ class ToolManifest:
     credential_purpose: str | None = None
     verification: str = "deterministic_check"
     purchase_fields: tuple[str, ...] = field(default=())
+    isolation: str = "thread"  # thread: trusted cooperative adapter; process: killable child process
 
     def to_json(self) -> dict[str, Any]:
         d = asdict(self)
@@ -127,6 +128,12 @@ class ToolManifest:
             raise RegistryError("cost_field and cost_category go together")
         if "commerce.purchase" in caps and (self.cost_category != "purchase" or not self.purchase_fields):
             raise RegistryError("purchase tools must declare cost and purchase detail fields")
+        if self.isolation not in ("thread", "process"):
+            raise RegistryError("isolation must be 'thread' or 'process'")
+        if self.isolation == "process" and self.credential_purpose is not None:
+            raise RegistryError("process-isolated tools never receive credentials")
+        if not 0 < self.timeout_s <= 600:
+            raise RegistryError("timeout_s must be between 1 and 600 seconds")
         Draft202012Validator.check_schema(self.input_schema)
         if (
             self.input_schema.get("type") != "object"
@@ -136,7 +143,7 @@ class ToolManifest:
 
 
 class ToolAdapter(Protocol):
-    def __call__(self, tool_input: dict[str, Any], context: Any) -> dict[str, Any]: ...
+    def __call__(self, tool_input: dict[str, Any], context: Any) -> Any: ...
 
 
 class ToolRegistry:

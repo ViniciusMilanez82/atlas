@@ -19,10 +19,10 @@ the budget stays reserved and the task is BLOCKED(EXTERNAL_EFFECT_UNKNOWN) until
 from __future__ import annotations
 
 import json
+import queue
 import sqlite3
+import threading
 import time
-from collections.abc import Iterator
-from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -33,10 +33,11 @@ from runtime.tasks.state_machine import TaskState
 from runtime.tools.registry import RegistryError, ToolManifest, ToolRegistry
 from security.approvals.engine import ApprovalEngine
 from security.approvals.mandates import MandateStore
+from security.broker.executor import DEFAULT_GRACE_S, run_in_process, run_in_thread
 from security.broker.ledger import Ledger
 from security.budget.budget import BudgetError, BudgetManager
 from security.policy.engine import MandateView, Outcome, PolicyEngine, PolicyRequest
-from security.vault.vault import SecretValue, Vault
+from security.vault.vault import SecretValue, Vault, VaultError
 from shared.actors import Actor
 from shared.canonical import canonical_hash
 from shared.clock import Clock, parse_utc, to_utc_str
@@ -83,37 +84,39 @@ class DispatchResult:
 
 
 class ToolContext:
-    """Handed to adapters. Exposes credentials only through the Vault's scoped release."""
+    """Handed to adapters. Holds at most one secret, released by the Vault in the broker thread for
+    the tool's declared purpose and this action's destination. Adapters must honour ``cancelled``."""
 
     def __init__(
         self,
-        broker: Broker,
         manifest: ToolManifest,
         action_id: str,
         destination: str | None,
         idempotency_key: str | None,
+        deadline_s: float,
+        secret: SecretValue | None = None,
     ) -> None:
-        self._broker = broker
         self._manifest = manifest
         self.action_id = action_id
         self.destination = destination
         self.idempotency_key = idempotency_key
+        self.deadline_s = deadline_s
+        self.cancel_event = threading.Event()
+        self._secret = secret
 
-    @contextmanager
-    def credential(self, credential_ref_id: str) -> Iterator[SecretValue]:
-        if (
-            self._broker.vault is None
-            or self._manifest.credential_purpose is None
-            or self.destination is None
-        ):
-            raise AtlasError(ErrorCode.UNAUTHORIZED, "this tool has no credential purpose or destination")
-        with self._broker.vault.use(
-            credential_ref_id,
-            actor=BROKER,
-            purpose=self._manifest.credential_purpose,
-            destination=self.destination,
-        ) as secret:
-            yield secret
+    @property
+    def cancelled(self) -> bool:
+        return self.cancel_event.is_set()
+
+    def secret(self) -> SecretValue:
+        if self._secret is None:
+            raise AtlasError(ErrorCode.UNAUTHORIZED, "this tool has no credential for this destination")
+        if self.cancelled:
+            raise AtlasError(ErrorCode.UNAUTHORIZED, "action was cancelled; credential withdrawn")
+        return self._secret
+
+    def close(self) -> None:
+        self._secret = None
 
 
 class Broker:
@@ -127,6 +130,7 @@ class Broker:
         budget: BudgetManager,
         owner_channels: frozenset[str] = frozenset(),
         vault: Vault | None = None,
+        grace_s: float = DEFAULT_GRACE_S,
     ) -> None:
         self.conn = conn
         self.clock = clock
@@ -139,6 +143,10 @@ class Broker:
         self.approvals = ApprovalEngine(conn, clock)
         self.mandates = MandateStore(conn, clock)
         self.ledger = Ledger(conn, clock)
+        self.grace_s = grace_s
+        self._inflight: dict[str, tuple[str, ToolContext]] = {}
+        self._inflight_lock = threading.Lock()
+        self._late: queue.Queue[tuple[str, AdapterOutcome]] = queue.Queue()
 
     # ================================================================== submit
 
@@ -181,24 +189,149 @@ class Broker:
                 self._journal_rejection(lease, str(exc))
             raise
 
-        # --- phase 2: execute outside the transaction
+        # --- phase 2: execute outside the transaction, under a deadline (review finding R-03)
         started = time.perf_counter()
-        ctx = ToolContext(self, manifest, action_id, destination, idem_key)
-        try:
-            raw = adapter(tool_input, ctx)
-            outcome = raw if isinstance(raw, AdapterOutcome) else AdapterOutcome(**raw)
-        except Exception as exc:  # adapter crash/timeout: effect may or may not have happened
-            outcome = AdapterOutcome(
-                status="FAILED" if manifest.effect_class == "READ_ONLY" else "UNKNOWN",
-                error_message=f"adapter raised {type(exc).__name__}",
-                retryable=manifest.effect_class == "READ_ONLY",
-            )
+        outcome = self._execute(
+            manifest, adapter, tool_input, action_id, lease.task_id, destination, idem_key
+        )
         duration_ms = int((time.perf_counter() - started) * 1000)
 
         # --- phase 3: settle
         result = self._settle(action_id, manifest, outcome, cost, duration_ms, lease)
         result.warnings = warnings
         return result
+
+    # ------------------------------------------------------------------ execution
+
+    def _release_secret(self, manifest: ToolManifest, destination: str | None) -> SecretValue | None:
+        if manifest.credential_purpose is None:
+            return None
+        if self.vault is None or destination is None:
+            raise AtlasError(ErrorCode.UNAUTHORIZED, "credential required but no vault/destination available")
+        ref_id = self.vault.find_ref(purpose=manifest.credential_purpose, destination=destination)
+        with self.vault.use(
+            ref_id, actor=BROKER, purpose=manifest.credential_purpose, destination=destination
+        ) as secret:
+            return SecretValue(secret.reveal())
+
+    @staticmethod
+    def _to_outcome(manifest: ToolManifest, value: Any, error: BaseException | None) -> AdapterOutcome:
+        if error is not None:
+            return AdapterOutcome(
+                status="FAILED" if manifest.effect_class == "READ_ONLY" else "UNKNOWN",
+                error_message=f"adapter raised {type(error).__name__}",
+                retryable=manifest.effect_class == "READ_ONLY",
+            )
+        if isinstance(value, AdapterOutcome):
+            return value
+        try:
+            return AdapterOutcome(**value)
+        except TypeError:
+            return AdapterOutcome(status="UNKNOWN", error_message="adapter returned an invalid outcome")
+
+    def _execute(
+        self,
+        manifest: ToolManifest,
+        adapter: Any,
+        tool_input: dict[str, Any],
+        action_id: str,
+        task_id: str,
+        destination: str | None,
+        idem_key: str | None,
+    ) -> AdapterOutcome:
+        # Any write (local or external) interrupted by the deadline may already have happened.
+        external = manifest.effect_class != "READ_ONLY"
+        if manifest.isolation == "process":
+            rep = run_in_process(adapter, tool_input, timeout_s=manifest.timeout_s)
+            if rep.finished:
+                return self._to_outcome(manifest, rep.value, rep.error)
+            return AdapterOutcome(
+                status="UNKNOWN" if external else "FAILED",
+                error_message="DEADLINE_EXCEEDED: tool process terminated",
+                retryable=not external,
+            )
+        try:
+            secret = self._release_secret(manifest, destination)
+        except (AtlasError, VaultError) as exc:
+            return AdapterOutcome(status="FAILED", error_message=f"credential unavailable: {exc}")
+        ctx = ToolContext(manifest, action_id, destination, idem_key, float(manifest.timeout_s), secret)
+        with self._inflight_lock:
+            self._inflight[action_id] = (task_id, ctx)
+
+        def on_late(value: Any, error: BaseException | None) -> None:
+            ctx.close()
+            self._late.put((action_id, self._to_outcome(manifest, value, error)))
+
+        try:
+            rep = run_in_thread(
+                lambda: adapter(tool_input, ctx),
+                timeout_s=manifest.timeout_s,
+                cancel_event=ctx.cancel_event,
+                grace_s=self.grace_s,
+                on_late=on_late,
+            )
+        finally:
+            with self._inflight_lock:
+                self._inflight.pop(action_id, None)
+        if rep.finished:
+            ctx.close()
+            return self._to_outcome(manifest, rep.value, rep.error)
+        return AdapterOutcome(
+            status="UNKNOWN" if external else "FAILED",
+            error_message="DEADLINE_EXCEEDED: adapter did not finish; a late result is recorded if it arrives",
+            retryable=not external,
+        )
+
+    def request_cancel(self, task_id: str) -> list[str]:
+        """Ask in-flight operations of a task to stop.
+
+        Thread-safe and DB-free, so the owner's stop reaches an action that is already running. Whether
+        the effect happened is still decided by the adapter's report or by reconciliation, never assumed.
+        """
+        hit: list[str] = []
+        with self._inflight_lock:
+            for action_id, (tid, ctx) in self._inflight.items():
+                if tid == task_id:
+                    ctx.cancel_event.set()
+                    hit.append(action_id)
+        return hit
+
+    def collect_late_results(self) -> list[tuple[str, str]]:
+        """Record results that arrived after the deadline (call from the broker's own thread).
+
+        A late trusted report resolves an UNKNOWN action like reconciliation evidence. It never
+        re-enables the worker: the task needs a valid state and a fresh lease for any further step.
+        """
+        done: list[tuple[str, str]] = []
+        while True:
+            try:
+                action_id, outcome = self._late.get_nowait()
+            except queue.Empty:
+                return done
+            action = self.ledger.get(action_id)
+            manifest, _ = self.registry.resolve(action["tool_id"], action["tool_version"])
+            if action["status"] != "UNKNOWN":
+                done.append((action_id, f"ignored: action already {action['status']}"))
+                continue
+            receipt_ok = manifest.verification != "provider_receipt" or bool(outcome.external_reference)
+            if outcome.status == "SUCCEEDED" and receipt_ok:
+                final = self.reconcile(
+                    action_id,
+                    actor=BROKER,
+                    happened=True,
+                    evidence="late completion reported by the trusted adapter",
+                    external_reference=outcome.external_reference,
+                )
+            elif outcome.status == "FAILED":
+                final = self.reconcile(
+                    action_id,
+                    actor=BROKER,
+                    happened=False,
+                    evidence="late report from the trusted adapter: operation not performed",
+                )
+            else:
+                final = "UNKNOWN"
+            done.append((action_id, final))
 
     # ------------------------------------------------------------------ helpers
 

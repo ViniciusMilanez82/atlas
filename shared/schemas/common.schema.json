@@ -3,7 +3,10 @@
   "$id": "https://atlas.local/schemas/common.schema.json",
   "title": "Atlas common definitions",
   "$defs": {
-    "schema_version": { "type": "string", "const": "1.0" },
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
     "uuid": {
       "type": "string",
       "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
@@ -17,7 +20,10 @@
       "type": "string",
       "pattern": "^(UTC|[A-Za-z_]+(/[A-Za-z0-9_+\\-]+){1,2})$"
     },
-    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
     "currency": {
       "description": "ISO 4217 alphabetic code. Minor-unit exponent is resolved by shared.money, never assumed to be 2.",
       "type": "string",
@@ -26,46 +32,108 @@
     "money": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["amount_minor", "currency"],
+      "required": [
+        "amount_minor",
+        "currency"
+      ],
       "properties": {
-        "amount_minor": { "type": "integer", "minimum": 0 },
-        "currency": { "$ref": "#/$defs/currency" }
+        "amount_minor": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "$ref": "#/$defs/currency"
+        }
       }
     },
     "effect_class": {
       "type": "string",
-      "enum": ["READ_ONLY", "LOCAL_WRITE", "EXTERNAL_WRITE", "IRREVERSIBLE"]
+      "enum": [
+        "READ_ONLY",
+        "LOCAL_WRITE",
+        "EXTERNAL_WRITE",
+        "IRREVERSIBLE"
+      ]
     },
-    "risk_class": { "type": "string", "enum": ["R0", "R1", "R2", "R3", "R4", "R5"] },
+    "risk_class": {
+      "type": "string",
+      "enum": [
+        "R0",
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5"
+      ]
+    },
     "data_classification": {
       "type": "string",
-      "enum": ["PUBLIC", "INTERNAL", "PERSONAL", "SENSITIVE", "SECRET"]
+      "enum": [
+        "PUBLIC",
+        "INTERNAL",
+        "PERSONAL",
+        "SENSITIVE",
+        "SECRET"
+      ]
     },
     "task_state": {
       "type": "string",
       "enum": [
-        "CREATED", "UNDERSTANDING", "PLANNING", "READY", "RUNNING", "WAITING_USER",
-        "WAITING_APPROVAL", "BLOCKED", "RETRYING", "PAUSED", "VERIFYING", "COMPLETED",
-        "FAILED", "CANCELLED"
+        "CREATED",
+        "UNDERSTANDING",
+        "PLANNING",
+        "READY",
+        "RUNNING",
+        "WAITING_USER",
+        "WAITING_APPROVAL",
+        "BLOCKED",
+        "RETRYING",
+        "PAUSED",
+        "VERIFYING",
+        "COMPLETED",
+        "FAILED",
+        "CANCELLED"
       ]
     },
     "approval_status": {
       "type": "string",
-      "enum": ["PENDING", "APPROVED", "REJECTED", "EXPIRED", "REVOKED", "RESERVED", "CONSUMED"]
+      "enum": [
+        "PENDING",
+        "APPROVED",
+        "REJECTED",
+        "EXPIRED",
+        "REVOKED",
+        "RESERVED",
+        "CONSUMED"
+      ]
     },
     "action_status": {
       "type": "string",
       "enum": [
-        "PROPOSED", "AUTHORIZED", "DISPATCHING", "CONFIRMED", "FAILED", "UNKNOWN",
+        "PROPOSED",
+        "AUTHORIZED",
+        "DISPATCHING",
+        "CONFIRMED",
+        "FAILED",
+        "UNKNOWN",
         "CANCELLED_BEFORE_DISPATCH"
       ]
     },
     "error_code": {
       "type": "string",
       "enum": [
-        "INVALID_INPUT", "UNAUTHORIZED", "POLICY_DENIED", "APPROVAL_REQUIRED",
-        "BUDGET_EXCEEDED", "PROVIDER_UNAVAILABLE", "MODEL_UNSUPPORTED", "WORKSPACE_OFFLINE",
-        "EXTERNAL_EFFECT_UNKNOWN", "VERSION_CONFLICT", "RATE_LIMITED"
+        "INVALID_INPUT",
+        "UNAUTHORIZED",
+        "POLICY_DENIED",
+        "APPROVAL_REQUIRED",
+        "BUDGET_EXCEEDED",
+        "PROVIDER_UNAVAILABLE",
+        "MODEL_UNSUPPORTED",
+        "WORKSPACE_OFFLINE",
+        "EXTERNAL_EFFECT_UNKNOWN",
+        "VERSION_CONFLICT",
+        "RATE_LIMITED",
+        "INTERNAL_ERROR"
       ]
     },
     "tool_id": {
@@ -73,13 +141,24 @@
       "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
       "maxLength": 128
     },
-    "semver": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "semver": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
     "correlation_id": {
       "type": "string",
       "minLength": 8,
       "maxLength": 128,
       "pattern": "^[A-Za-z0-9_.:-]+$"
     },
-    "priority": { "type": "string", "enum": ["LOW", "NORMAL", "HIGH", "URGENT"] }
+    "priority": {
+      "type": "string",
+      "enum": [
+        "LOW",
+        "NORMAL",
+        "HIGH",
+        "URGENT"
+      ]
+    }
   }
 }

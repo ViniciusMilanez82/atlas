@@ -81,7 +81,7 @@ def test_no_production_code_spawns_a_host_shell() -> None:
     """Spec 5.4 / 10.1: no free shell on the host. Production packages must not use shell=True,
     os.system or os.popen. Dev scripts under scripts/ are excluded (they run on the developer box)."""
     offenders = []
-    for pkg in ("shared", "storage", "security", "runtime"):
+    for pkg in ("shared", "storage", "security", "runtime", "core"):
         for path in (ROOT / pkg).rglob("*.py"):
             text = path.read_text(encoding="utf-8")
             for needle in ("shell=True", "os.system(", "os.popen(", "import subprocess"):
@@ -92,7 +92,7 @@ def test_no_production_code_spawns_a_host_shell() -> None:
 
 def test_test_fakes_are_not_importable_from_production_packages() -> None:
     offenders = []
-    for pkg in ("shared", "storage", "security", "runtime"):
+    for pkg in ("shared", "storage", "security", "runtime", "core"):
         for path in (ROOT / pkg).rglob("*.py"):
             text = path.read_text(encoding="utf-8")
             if "tests.fakes" in text or "from tests" in text:

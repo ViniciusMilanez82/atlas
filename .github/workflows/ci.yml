@@ -1,4 +1,6 @@
-# Never executed yet: the repository has no remote (docs/EXTERNAL_DEPENDENCIES.md D-10).
+# CI for the Python core on Linux and macOS (public repo ViniciusMilanez82/atlas).
+# The macOS job also builds and tests the Swift package platform/macos/AtlasKit and runs the
+# Swift<->Python IPC contract test. It does not prove the interactive app, VM or the owner's Mac.
 name: ci
 on: [push, pull_request]
 permissions:
@@ -14,12 +16,20 @@ jobs:
       - run: python -m pip install -r requirements-dev.lock
       - run: python scripts/check.py
   core-macos:
-    # Runs the Python core on macOS. Swift, VM and Keychain jobs are added with M1/M2/M4.
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Swift toolchain
+        run: swift --version
+      - name: Build Swift package
+        run: swift build --package-path platform/macos/AtlasKit
+      - name: Swift tests (framing, IPC client, real Keychain round trip)
+        run: swift test --package-path platform/macos/AtlasKit
       - run: python -m pip install -r requirements-dev.lock
-      - run: python scripts/check.py
+      - name: Python checks including the Swift<->Python IPC test
+        run: python scripts/check.py
+        env:
+          ATLAS_SWIFT_PROBE: ${{ github.workspace }}/platform/macos/AtlasKit/.build/debug/atlas-ipc-probe

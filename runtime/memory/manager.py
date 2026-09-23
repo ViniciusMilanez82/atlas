@@ -47,12 +47,24 @@ class MemoryHit:
     valid_until: str | None
 
 
-def _fts_query(text: str) -> str:
-    """Turn free text into a safe FTS5 query (quoted terms joined with AND)."""
+STOPWORDS = frozenset(
+    "a o as os um uma de da do das dos e em no na nos nas para por com sem que se ao aos the and or of to in for "
+    "with on is are be this that".split()
+)
+
+
+def _fts_query(text: str, match_any: bool = False) -> str:
+    """Turn free text into a safe FTS5 query of quoted terms.
+
+    ``match_any`` (used for context retrieval) ORs the significant terms and lets bm25 rank; the default
+    requires every term (precise lookups).
+    """
     terms = re.findall(r"\w+", text, flags=re.UNICODE)
+    if match_any:
+        terms = [t for t in terms if len(t) >= 4 and t.lower() not in STOPWORDS]
     if not terms:
         raise AtlasError(ErrorCode.INVALID_INPUT, "empty search query")
-    return " AND ".join(f'"{t}"' for t in terms[:32])
+    return (" OR " if match_any else " AND ").join(f'"{t}"' for t in terms[:32])
 
 
 class MemoryManager:
@@ -284,6 +296,7 @@ class MemoryManager:
         include_proposed: bool = False,
         at: datetime | None = None,
         limit: int = 20,
+        match_any: bool = False,
     ) -> list[MemoryHit]:
         """Text search restricted to one employee, current versions and the validity window.
 
@@ -300,7 +313,7 @@ class MemoryManager:
             " JOIN sources s ON s.id = v.source_id"
             " WHERE memory_fts MATCH ? AND m.employee_id = ? AND m.status IN (?, ?, ?)"
             " ORDER BY bm25(memory_fts) LIMIT ?",
-            (_fts_query(query), employee_id, *statuses, limit * 3),
+            (_fts_query(query, match_any), employee_id, *statuses, limit * 3),
         ).fetchall()
         hits: list[MemoryHit] = []
         for r in rows:

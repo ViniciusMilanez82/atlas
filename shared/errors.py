@@ -20,6 +20,7 @@ class ErrorCode(StrEnum):
     EXTERNAL_EFFECT_UNKNOWN = "EXTERNAL_EFFECT_UNKNOWN"
     VERSION_CONFLICT = "VERSION_CONFLICT"
     RATE_LIMITED = "RATE_LIMITED"
+    INTERNAL_ERROR = "INTERNAL_ERROR"  # unexpected failure; details stay in local diagnostics
 
 
 # JSON-RPC server error range (-32000..-32099) mapping.
@@ -35,6 +36,7 @@ JSONRPC_CODE: dict[ErrorCode, int] = {
     ErrorCode.EXTERNAL_EFFECT_UNKNOWN: -32008,
     ErrorCode.VERSION_CONFLICT: -32009,
     ErrorCode.RATE_LIMITED: -32010,
+    ErrorCode.INTERNAL_ERROR: -32603,
 }
 
 DEFAULT_RETRYABLE: dict[ErrorCode, bool] = {
@@ -50,6 +52,7 @@ DEFAULT_RETRYABLE: dict[ErrorCode, bool] = {
     ErrorCode.EXTERNAL_EFFECT_UNKNOWN: False,
     ErrorCode.VERSION_CONFLICT: True,
     ErrorCode.RATE_LIMITED: True,
+    ErrorCode.INTERNAL_ERROR: False,
 }
 
 

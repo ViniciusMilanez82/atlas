@@ -22,7 +22,7 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 | UX-005 | Perfil seguro; compras sem autorização; teto com moeda e período | M3/M6 | config + budget | `test_config_cannot_widen_security`, `test_budget.py` | PARCIAL |
 | UX-006 | Canal do proprietário verificado; pareamento local | M14 | — | GA-13 | PLANEJADO |
 | REQ-3-1 | Oito telas obrigatórias (3.2) | M4 | `apps/macos` | — | NÃO EXECUTADO (D-01) |
-| REQ-3-2 | Tarefa criada antes de afirmar que começou; status gerado de eventos | M5/M10 | journal + TaskEngine | — | PLANEJADO |
+| REQ-3-2 | Tarefa criada antes de afirmar que começou; status gerado de eventos | M5/M10 | journal + TaskEngine | — | OK no núcleo (`core/service.py`, `tests/integration/test_ipc.py`); UI: M4 |
 | REQ-3-3 | Fechar janela, pausar e encerrar são operações distintas | M4/M5 | TaskEngine + Supervisor | parcial em `test_task_engine.py` | PARCIAL |
 
 ## Arquitetura, ciclo de vida e isolamento (cap. 4–5)
@@ -37,7 +37,7 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 | REQ-5-2 | VM independe da janela | M1 | Workspace Host | AT-003 | NÃO EXECUTADO (D-01) |
 | REQ-5-3 | Contrato WorkspaceProvider completo; snapshot só como capability real | M1/M8 | `runtime/workspace` | — | PLANEJADO |
 | REQ-5-4 | Sem fallback no Mac pessoal; MockWorkspace só em testes | M1 | ADR-002 | `test_test_fakes_are_not_importable_from_production_packages` | PARCIAL |
-| REQ-5-5 | Artifact Broker valida caminho, tamanho, tipo, symlink, compactados, quotas | M8 | — | — | PLANEJADO |
+| REQ-5-5 | Artifact Broker valida caminho, tamanho, tipo, symlink, compactados, quotas | M8 | — | — | PARCIAL (host: `runtime/artifacts/manager.py`, `tests/integration/test_artifacts.py`; guest: D-01) |
 | REQ-5-6 | Rede mediada fora do guest; bloqueia LAN, loopback, metadados, DNS alternativo | M1 | — | AT-004 | NÃO EXECUTADO (D-01) |
 | REQ-5-7 | Escrita em site autenticado não homologado é assistida | M9 | — | GA-05 | PLANEJADO |
 | REQ-5-8 | Três níveis de execução; skill não substitui browser/broker; sem shell no host | M8 | Tool Registry | `test_no_production_code_spawns_a_host_shell` | PARCIAL |
@@ -47,14 +47,14 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 | ID | Requisito | Marco | Implementação | Teste | Estado |
 | --- | --- | --- | --- | --- | --- |
 | REQ-6-1 | Contratos próprios; estado fora do SDK | M6 | `runtime/models/types.py` | `tests/integration/test_models.py` | OK (sem chamada real; D-03) |
-| REQ-6-2 | Loop central persistido passo a passo | M10 | — | — | PLANEJADO |
+| REQ-6-2 | Loop central persistido passo a passo | M10 | — | — | PARCIAL (`runtime/agent/loop.py`, `tests/integration/test_agent_loop.py` com modelo falso) |
 | REQ-6-3 | ContextBuilder por ordem de autoridade; externo nunca vira instrução | M6 | `runtime/models/context.py` | `tests/integration/test_models.py::TestContextBuilder` | OK (sem chamada real; D-03) |
 | REQ-6-4 | ModelProvider com retorno normalizado; só parâmetros suportados | M6 | `runtime/models/types.py` | `tests/integration/test_models.py` | OK (sem chamada real; D-03) |
 | REQ-6-5 | Router; fallback não amplia permissões nem troca fornecedor sem consentimento | M6 | `runtime/models/router.py` | `tests/integration/test_models.py::TestBudgetedClient` | OK (sem chamada real; D-03) |
 | REQ-6-6 | Máx. 2 workers de pesquisa e 1 executor de efeitos por workspace | M10 | config schema | `test_config_cannot_widen_security` | PARCIAL |
 | REQ-7-1 | Adaptador OpenAI primeiro; Anthropic só com testes e consentimento; Luna sem autoridade | M6 | — | — | PARCIAL (roteador com provedor primário e consentimento; adaptador real: D-03) |
 | REQ-7-2 | Modos automático/econômico/máxima qualidade/manual | M6 | config schema (enum) | teste de enum | OK (sem chamada real; D-03) |
-| REQ-7-3 | "Testar inteligência"; nunca derivar ID; chaves só no Vault | M6 | — | — | NÃO EXECUTADO (D-03) |
+| REQ-7-3 | "Testar inteligência"; nunca derivar ID; chaves só no Vault | M6 | — | — | PARCIAL (`scripts/intelligence_check.py`; execução real: D-03) |
 | REQ-7-4 | Orçamentos separados; tetos; reservas; alertas 70/90; para ao atingir | M6 | `security/budget` | `test_budget.py` | OK |
 | REQ-7-5 | Config declarativa validada; nulos = pendente | M0 | `shared/config.py`, `config.schema.json` | `TestConfig` | OK |
 
@@ -75,7 +75,7 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 | REQ-9-1 | Entidades Objective..Evidence; tarefa com campos obrigatórios | M2/M5 | schema SQL, `task.schema.json` | contrato + storage | PARCIAL |
 | REQ-9-2 | Máquina de estados 9.2; UNKNOWN → BLOCKED(EXTERNAL_EFFECT_UNKNOWN) | M5 | `runtime/tasks/state_machine.py` | `test_task_state_machine.py` | OK |
 | REQ-9-3 | Leases, heartbeat, fencing; checkpoints; jobs com fuso | M5 | `runtime/tasks/engine.py` | `test_task_engine.py` | OK |
-| REQ-9-4 | Limites de tentativa; backoff com jitter; circuit breaker | M5/M6 | `runtime/tasks/limits.py` | `tests/integration/test_limits_and_scheduler.py` | OK |
+| REQ-9-4 | Limites de tentativa; backoff com jitter; circuit breaker | M5/M6 | `runtime/tasks/limits.py` | `tests/integration/test_limits_and_scheduler.py` | OK (limites + prazo de ferramenta em `security/broker/executor.py`) |
 
 ## Ferramentas e navegador (cap. 10)
 
@@ -97,7 +97,7 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 | REQ-11-4 | Objeto de aprovação 11.2; status; reserva atômica | M3 | `approval.schema.json`, `security/approvals` | contrato + `test_broker.py` | OK |
 | REQ-11-5 | Mudança material invalida aprovação | M3 | hash canônico | `test_broker.py` | OK |
 | REQ-11-6 | LLM não emite autorização; texto externo não autoriza; R4 com confirmação forte | M3/M4 | `decide` exige ator owner autenticado localmente | `test_broker.py`, `test_prompt_injection.py` | PARCIAL (autoridade OK; cartão de aprovação na UI: M4) |
-| REQ-11-7 | Vault: Keychain; banco guarda só credential_ref; sem `read_secret` | M2 | `security/vault` | `test_vault.py` | PARCIAL (Keychain: D-01) |
+| REQ-11-7 | Vault: Keychain; banco guarda só credential_ref; sem `read_secret` | M2 | `security/vault`, `platform/macos/AtlasKit/.../KeychainStore.swift` | `test_vault.py`; XCTest `KeychainStoreTests` (CI macOS) | PARCIAL (Keychain real testado em Swift; ponte para o Vault Python pendente) |
 | REQ-11-8 | Controles da tabela 11.5 | vários | THREAT_MODEL | ver T-01..T-11 | PARCIAL |
 
 ## Efeitos externos (cap. 12)
@@ -116,10 +116,10 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 | REQ-13-1 | UUID, UTC, dinheiro em unidade mínima por moeda, enums fechados, schema_version | M0 | `shared/*`, schemas | contrato + unit | OK |
 | REQ-13-2 | Modelo relacional 13.2 com FKs; ação exige tarefa; aprovação exige ação; entrega exige artefato | M2 | `storage/migrations` | `test_storage.py` | OK |
 | REQ-13-3 | SQLite com WAL e migrações; criptografia auditada | M2 | `storage/db.py` | `test_storage.py` | PARCIAL (cripto: D-01/D-09) |
-| REQ-13-4 | IPC UDS, JSON-RPC 2.0, schema, 1 MiB, request_id e correlation_id | M0/M4 | `ipc_request.schema.json` | contrato | PARCIAL (transporte: M4) |
-| REQ-13-5 | Métodos obrigatórios e erros normalizados | M0 | schemas + `shared/errors.py` | contrato | PARCIAL (handlers: M4/M5) |
+| REQ-13-4 | IPC UDS, JSON-RPC 2.0, schema, 1 MiB, request_id e correlation_id | M0/M4 | `ipc_request.schema.json` | contrato | PARCIAL (framing 1 MiB, sessões, UDS 0700 + UID do par em `core/ipc`; autenticação de processo pelo Supervisor: M4) |
+| REQ-13-5 | Métodos obrigatórios e erros normalizados | M0 | schemas + `shared/errors.py` | contrato | PARCIAL (17 métodos implementados; workspace e importação por upload respondem erro explícito) |
 | REQ-13-6 | ActionProposal sem campos de autoridade | M0 | `action_proposal.schema.json` | `test_llm_proposal_cannot_carry_authority_fields` | OK |
-| REQ-13-7 | ToolResult com untrusted; success isolado não prova efeito | M0/M11 | `tool_result.schema.json` | contrato | PARCIAL |
+| REQ-13-7 | ToolResult com untrusted; success isolado não prova efeito | M0/M11 | `tool_result.schema.json` | contrato | OK (`security/broker/broker.py`; recibo exigido; prazo imposto) |
 
 ## Voz, canais, artefatos, privacidade, observabilidade (cap. 14–17)
 
@@ -128,9 +128,9 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 | REQ-14-1 | Voz pt-BR, transcrição visível, interrupção; incerteza pede confirmação | M13 | NÃO EXECUTADO (D-01, D-11) |
 | REQ-14-2 | Canal remoto com pareamento, fila durável, E2E, offline honesto | M14 | PLANEJADO (D-06) |
 | REQ-14-3 | E-mail dedicado; WhatsApp só por API oficial | M14/pós-V1 | PLANEJADO (D-05, D-12) |
-| REQ-15-1 | Artifact Manager com hash, versões, MIME | M8 | PLANEJADO |
-| REQ-15-2 | Verificação objetiva; frase do modelo não basta | M11 | PLANEJADO |
-| REQ-15-3 | COMPLETED só com critérios obrigatórios satisfeitos | M5/M11 | PARCIAL (COMPLETED exige critérios com evidência; validadores: M11) |
+| REQ-15-1 | Artifact Manager com hash, versões, MIME | M8 | PARCIAL (host OK; formatos binários além de detecção: futuros) |
+| REQ-15-2 | Verificação objetiva; frase do modelo não basta | M11 | PARCIAL (texto/JSON: `runtime/verification/verifier.py`; planilhas e código: futuros) |
+| REQ-15-3 | COMPLETED só com critérios obrigatórios satisfeitos | M5/M11 | OK no núcleo (`test_verifier.py`, `test_agent_loop.py::test_false_completion_is_never_accepted`) |
 | REQ-16-1 | Mínimo necessário; fixtures sintéticas | todos | OK para fixtures atuais (varredura de segredos/CPF) |
 | REQ-16-2 | Retenção configurável | M7/M15 | PLANEJADO |
 | REQ-16-3 | Exclusão de índices; backup testado por restauração | M2/M7 | OK para memória e backup; artefatos: M8 |
@@ -144,12 +144,12 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 | --- | --- | --- | --- |
 | GA-01 | Memória e reinício | M7 | OK |
 | GA-02 | Cruzamento temporal | M7 | PLANEJADO |
-| GA-03 | Pesquisa e relatório | M9–M11, D-03 | PLANEJADO |
+| GA-03 | Pesquisa e relatório | M9–M11, D-03 | PARCIAL (fluxo com documentos e modelo falso; pesquisa pública real requer browser no guest, D-01) |
 | GA-04 | Preferência corrigida | M7 | OK |
 | GA-05 | Obstáculo legítimo | M9 | NÃO EXECUTADO (D-01) |
 | GA-06 | Recurso pago | M3, M10 | PARCIAL (autorização testada; fluxo completo em M10) |
 | GA-07 | Mudança material | M3 | OK |
-| GA-08 | Prompt injection | M3, M6 | PARCIAL (camada de autoridade) |
+| GA-08 | Prompt injection | M3, M6 | PARCIAL (camada de autoridade + laço com modelo enganado: `test_injected_document_cannot_make_the_agent_send_email`) |
 | GA-09 | Código novo | M8 | NÃO EXECUTADO (D-01) |
 | GA-10 | Crash após envio | M12 | OK |
 | GA-11 | Orçamento | M6 | OK (inferência e ferramentas pagas com reserva concorrente) |
