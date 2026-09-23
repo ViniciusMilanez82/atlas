@@ -44,4 +44,4 @@ ignore = ["S101", "RUF001", "RUF002", "RUF003", "E501"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-packages = ["shared", "storage", "security", "runtime"]
+packages = ["shared", "storage", "security", "runtime", "core"]
