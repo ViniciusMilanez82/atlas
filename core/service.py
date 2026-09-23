@@ -14,7 +14,9 @@ import unicodedata
 from collections.abc import Callable
 from typing import Any
 
+from core.intelligence import IntelligenceSetup
 from core.ipc.sessions import Session
+from runtime.artifacts.manager import ArtifactManager
 from runtime.memory.manager import MemoryManager
 from runtime.tasks.engine import TaskEngine
 from security.approvals.engine import ApprovalEngine
@@ -39,6 +41,8 @@ OWNER_ONLY = {
     "memories.delete",
     "settings.update",
     "artifacts.export",
+    "credentials.register",
+    "intelligence.check",
 }
 OWNER_OR_DEVICE = {"conversations.send", "tasks.create"}
 
@@ -50,7 +54,14 @@ def _normalize(text: str) -> str:
 
 class CoreService:
     def __init__(
-        self, conn: sqlite3.Connection, clock: Clock, broker: Broker, version: str = "0.1.0"
+        self,
+        conn: sqlite3.Connection,
+        clock: Clock,
+        broker: Broker,
+        version: str = "0.1.0",
+        *,
+        intelligence: IntelligenceSetup | None = None,
+        artifacts: ArtifactManager | None = None,
     ) -> None:
         self.conn = conn
         self.clock = clock
@@ -59,6 +70,8 @@ class CoreService:
         self.approvals: ApprovalEngine = broker.approvals
         self.memory = MemoryManager(conn, clock)
         self.version = version
+        self.intelligence = intelligence
+        self.artifacts = artifacts
         self.handlers: dict[str, Callable[[Session, dict[str, Any]], dict[str, Any]]] = {
             "system.health": self._health,
             "conversations.send": self._send,
@@ -77,6 +90,11 @@ class CoreService:
             "events.subscribe": self._events,
             "settings.validate": self._settings_validate,
             "settings.update": self._settings_update,
+            "identity.get": self._identity,
+            "credentials.register": self._credentials_register,
+            "intelligence.check": self._intelligence_check,
+            "artifacts.list": self._artifacts_list,
+            "approvals.list": self._approvals_list,
         }
 
     # ------------------------------------------------------------------ dispatch
@@ -158,6 +176,7 @@ class CoreService:
 
     def _health(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
         self.conn.execute("SELECT 1").fetchone()
+        intel = self.intelligence.status() if self.intelligence else None
         return {
             "status": "ok",
             "version": self.version,
@@ -166,7 +185,9 @@ class CoreService:
                 "workspace": "not_available",
                 "voice": "not_available",
                 "remote_channel": "not_available",
+                "intelligence": "ready" if intel and intel.configured else "not_configured",
             },
+            "intelligence_reason": intel.reason if intel else "intelligence setup not loaded",
         }
 
     def _send(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
@@ -354,3 +375,77 @@ class CoreService:
                 summary=f"settings revision {current + 1}",
             )
         return {"revision": current + 1}
+
+    # ------------------------------------------------------------------ app support (Alpha)
+
+    def _identity(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
+        row = self.conn.execute(
+            "SELECT e.id, e.name, e.locale, e.timezone, o.display_name FROM employees e"
+            " JOIN owners o ON o.id = e.owner_id WHERE e.id = ?",
+            (s.employee_id,),
+        ).fetchone()
+        return {
+            "employee_id": row[0],
+            "name": row[1],
+            "locale": row[2],
+            "timezone": row[3],
+            "owner_name": row[4],
+            "actor_kind": s.actor.kind,
+        }
+
+    def _credentials_register(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
+        import base64
+        import binascii
+
+        if self.intelligence is None:
+            raise AtlasError(ErrorCode.UNAUTHORIZED, "credential store is not available")
+        if s.actor.channel != "local_app":
+            raise AtlasError(ErrorCode.UNAUTHORIZED, "credentials are registered only on the local app")
+        try:
+            secret = base64.b64decode(p["secret_b64"], validate=True)
+        except (binascii.Error, ValueError):
+            raise AtlasError(ErrorCode.INVALID_INPUT, "secret is not valid base64") from None
+        ref = self.intelligence.register_key(actor=s.actor, employee_id=s.employee_id, secret=secret)
+        return {"credential_ref": ref}  # never echoes the secret
+
+    def _intelligence_check(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
+        if self.intelligence is None:
+            raise AtlasError(ErrorCode.MODEL_UNSUPPORTED, "intelligence setup not loaded")
+        return {
+            "report": self.intelligence.run_check(
+                actor=s.actor,
+                employee_id=s.employee_id,
+                model_id=p["model_id"],
+                max_cost_minor=p["max_cost_minor"],
+            )
+        }
+
+    def _artifacts_list(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
+        self._check_task(s, p["task_id"])
+        rows = self.conn.execute(
+            "SELECT a.id, a.name, a.version, a.sha256, a.size_bytes, a.mime_type, l.relation FROM artifact_links l"
+            " JOIN artifacts a ON a.id = l.artifact_id WHERE l.task_id = ? ORDER BY a.created_at",
+            (p["task_id"],),
+        ).fetchall()
+        return {
+            "artifacts": [
+                {
+                    "artifact_id": r[0],
+                    "name": r[1],
+                    "version": r[2],
+                    "sha256": r[3],
+                    "size_bytes": r[4],
+                    "mime_type": r[5],
+                    "relation": r[6],
+                }
+                for r in rows
+            ]
+        }
+
+    def _approvals_list(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
+        rows = self.conn.execute(
+            "SELECT a.id FROM approvals a JOIN tasks t ON t.id = a.task_id WHERE t.employee_id = ?"
+            " AND a.status = 'PENDING' ORDER BY a.created_at",
+            (s.employee_id,),
+        ).fetchall()
+        return {"approvals": [self.approvals.get(r[0]) for r in rows]}
