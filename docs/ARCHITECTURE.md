@@ -44,7 +44,8 @@ para o navegador pessoal (spec 5.2, 5.4).
 | `runtime/tools/registry.py` | Tool Registry confiável | Implementado (M3) |
 | `runtime/tasks/limits.py`, `scheduler.py` | Limites de tentativa, backoff, circuit breaker, jobs com fuso | Implementado (M5) |
 | `runtime/memory/manager.py` | Memória com proveniência, correção, exclusão, FTS5 reconstruível | Implementado (M7, sem índice semântico) |
-| `runtime/{agent,models,verification}` | Planner, modelos, verificadores | M6, M10, M11: não iniciado |
+| `runtime/models/` | Contratos de modelo, preços, roteador, cliente com orçamento, ContextBuilder | Implementado sem adaptador real (D-03) |
+| `runtime/{agent,verification}` | Planner, verificadores | M10, M11: não iniciado |
 | `platform/{macos,workspace,execution}` | Swift, VM, Execution Box | Requer Mac, não iniciado |
 | `apps/macos`, `apps/companion-web` | Interfaces | Não iniciado |
 | `config/atlas.default.yaml` | Configuração de referência (spec 7.5) | Implementado, validado |
@@ -71,7 +72,7 @@ unidade mínima com moeda. Artefatos referenciados por `artifact_id` + SHA-256.
 Criptografia em repouso: **pendente M2** (THREAT_MODEL, ameaça T-12). A escolha exige
 implementação auditada compatível com FTS5 e empacotamento validado em Mac.
 
-## 5. Inteligência (a implementar, M6+)
+## 5. Inteligência (M6: contratos prontos, adaptador real pendente de D-03)
 
 `ModelProvider` (capabilities, generate, stream, cancel, estimate_usage, health), `ModelRouter`
 (filtra por capacidade, privacidade, disponibilidade e orçamento; nunca muda de fornecedor sem

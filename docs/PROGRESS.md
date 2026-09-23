@@ -219,3 +219,50 @@ memória ainda não é chamado por um Planner, que é M6/M10.
 **Próxima tarefa.** M6 sem chamada real: interfaces `ModelProvider`/`ModelRouter`/`ContextBuilder`,
 roteamento por capacidade e orçamento, e um provedor falso para testes. A chamada real ao modelo e
 a validação dos IDs dependem de D-03.
+
+---
+
+## M6 sem chamada real — Modelos, roteamento e contexto (AT-011 parcial, AT-012.2) — 2026-09-23
+
+**Objetivo.** Contratos próprios de modelo, custo conservador, roteamento por capacidade,
+consentimento e orçamento, e contexto ordenado por autoridade, sem gastar crédito.
+
+**Implementado.**
+- `runtime/models/types.py`: `ModelProvider` (capabilities, generate, stream, cancel,
+  estimate_usage, health), resposta normalizada e erros tipados.
+- `runtime/models/pricing.py`: fórmula de custo sem contar cache duas vezes, arredondamento para
+  cima; tabela de referência da spec marcada `verified=False`.
+- `runtime/models/router.py`: só modelos validados e com consentimento; provedor primário
+  (OpenAI) antes do secundário; SECRET nunca vai para modelo; SENSITIVE exige consentimento
+  próprio; fallback em 429/indisponível dentro do mesmo provedor; troca de provedor só com
+  consentimento; erro de credencial pede reautorização; recusa de política não é contornada;
+  parâmetros não suportados não são enviados; reserva de orçamento antes da chamada e liquidação
+  pelo uso informado, com registro em `usage_ledger`.
+- `runtime/models/context.py`: regras do produto, política, instrução do proprietário, objetivo,
+  fatos e conteúdo externo, nessa ordem; conteúdo externo cercado por delimitador aleatório que
+  não pode ser fechado; itens SECRET descartados; redação aplicada; corte pelo menos autoritativo.
+
+**Bug encontrado pelos testes.** Com os dois provedores permitidos, o roteador escolhia o
+secundário como primário. Corrigido com o conceito de provedor primário (spec 7.1).
+
+**Evidência.**
+
+```text
+$ python scripts/check.py
+ruff: All checks passed!
+secret scan: 0 finding(s)
+mypy --strict: Success
+pytest: 331 passed, 2 skipped
+SUMMARY: ruff=PASS, secrets=PASS, mypy=PASS, pytest=PASS
+```
+
+**NÃO EXECUTADO.** `tests/integration/test_models.py::test_real_provider_intelligence_check` —
+requer conta de API, orçamento e consentimento do proprietário (D-03). Os IDs `gpt-6-sol`,
+`gpt-6-astra`, `gpt-6-luna` e `claude-opus-5-5` e seus preços continuam não validados.
+
+**Limitações.** Não há adaptador HTTP real de nenhum provedor. O índice semântico da memória
+também depende de modelo.
+
+**Próxima tarefa (sem Mac nem credencial).** AT-014 parte host: Artifact Manager com hash,
+validação de caminho, tamanho, tipo, symlink e compactados; M11: validadores objetivos de
+entrega; transporte IPC JSON-RPC com framing de 1 MiB.

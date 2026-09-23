@@ -31,7 +31,7 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 | --- | --- | --- | --- | --- | --- |
 | REQ-4-1 | Swift/SwiftUI + Supervisor Swift + Runtime Python + VM Linux ARM64 | M1/M4 | ADR-001, ADR-002 | — | NÃO EXECUTADO (D-01) |
 | REQ-4-2 | Fronteiras de componentes da tabela 4.2 | todos | ARCHITECTURE, ADR-012 | testes de broker | PARCIAL |
-| REQ-4-3 | Nuvem de modelos recebe só o contexto necessário | M6 | ContextBuilder | — | PLANEJADO |
+| REQ-4-3 | Nuvem de modelos recebe só o contexto necessário | M6 | ContextBuilder | — | PARCIAL (ContextBuilder com orçamento de contexto; uso real: M10) |
 | REQ-4-4 | SQLite + FTS5; sem Postgres/Redis/K8s | M2 | `storage/` | `test_storage.py` | OK |
 | REQ-5-1 | Ciclos de vida separados; SMAppService; sem autologin nem desligar FileVault | M1/M4 | Supervisor | — | NÃO EXECUTADO (D-01) |
 | REQ-5-2 | VM independe da janela | M1 | Workspace Host | AT-003 | NÃO EXECUTADO (D-01) |
@@ -46,14 +46,14 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 
 | ID | Requisito | Marco | Implementação | Teste | Estado |
 | --- | --- | --- | --- | --- | --- |
-| REQ-6-1 | Contratos próprios; estado fora do SDK | M6 | ADR-005 | — | PLANEJADO |
+| REQ-6-1 | Contratos próprios; estado fora do SDK | M6 | `runtime/models/types.py` | `tests/integration/test_models.py` | OK (sem chamada real; D-03) |
 | REQ-6-2 | Loop central persistido passo a passo | M10 | — | — | PLANEJADO |
-| REQ-6-3 | ContextBuilder por ordem de autoridade; externo nunca vira instrução | M6 | — | GA-08 | PLANEJADO |
-| REQ-6-4 | ModelProvider com retorno normalizado; só parâmetros suportados | M6 | — | — | PLANEJADO |
-| REQ-6-5 | Router; fallback não amplia permissões nem troca fornecedor sem consentimento | M6 | config semântica | `test_cross_provider_fallback_not_grantable_by_config` | PARCIAL |
+| REQ-6-3 | ContextBuilder por ordem de autoridade; externo nunca vira instrução | M6 | `runtime/models/context.py` | `tests/integration/test_models.py::TestContextBuilder` | OK (sem chamada real; D-03) |
+| REQ-6-4 | ModelProvider com retorno normalizado; só parâmetros suportados | M6 | `runtime/models/types.py` | `tests/integration/test_models.py` | OK (sem chamada real; D-03) |
+| REQ-6-5 | Router; fallback não amplia permissões nem troca fornecedor sem consentimento | M6 | `runtime/models/router.py` | `tests/integration/test_models.py::TestBudgetedClient` | OK (sem chamada real; D-03) |
 | REQ-6-6 | Máx. 2 workers de pesquisa e 1 executor de efeitos por workspace | M10 | config schema | `test_config_cannot_widen_security` | PARCIAL |
-| REQ-7-1 | Adaptador OpenAI primeiro; Anthropic só com testes e consentimento; Luna sem autoridade | M6 | — | — | PLANEJADO |
-| REQ-7-2 | Modos automático/econômico/máxima qualidade/manual | M6 | config schema (enum) | teste de enum | PARCIAL |
+| REQ-7-1 | Adaptador OpenAI primeiro; Anthropic só com testes e consentimento; Luna sem autoridade | M6 | — | — | PARCIAL (roteador com provedor primário e consentimento; adaptador real: D-03) |
+| REQ-7-2 | Modos automático/econômico/máxima qualidade/manual | M6 | config schema (enum) | teste de enum | OK (sem chamada real; D-03) |
 | REQ-7-3 | "Testar inteligência"; nunca derivar ID; chaves só no Vault | M6 | — | — | NÃO EXECUTADO (D-03) |
 | REQ-7-4 | Orçamentos separados; tetos; reservas; alertas 70/90; para ao atingir | M6 | `security/budget` | `test_budget.py` | OK |
 | REQ-7-5 | Config declarativa validada; nulos = pendente | M0 | `shared/config.py`, `config.schema.json` | `TestConfig` | OK |
@@ -152,7 +152,7 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 | GA-08 | Prompt injection | M3, M6 | PARCIAL (camada de autoridade) |
 | GA-09 | Código novo | M8 | NÃO EXECUTADO (D-01) |
 | GA-10 | Crash após envio | M12 | OK |
-| GA-11 | Orçamento | M6 | OK |
+| GA-11 | Orçamento | M6 | OK (inferência e ferramentas pagas com reserva concorrente) |
 | GA-12 | Comando de parada | M5 | OK |
 | GA-13 | Operação remota | M14 | PLANEJADO |
 | GA-14 | Mac indisponível | M14 | PLANEJADO |

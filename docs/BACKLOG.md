@@ -60,8 +60,8 @@ Estados: `FEITO` (testes executados e aprovados), `EM CURSO`, `A FAZER`, `BLOQUE
 
 | ID | Tarefa | Host | Estado |
 | --- | --- | --- | --- |
-| AT-011 | Adaptador OpenAI (catálogo, health, streaming, resposta normalizada) | any + D-03 para chamada real | A FAZER |
-| AT-012.2 | Router por capacidade/privacidade/orçamento; modos simples | any | A FAZER |
+| AT-011 | Adaptador OpenAI (catálogo, health, streaming, resposta normalizada) | any + D-03 para chamada real | PARCIAL: interfaces, preços e cliente com orçamento FEITOS; adaptador OpenAI real BLOQUEADO (D-03) |
+| AT-012.2 | Router por capacidade/privacidade/orçamento; modos simples | any | FEITO |
 | AT-013 | Memória: camadas, proveniência, FTS5, correção versionada, exclusão | any | FEITO (texto/FTS5, proveniência, correção, exclusão); índice semântico: pós-M6 |
 | AT-014 | Registry de ferramentas + Artifact Broker (any) e Execution Box (mac) | any / mac | A FAZER |
 | AT-015 | Playwright no guest, perfis, takeover | mac | BLOQUEADO (D-01) |
