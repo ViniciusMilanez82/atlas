@@ -14,7 +14,7 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 | --- | --- | --- | --- | --- | --- |
 | REQ-2-1 | Sem acesso por padrão a e-mail, fotos, navegador ou sessões pessoais; arquivos só por importação explícita | M1/M8 | Artifact Broker; VM | GA-08, sentinelas M1 | NÃO EXECUTADO (D-01) |
 | REQ-2-2 | Não declarar ser humano; cadastros sem identidade inventada | M6/M10 | regras de sistema do ContextBuilder | eval M10 | PLANEJADO |
-| REQ-2-3 | "Pare" altera estado operacional | M5 | `runtime/tasks` stop_all | `tests/unit/test_task_engine.py` | ver PROGRESS |
+| REQ-2-3 | "Pare" altera estado operacional | M5 | `runtime/tasks` stop_all | `tests/integration/test_task_engine.py` | OK |
 | UX-001 | Instalação gráfica assinada e notarizada, sem toolchain manual | M16 | `packaging/` | GA-16 | NÃO EXECUTADO (D-01, D-07) |
 | UX-002 | Identidade com employee_id estável; estilo não altera permissões | M4 | tabela `employees` | teste de schema M2 | PARCIAL |
 | UX-003 | Diagnóstico de arquitetura, macOS, memória, disco, virtualização | M4 | Supervisor | — | NÃO EXECUTADO (D-01) |
@@ -32,7 +32,7 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 | REQ-4-1 | Swift/SwiftUI + Supervisor Swift + Runtime Python + VM Linux ARM64 | M1/M4 | ADR-001, ADR-002 | — | NÃO EXECUTADO (D-01) |
 | REQ-4-2 | Fronteiras de componentes da tabela 4.2 | todos | ARCHITECTURE, ADR-012 | testes de broker | PARCIAL |
 | REQ-4-3 | Nuvem de modelos recebe só o contexto necessário | M6 | ContextBuilder | — | PLANEJADO |
-| REQ-4-4 | SQLite + FTS5; sem Postgres/Redis/K8s | M2 | `storage/` | `test_storage.py` | ver PROGRESS |
+| REQ-4-4 | SQLite + FTS5; sem Postgres/Redis/K8s | M2 | `storage/` | `test_storage.py` | OK |
 | REQ-5-1 | Ciclos de vida separados; SMAppService; sem autologin nem desligar FileVault | M1/M4 | Supervisor | — | NÃO EXECUTADO (D-01) |
 | REQ-5-2 | VM independe da janela | M1 | Workspace Host | AT-003 | NÃO EXECUTADO (D-01) |
 | REQ-5-3 | Contrato WorkspaceProvider completo; snapshot só como capability real | M1/M8 | `runtime/workspace` | — | PLANEJADO |
@@ -55,7 +55,7 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 | REQ-7-1 | Adaptador OpenAI primeiro; Anthropic só com testes e consentimento; Luna sem autoridade | M6 | — | — | PLANEJADO |
 | REQ-7-2 | Modos automático/econômico/máxima qualidade/manual | M6 | config schema (enum) | teste de enum | PARCIAL |
 | REQ-7-3 | "Testar inteligência"; nunca derivar ID; chaves só no Vault | M6 | — | — | NÃO EXECUTADO (D-03) |
-| REQ-7-4 | Orçamentos separados; tetos; reservas; alertas 70/90; para ao atingir | M6 | `security/budget` | `test_budget.py` | ver PROGRESS |
+| REQ-7-4 | Orçamentos separados; tetos; reservas; alertas 70/90; para ao atingir | M6 | `security/budget` | `test_budget.py` | OK |
 | REQ-7-5 | Config declarativa validada; nulos = pendente | M0 | `shared/config.py`, `config.schema.json` | `TestConfig` | OK |
 
 ## Memória (cap. 8)
@@ -63,7 +63,7 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 | ID | Requisito | Marco | Implementação | Teste | Estado |
 | --- | --- | --- | --- | --- | --- |
 | REQ-8-1 | Camadas; política/credencial não são memória; inferências ficam `proposed` | M7 | — | GA-04 | PLANEJADO |
-| REQ-8-2 | Registro mínimo e estados proposed/confirmed/disputed/superseded/deleted | M2/M7 | tabelas `memories`, `memory_versions` | `test_storage.py` | ver PROGRESS |
+| REQ-8-2 | Registro mínimo e estados proposed/confirmed/disputed/superseded/deleted | M2/M7 | tabelas `memories`, `memory_versions` | `test_storage.py` | PARCIAL (schema OK; motor de memória: M7) |
 | REQ-8-3 | Busca híbrida; índices reconstruíveis; correção versionada | M7 | FTS5 | GA-01, GA-04 | PLANEJADO |
 | REQ-8-4 | Dados temporais UTC + IANA; dia inteiro com semântica própria | M7 | `shared/clock.py` | GA-02 | PARCIAL |
 | REQ-8-5 | Aprendizado seguro; skill nova passa por sandbox e testes | M15 | — | — | PLANEJADO |
@@ -73,15 +73,15 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 | ID | Requisito | Marco | Implementação | Teste | Estado |
 | --- | --- | --- | --- | --- | --- |
 | REQ-9-1 | Entidades Objective..Evidence; tarefa com campos obrigatórios | M2/M5 | schema SQL, `task.schema.json` | contrato + storage | PARCIAL |
-| REQ-9-2 | Máquina de estados 9.2; UNKNOWN → BLOCKED(EXTERNAL_EFFECT_UNKNOWN) | M5 | `runtime/tasks/state_machine.py` | `test_task_state_machine.py` | ver PROGRESS |
-| REQ-9-3 | Leases, heartbeat, fencing; checkpoints; jobs com fuso | M5 | `runtime/tasks/engine.py` | `test_task_engine.py` | ver PROGRESS |
+| REQ-9-2 | Máquina de estados 9.2; UNKNOWN → BLOCKED(EXTERNAL_EFFECT_UNKNOWN) | M5 | `runtime/tasks/state_machine.py` | `test_task_state_machine.py` | OK |
+| REQ-9-3 | Leases, heartbeat, fencing; checkpoints; jobs com fuso | M5 | `runtime/tasks/engine.py` | `test_task_engine.py` | OK |
 | REQ-9-4 | Limites de tentativa; backoff com jitter; circuit breaker | M5/M6 | — | — | PLANEJADO |
 
 ## Ferramentas e navegador (cap. 10)
 
 | ID | Requisito | Marco | Implementação | Teste | Estado |
 | --- | --- | --- | --- | --- | --- |
-| REQ-10-1 | Tool Registry com manifesto; desabilitado até validação; efeito declarado pelo adaptador | M3/M8 | `runtime/tools/registry.py` | `test_broker.py` | ver PROGRESS |
+| REQ-10-1 | Tool Registry com manifesto; desabilitado até validação; efeito declarado pelo adaptador | M3/M8 | `runtime/tools/registry.py` | `test_broker.py` | OK |
 | REQ-10-2 | API > Playwright > visual; binários fixados; sem Chrome pessoal | M9 | ADR-006 | — | NÃO EXECUTADO (D-01) |
 | REQ-10-3 | Perfis de browser separados | M9 | — | — | NÃO EXECUTADO (D-01) |
 | REQ-10-4 | Não driblar CAPTCHA/MFA/paywall; proposta de serviço pago completa | M9/M10 | — | GA-05, GA-06 | PLANEJADO |
@@ -91,12 +91,12 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 
 | ID | Requisito | Marco | Implementação | Teste | Estado |
 | --- | --- | --- | --- | --- | --- |
-| REQ-11-1 | Policy Engine ALLOW/ASK/DENY com reason_code e policy_version; fail-closed; proibições primeiro | M3 | `security/policy/engine.py` | `test_policy.py` | ver PROGRESS |
-| REQ-11-2 | Classes R0–R5 com padrões da tabela 11.1; dados sensíveis elevam exigência | M3 | idem | idem | ver PROGRESS |
-| REQ-11-3 | Mandatos limitados | M3 | `security/approvals` | `test_approvals.py` | ver PROGRESS |
-| REQ-11-4 | Objeto de aprovação 11.2; status; reserva atômica | M3 | `approval.schema.json`, `security/approvals` | contrato + `test_approvals.py` | ver PROGRESS |
-| REQ-11-5 | Mudança material invalida aprovação | M3 | hash canônico | `test_approvals.py` | ver PROGRESS |
-| REQ-11-6 | LLM não emite autorização; texto externo não autoriza; R4 com confirmação forte | M3/M4 | `decide` exige ator owner autenticado localmente | `test_approvals.py`, `test_prompt_injection.py` | ver PROGRESS |
+| REQ-11-1 | Policy Engine ALLOW/ASK/DENY com reason_code e policy_version; fail-closed; proibições primeiro | M3 | `security/policy/engine.py` | `test_policy.py` | OK |
+| REQ-11-2 | Classes R0–R5 com padrões da tabela 11.1; dados sensíveis elevam exigência | M3 | idem | idem | OK |
+| REQ-11-3 | Mandatos limitados | M3 | `security/approvals` | `test_approvals.py` | OK |
+| REQ-11-4 | Objeto de aprovação 11.2; status; reserva atômica | M3 | `approval.schema.json`, `security/approvals` | contrato + `test_approvals.py` | OK |
+| REQ-11-5 | Mudança material invalida aprovação | M3 | hash canônico | `test_approvals.py` | OK |
+| REQ-11-6 | LLM não emite autorização; texto externo não autoriza; R4 com confirmação forte | M3/M4 | `decide` exige ator owner autenticado localmente | `test_approvals.py`, `test_prompt_injection.py` | PARCIAL (autoridade OK; cartão de aprovação na UI: M4) |
 | REQ-11-7 | Vault: Keychain; banco guarda só credential_ref; sem `read_secret` | M2 | `security/vault` | `test_vault.py` | PARCIAL (Keychain: D-01) |
 | REQ-11-8 | Controles da tabela 11.5 | vários | THREAT_MODEL | ver T-01..T-11 | PARCIAL |
 
@@ -104,17 +104,17 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 
 | ID | Requisito | Marco | Implementação | Teste | Estado |
 | --- | --- | --- | --- | --- | --- |
-| REQ-12-1 | Action Ledger com estados; intenção persistida antes do envio | M3/M12 | `security/broker/ledger.py` | `test_broker.py` | ver PROGRESS |
-| REQ-12-2 | UNKNOWN preservado; repetir só com prova ou idempotência confiável | M12 | idem | `test_ledger_recovery.py` | ver PROGRESS |
-| REQ-12-3 | Cancelamento impede novos despachos; "pare tudo" < 2 s | M5 | TaskEngine | `test_task_engine.py` | ver PROGRESS |
-| REQ-12-4 | Retomada: expira leases, reconcilia, revalida aprovações | M5/M12 | `recover_after_restart` | `test_ledger_recovery.py` | ver PROGRESS |
+| REQ-12-1 | Action Ledger com estados; intenção persistida antes do envio | M3/M12 | `security/broker/ledger.py` | `test_broker.py` | OK |
+| REQ-12-2 | UNKNOWN preservado; repetir só com prova ou idempotência confiável | M12 | idem | `test_ledger_recovery.py` | OK |
+| REQ-12-3 | Cancelamento impede novos despachos; "pare tudo" < 2 s | M5 | TaskEngine | `test_task_engine.py` | OK |
+| REQ-12-4 | Retomada: expira leases, reconcilia, revalida aprovações | M5/M12 | `recover_after_restart` | `test_ledger_recovery.py` | OK |
 
 ## Dados e contratos (cap. 13)
 
 | ID | Requisito | Marco | Implementação | Teste | Estado |
 | --- | --- | --- | --- | --- | --- |
 | REQ-13-1 | UUID, UTC, dinheiro em unidade mínima por moeda, enums fechados, schema_version | M0 | `shared/*`, schemas | contrato + unit | OK |
-| REQ-13-2 | Modelo relacional 13.2 com FKs; ação exige tarefa; aprovação exige ação; entrega exige artefato | M2 | `storage/migrations` | `test_storage.py` | ver PROGRESS |
+| REQ-13-2 | Modelo relacional 13.2 com FKs; ação exige tarefa; aprovação exige ação; entrega exige artefato | M2 | `storage/migrations` | `test_storage.py` | OK |
 | REQ-13-3 | SQLite com WAL e migrações; criptografia auditada | M2 | `storage/db.py` | `test_storage.py` | PARCIAL (cripto: D-01/D-09) |
 | REQ-13-4 | IPC UDS, JSON-RPC 2.0, schema, 1 MiB, request_id e correlation_id | M0/M4 | `ipc_request.schema.json` | contrato | PARCIAL (transporte: M4) |
 | REQ-13-5 | Métodos obrigatórios e erros normalizados | M0 | schemas + `shared/errors.py` | contrato | PARCIAL (handlers: M4/M5) |
@@ -130,12 +130,12 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 | REQ-14-3 | E-mail dedicado; WhatsApp só por API oficial | M14/pós-V1 | PLANEJADO (D-05, D-12) |
 | REQ-15-1 | Artifact Manager com hash, versões, MIME | M8 | PLANEJADO |
 | REQ-15-2 | Verificação objetiva; frase do modelo não basta | M11 | PLANEJADO |
-| REQ-15-3 | COMPLETED só com critérios obrigatórios satisfeitos | M5/M11 | ver PROGRESS |
+| REQ-15-3 | COMPLETED só com critérios obrigatórios satisfeitos | M5/M11 | PARCIAL (COMPLETED exige critérios com evidência; validadores: M11) |
 | REQ-16-1 | Mínimo necessário; fixtures sintéticas | todos | OK para fixtures atuais (varredura de segredos/CPF) |
 | REQ-16-2 | Retenção configurável | M7/M15 | PLANEJADO |
-| REQ-16-3 | Exclusão de índices; backup testado por restauração | M2/M7 | ver PROGRESS |
+| REQ-16-3 | Exclusão de índices; backup testado por restauração | M2/M7 | PARCIAL (backup/restore OK; exclusão de índices: M7) |
 | REQ-16-4 | Atualização assinada; ponto de recuperação antes de migração | M16 | NÃO EXECUTADO (D-07) |
-| REQ-17-1 | Eventos com campos 17.1; redação de sensíveis | M2 | ver PROGRESS |
+| REQ-17-1 | Eventos com campos 17.1; redação de sensíveis | M2 | OK |
 | REQ-17-2 | Metas de aceitação medidas | M17 | NÃO EXECUTADO (D-01) |
 
 ## Cenários de aceitação (cap. 20)
@@ -148,12 +148,12 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 | GA-04 | Preferência corrigida | M7 | PLANEJADO |
 | GA-05 | Obstáculo legítimo | M9 | NÃO EXECUTADO (D-01) |
 | GA-06 | Recurso pago | M3, M10 | PARCIAL (autorização testada; fluxo completo em M10) |
-| GA-07 | Mudança material | M3 | ver PROGRESS |
+| GA-07 | Mudança material | M3 | OK |
 | GA-08 | Prompt injection | M3, M6 | PARCIAL (camada de autoridade) |
 | GA-09 | Código novo | M8 | NÃO EXECUTADO (D-01) |
-| GA-10 | Crash após envio | M12 | ver PROGRESS |
-| GA-11 | Orçamento | M6 | ver PROGRESS |
-| GA-12 | Comando de parada | M5 | ver PROGRESS |
+| GA-10 | Crash após envio | M12 | OK |
+| GA-11 | Orçamento | M6 | OK |
+| GA-12 | Comando de parada | M5 | OK |
 | GA-13 | Operação remota | M14 | PLANEJADO |
 | GA-14 | Mac indisponível | M14 | PLANEJADO |
 | GA-15 | Backup e exclusão | M2, M7 | PARCIAL |

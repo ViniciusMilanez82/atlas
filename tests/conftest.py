@@ -50,3 +50,7 @@ def world(tmp_path: Path, clock: ManualClock) -> Iterator[World]:
     emp = create_employee(conn, clock, owner_id=owner_id, name="Atlas")
     yield World(conn, clock, owner_id, emp, path)
     conn.close()
+
+
+# Control-plane fixtures shared by security and recovery suites.
+from tests.control_plane import cp, limits  # noqa: E402, F401

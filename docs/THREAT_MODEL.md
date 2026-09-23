@@ -30,15 +30,15 @@ Todo conteúdo que cruza 3, 4, 5 ou 6 é **dado não confiável**, nunca instru�
 
 | ID | Ameaça | Controle | Teste de bloqueio | Estado |
 | --- | --- | --- | --- | --- |
-| T-01 | Prompt injection | Proposta sem campos de autoridade (schema); política determinística; efeito vem do registro | `tests/contract/test_schemas.py::test_llm_proposal_cannot_carry_authority_fields`; `tests/security/test_prompt_injection.py` | Ver PROGRESS |
+| T-01 | Prompt injection | Proposta sem campos de autoridade (schema); política determinística; efeito vem do registro | `tests/contract/test_schemas.py::test_llm_proposal_cannot_carry_authority_fields`; `tests/security/test_prompt_injection.py` | OK (camada de autoridade; comportamento do modelo: M6/M10) |
 | T-02 | Contaminação de memória | Fonte, estado `proposed`, confirmação | a implementar em M7 | Planejado |
-| T-03 | Vazamento por ferramenta | Dados mínimos, destino permitido, broker | `tests/security/test_broker.py` (destino fora do escopo) | Ver PROGRESS |
+| T-03 | Vazamento por ferramenta | Dados mínimos, destino permitido, broker | `tests/security/test_broker.py` (destino fora do escopo) | OK (broker, destino e SECRET_DATA_EGRESS) |
 | T-04 | Escape de workspace | VM, sem pastas pessoais, sem shell de host | M1: arquivo-sentinela no host | **NÃO EXECUTADO** (requer Mac) |
 | T-05 | Código malicioso | Execution Box sem segredos e sem rede | M8 | **NÃO EXECUTADO** (requer VM) |
-| T-06 | Replay de aprovação | Nonce, validade, hash canônico, consumo atômico | `tests/security/test_approvals.py` | Ver PROGRESS |
-| T-07 | Worker obsoleto | Lease com fencing token verificado no broker | `tests/unit/test_task_engine.py`, `tests/security/test_broker.py` | Ver PROGRESS |
-| T-08 | Execução duplicada | Action Ledger, UNKNOWN, reconciliação | `tests/recovery/test_ledger_recovery.py` | Ver PROGRESS |
-| T-09 | Abuso de custo | Reservas por tarefa e período, teto obrigatório | `tests/unit/test_budget.py` | Ver PROGRESS |
+| T-06 | Replay de aprovação | Nonce, validade, hash canônico, consumo atômico | `tests/security/test_approvals.py` | OK |
+| T-07 | Worker obsoleto | Lease com fencing token verificado no broker | `tests/integration/test_task_engine.py`, `tests/security/test_broker.py` | OK |
+| T-08 | Execução duplicada | Action Ledger, UNKNOWN, reconciliação | `tests/recovery/test_ledger_recovery.py` | OK |
+| T-09 | Abuso de custo | Reservas por tarefa e período, teto obrigatório | `tests/unit/test_budget.py` | OK |
 | T-10 | Atualização adulterada | Assinatura, manifesto, verificação | M16 | **NÃO EXECUTADO** (requer credenciais Apple) |
 | T-11 | Canal remoto comprometido | Pareamento, escopo, revogação | M14 | Planejado |
 

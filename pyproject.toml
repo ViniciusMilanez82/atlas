@@ -35,7 +35,7 @@ extend-exclude = ["docs", "packaging"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "S", "RUF"]
-ignore = ["S101", "RUF001", "RUF002", "RUF003"]
+ignore = ["S101", "RUF001", "RUF002", "RUF003", "E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S", "B011", "E501"]
@@ -44,4 +44,4 @@ ignore = ["S101", "RUF001", "RUF002", "RUF003"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-packages = ["shared", "storage", "security"]
+packages = ["shared", "storage", "security", "runtime"]

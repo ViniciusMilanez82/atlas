@@ -111,3 +111,67 @@ backup (AT-005.6, T-12) — requer escolha de biblioteca e prova em Mac (D-01, D
 no nível do disco. Backups não são cifrados.
 
 **Próxima tarefa.** M3: AT-007.1 (Tool Registry confiável) e AT-007.2 (Policy Engine).
+
+---
+
+## M3 — Autoridade e núcleo do M5 — Tarefas (AT-007, AT-008, AT-010.1–10.4, AT-012.1, AT-017) — 2026-09-23
+
+**Objetivo.** Nenhum efeito externo sem política, autorização aplicável, reserva de orçamento,
+lease válido e registro no Action Ledger. Tarefas persistentes com parada e recuperação reais.
+
+**Critérios de aceite.** DENY/ASK/ALLOW, expiração, revogação e replay testados; proibição domina;
+erro interno nega; mudança de valor ou destinatário invalida aprovação; corrida entre workers não
+repete consumo; crash e worker obsoleto não provocam despacho indevido; parada < 2 s; falha após
+envio não gera reenvio sem verificação; tetos concorrentes respeitados.
+
+**Implementado.**
+- `runtime/tools/registry.py`: manifesto confiável; registro começa desabilitado; recusa shell de
+  host, leitura/exportação de segredo, escrita de política; efeito incoerente com capacidades é
+  recusado (e-mail não pode se declarar leitura; compra é IRREVERSIBLE/R4); hash do manifesto
+  conferido a cada uso.
+- `security/policy/engine.py`: ordem completude → proibições → restrições da tarefa → dados →
+  risco; SECRET nunca sai; SENSITIVE e PERSONAL elevam risco; R2 só é ALLOW no canal verificado;
+  R3 pede aprovação salvo mandato; R4 sempre aprovação forte; falha interna = DENY; `policy_version`
+  derivada das regras e registrável na tabela `policies`.
+- `security/approvals/engine.py` e `mandates.py`: aprovação vinculada ao hash canônico e ao nonce
+  exibidos; só o proprietário decide; R4 só no app local com confirmação forte; reserva/consumo
+  atômicos; UNKNOWN mantém a aprovação retida; mandatos até R3, padrão de destino específico,
+  teto por uso, número de usos e validade.
+- `security/budget/budget.py`: categorias separadas (inferência, ferramenta paga, compra); sem teto
+  = bloqueado; limites por tarefa e mês; alertas 70/90; reserva concorrente segura.
+- `security/broker/ledger.py` e `broker.py`: três fases (autorizar em uma transação, executar,
+  liquidar); sucesso sem recibo exigido vira UNKNOWN; exceção do adaptador em efeito externo vira
+  UNKNOWN; reconciliação só com evidência e pelo proprietário ou reconciliador confiável.
+- `runtime/tasks/state_machine.py` e `engine.py`: estados da spec 9.2, versão otimista, lease com
+  fencing token (sair de RUNNING sempre avança o token), pausa/retomada com reavaliação,
+  cancelamento que preserva efeitos passados, "pare tudo", conclusão só com critérios com
+  evidência, checkpoint sem raciocínio privado, recuperação após reinício sem redespacho.
+- Migrações 0002 (origem da pausa) e 0003 (vínculo da ação com aprovação, mandato e reserva).
+
+**Bugs encontrados e corrigidos pelos testes.** `AtlasError` como dataclass congelada não podia
+ser relançado por gerenciadores de contexto; aprovação aprovada mas vencida derrubava a transação
+em vez de pedir nova aprovação.
+
+**Evidência.**
+
+```text
+$ python scripts/check.py
+ruff: All checks passed!
+secret scan: 0 finding(s)
+mypy --strict: Success: no issues found in 47 source files
+pytest: 283 passed, 1 skipped (Keychain: NÃO EXECUTADO, requer Mac)
+SUMMARY: ruff=PASS, secrets=PASS, mypy=PASS, pytest=PASS
+```
+
+Medição de parada (GA-12, ambiente local Windows, 25 tarefas, 10 com lease): `stop_all` abaixo de
+2000 ms, verificado por asserção em `test_stop_all_under_two_seconds`.
+
+**NÃO EXECUTADO.** Separação real dos processos atlas-core e Runtime (ADR-012) e o cartão de
+aprovação na interface: dependem do Supervisor e do app (M4, D-01).
+
+**Limitações.** Os adaptadores usados nos testes são falsos (`tests/fakes`); não existe ainda
+nenhum adaptador de produção com efeito externo. Timeout por ferramenta está declarado no
+manifesto mas ainda não é imposto pelo broker. Períodos de orçamento usam o mês em UTC.
+
+**Próxima tarefa.** AT-010.5 (limites de tentativa e checkpoints) e AT-010.6 (jobs agendados),
+depois M6 (adaptador de modelo sem chamada real até D-03) e M7 (memória).

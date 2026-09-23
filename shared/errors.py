@@ -5,7 +5,6 @@ Every error states whether it may be retried, what was persisted, and the recomm
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from enum import StrEnum
 
 
@@ -54,17 +53,24 @@ DEFAULT_RETRYABLE: dict[ErrorCode, bool] = {
 }
 
 
-@dataclass(frozen=True)
 class AtlasError(Exception):
-    code: ErrorCode
-    message: str
-    persisted: str = "nothing"
-    recommended_action: str = ""
-    retryable: bool | None = None
+    """Normalized error. Mutable on purpose: exceptions get ``__traceback__`` assigned when
+    re-raised through context managers."""
 
-    def __post_init__(self) -> None:
-        if self.retryable is None:
-            object.__setattr__(self, "retryable", DEFAULT_RETRYABLE[self.code])
+    def __init__(
+        self,
+        code: ErrorCode,
+        message: str,
+        persisted: str = "nothing",
+        recommended_action: str = "",
+        retryable: bool | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.persisted = persisted
+        self.recommended_action = recommended_action
+        self.retryable = DEFAULT_RETRYABLE[code] if retryable is None else retryable
 
     def __str__(self) -> str:
         return f"{self.code}: {self.message}"

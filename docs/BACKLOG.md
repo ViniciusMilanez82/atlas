@@ -37,22 +37,22 @@ Estados: `FEITO` (testes executados e aprovados), `EM CURSO`, `A FAZER`, `BLOQUE
 
 | ID | Tarefa | Depende | Host | Aceite | Estado |
 | --- | --- | --- | --- | --- | --- |
-| AT-007.1 | Tool Registry confiável (manifesto, classe de efeito, desabilitado por padrão) | M2 | any | ferramenta sem registro/desabilitada não roda | A FAZER |
-| AT-007.2 | Policy Engine R0–R5, capacidades, dados sensíveis, mandatos, fail-closed | 007.1 | any | DENY domina; erro nega; versão auditada | A FAZER |
-| AT-008.1 | Approval Engine: hash canônico, nonce, validade, usos, reserva/consumo atômicos, revogação | 007.2 | any | mudança material invalida; replay e corrida não repetem | A FAZER |
-| AT-008.2 | Mandatos recorrentes limitados | 008.1 | any | mandato não cobre R5 nem fora do escopo | A FAZER |
-| AT-012.1 | Orçamento: tetos por tarefa e período, reservas concorrentes, alertas 70/90 | M2 | any | concorrência respeita teto; sem teto = bloqueado | A FAZER |
-| AT-017.1 | Action Ledger (PROPOSED..UNKNOWN) | 005.2 | any | intenção persistida antes do despacho | A FAZER |
-| AT-017.2 | Broker de despacho: schema, registro, lease/fencing, política, aprovação, orçamento, ledger em 1 transação | 007.2, 008.1, 012.1, 017.1, 010.1 | any | worker obsoleto recusado; injeção não amplia | A FAZER |
+| AT-007.1 | Tool Registry confiável (manifesto, classe de efeito, desabilitado por padrão) | M2 | any | ferramenta sem registro/desabilitada não roda | FEITO |
+| AT-007.2 | Policy Engine R0–R5, capacidades, dados sensíveis, mandatos, fail-closed | 007.1 | any | DENY domina; erro nega; versão auditada | FEITO |
+| AT-008.1 | Approval Engine: hash canônico, nonce, validade, usos, reserva/consumo atômicos, revogação | 007.2 | any | mudança material invalida; replay e corrida não repetem | FEITO |
+| AT-008.2 | Mandatos recorrentes limitados | 008.1 | any | mandato não cobre R5 nem fora do escopo | FEITO |
+| AT-012.1 | Orçamento: tetos por tarefa e período, reservas concorrentes, alertas 70/90 | M2 | any | concorrência respeita teto; sem teto = bloqueado | FEITO |
+| AT-017.1 | Action Ledger (PROPOSED..UNKNOWN) | 005.2 | any | intenção persistida antes do despacho | FEITO |
+| AT-017.2 | Broker de despacho: schema, registro, lease/fencing, política, aprovação, orçamento, ledger em 1 transação | 007.2, 008.1, 012.1, 017.1, 010.1 | any | worker obsoleto recusado; injeção não amplia | FEITO |
 
 ## M5 — Task Engine
 
 | ID | Tarefa | Depende | Host | Aceite | Estado |
 | --- | --- | --- | --- | --- | --- |
-| AT-010.1 | Máquina de estados da spec 9.2 com versão otimista | 005.2 | any | transições inválidas falham | A FAZER |
-| AT-010.2 | Leases com expiração, heartbeat e fencing token | 010.1 | any | worker antigo perde despacho | A FAZER |
-| AT-010.3 | Pausa, retomada, cancelamento e "pare tudo" | 010.2 | any | parada < 2 s no teste local | A FAZER |
-| AT-010.4 | Recuperação pós-reinício (leases, DISPATCHING→UNKNOWN, reavaliação) | 010.2, 017.1 | any | sem repetição cega | A FAZER |
+| AT-010.1 | Máquina de estados da spec 9.2 com versão otimista | 005.2 | any | transições inválidas falham | FEITO |
+| AT-010.2 | Leases com expiração, heartbeat e fencing token | 010.1 | any | worker antigo perde despacho | FEITO |
+| AT-010.3 | Pausa, retomada, cancelamento e "pare tudo" | 010.2 | any | parada < 2 s no teste local | FEITO |
+| AT-010.4 | Recuperação pós-reinício (leases, DISPATCHING→UNKNOWN, reavaliação) | 010.2, 017.1 | any | sem repetição cega | FEITO |
 | AT-010.5 | Checkpoints e limites de tentativa (3 transitórias, 2 replanejamentos, 20 passos) | 010.1 | any | loops param | A FAZER |
 | AT-010.6 | Jobs agendados com fuso IANA e política de execuções perdidas | 010.1 | any | ocorrências perdidas consolidadas | A FAZER |
 

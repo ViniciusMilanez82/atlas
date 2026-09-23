@@ -21,9 +21,9 @@ from tests.helpers import NOW, insert_action, insert_approval, insert_task
 class TestMigrations:
     def test_applies_once_and_records_checksum(self, tmp_path: Path, clock: ManualClock) -> None:
         conn = connect(tmp_path / "a.sqlite")
-        assert migrate(conn, clock=clock) == [1]
+        assert migrate(conn, clock=clock) == list(range(1, len(discover()) + 1))
         assert migrate(conn, clock=clock) == []
-        row = conn.execute("SELECT version, checksum FROM schema_migrations").fetchone()
+        row = conn.execute("SELECT version, checksum FROM schema_migrations ORDER BY version").fetchone()
         assert row["version"] == 1
         assert row["checksum"] == discover()[0].checksum
 

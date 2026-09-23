@@ -34,13 +34,14 @@ para o navegador pessoal (spec 5.2, 5.4).
 | `shared/schemas` | Contratos JSON Schema 2020-12 (ADR-011) | Implementado (M0) |
 | `shared/fixtures/valid` | Fixtures sintéticas, uma por contrato | Implementado (M0) |
 | `shared/*.py` | contratos, JSON canônico, dinheiro, relógio, IDs, erros, config | Implementado (M0) |
-| `storage/` | SQLite, migrações, repositórios, backup | M2 (ver PROGRESS) |
-| `security/policy` | Policy Engine R0–R5 | M3 (ver PROGRESS) |
-| `security/approvals` | Aprovações, reserva, consumo, replay | M3 (ver PROGRESS) |
-| `security/vault` | Referências de credencial, redação de logs | M2 parcial; Keychain requer Mac |
-| `security/broker` | Broker de despacho e Action Ledger | M3/M12 (ver PROGRESS) |
-| `security/budget` | Reservas e tetos de orçamento | M6 parcial (ver PROGRESS) |
-| `runtime/tasks` | Estados, leases, fencing, checkpoints | M5 (ver PROGRESS) |
+| `storage/` | SQLite, migrações, journal, backup/restore | Implementado (M2) |
+| `security/policy` | Policy Engine R0–R5 | Implementado (M3) |
+| `security/approvals` | Aprovações e mandatos | Implementado (M3) |
+| `security/vault` | Referências de credencial | Implementado; backend Keychain requer Mac |
+| `security/broker` | Broker de despacho, Action Ledger, reconciliação | Implementado (M3/M12 parcial) |
+| `security/budget` | Reservas e tetos de orçamento | Implementado (parte de M6) |
+| `runtime/tasks` | Estados, leases, fencing, pausa, parada, recuperação | Implementado (M5 núcleo) |
+| `runtime/tools/registry.py` | Tool Registry confiável | Implementado (M3) |
 | `runtime/{agent,models,memory,tools,verification}` | Inteligência, memória, ferramentas | M6–M11, não iniciado |
 | `platform/{macos,workspace,execution}` | Swift, VM, Execution Box | Requer Mac, não iniciado |
 | `apps/macos`, `apps/companion-web` | Interfaces | Não iniciado |

@@ -148,13 +148,14 @@ def restore_backup(backup_dir: Path, target_db: Path, clock: Clock) -> RestoreRe
                 "UPDATE tasks SET lease_owner = NULL, lease_expires_at = NULL,"
                 " fencing_token = fencing_token + 1,"
                 " state = CASE WHEN state = 'RUNNING' THEN 'PAUSED' ELSE state END,"
+                " paused_from = CASE WHEN state = 'RUNNING' THEN 'RUNNING' ELSE paused_from END,"
                 " version = version + 1,"
                 " updated_at = ? WHERE lease_owner IS NOT NULL OR state = 'RUNNING'",
                 (now,),
             ).rowcount
             for r in u_rows:
                 conn.execute(
-                    "UPDATE tasks SET state = 'BLOCKED', blocked_reason = 'EXTERNAL_EFFECT_UNKNOWN',"
+                    "UPDATE tasks SET state = 'BLOCKED', blocked_reason = 'EXTERNAL_EFFECT_UNKNOWN', paused_from = NULL,"
                     " version = version + 1, updated_at = ? WHERE id = ? AND state NOT IN"
                     " ('COMPLETED','FAILED','CANCELLED')",
                     (now, r["task_id"]),

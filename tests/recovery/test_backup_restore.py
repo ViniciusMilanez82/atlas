@@ -9,6 +9,7 @@ import pytest
 
 from storage.backup.backup import create_backup, restore_backup, verify_backup
 from storage.db import StorageError, transaction
+from storage.migrate import discover
 from storage.store import open_store
 from tests.conftest import World
 from tests.helpers import insert_action, insert_approval, insert_mandate, insert_task
@@ -41,7 +42,7 @@ def populate(world: World) -> dict[str, str]:
 def test_backup_restore_round_trip_neutralizes_authority(world: World, tmp_path: Path) -> None:
     ids = populate(world)
     manifest = create_backup(world.conn, tmp_path / "bk1", world.clock)
-    assert manifest["schema_version"] == 1
+    assert manifest["schema_version"] == len(discover())
     assert manifest["encrypted"] is False  # documented limitation T-12
 
     # State diverges after the backup.
