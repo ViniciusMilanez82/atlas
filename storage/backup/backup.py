@@ -57,7 +57,35 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def create_backup(conn: sqlite3.Connection, dest_dir: Path, clock: Clock) -> dict[str, Any]:
+ENC_NAME = "atlas.sqlite.enc"
+_AAD = b"atlas-backup-1"
+
+
+def _encrypt_file(plain: Path, key: bytes) -> bytes:
+    """AES-256-GCM with a random 96-bit nonce (library: cryptography, audited). Returns nonce+ciphertext."""
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    if len(key) != 32:
+        raise StorageError("backup key must be 32 bytes (AES-256)")
+    nonce = os.urandom(12)
+    return nonce + AESGCM(key).encrypt(nonce, plain.read_bytes(), _AAD)
+
+
+def _decrypt(blob: bytes, key: bytes) -> bytes:
+    from cryptography.exceptions import InvalidTag
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    try:
+        return AESGCM(key).decrypt(blob[:12], blob[12:], _AAD)
+    except (InvalidTag, ValueError):
+        raise StorageError("backup cannot be decrypted: wrong key or modified file") from None
+
+
+def create_backup(
+    conn: sqlite3.Connection, dest_dir: Path, clock: Clock, key: bytes | None = None
+) -> dict[str, Any]:
+    """Consistent backup. With ``key`` the database copy is encrypted (AES-256-GCM) and the plaintext
+    copy is removed. Losing the key makes the backup unrecoverable - the UI must say so."""
     dest_dir.mkdir(parents=True, exist_ok=False)
     target = dest_dir / DB_NAME
     out = sqlite3.connect(str(target))
@@ -67,50 +95,77 @@ def create_backup(conn: sqlite3.Connection, dest_dir: Path, clock: Clock) -> dic
     finally:
         out.close()
     counts = {t: int(conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]) for t in COUNTED_TABLES}  # noqa: S608
-    manifest = {
+    manifest: dict[str, Any] = {
         "format": "atlas-backup-1",
         "created_at": to_utc_str(clock.now()),
         "schema_version": current_version(conn),
-        "sha256": _sha256(target),
-        "size_bytes": target.stat().st_size,
         "row_counts": counts,
-        "encrypted": False,
+        "encrypted": key is not None,
     }
+    if key is not None:
+        enc = dest_dir / ENC_NAME
+        enc.write_bytes(_encrypt_file(target, key))
+        target.unlink()  # note: SSD wear-levelling may retain old blocks; FileVault covers the disk
+        manifest.update({"cipher": "AES-256-GCM", "sha256": _sha256(enc), "size_bytes": enc.stat().st_size})
+    else:
+        manifest.update({"sha256": _sha256(target), "size_bytes": target.stat().st_size})
     (dest_dir / MANIFEST).write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
     return manifest
 
 
-def verify_backup(backup_dir: Path) -> dict[str, Any]:
+def _plain_bytes(backup_dir: Path, manifest: dict[str, Any], key: bytes | None) -> bytes:
+    if manifest.get("encrypted"):
+        if key is None:
+            raise StorageError("backup is encrypted; the backup key is required")
+        return _decrypt((backup_dir / ENC_NAME).read_bytes(), key)
+    return (backup_dir / DB_NAME).read_bytes()
+
+
+def verify_backup(backup_dir: Path, key: bytes | None = None) -> dict[str, Any]:
     manifest_path = backup_dir / MANIFEST
-    db_path = backup_dir / DB_NAME
-    if not manifest_path.is_file() or not db_path.is_file():
+    if not manifest_path.is_file():
         raise StorageError("backup is incomplete (manifest or database missing)")
     manifest: dict[str, Any] = json.loads(manifest_path.read_text(encoding="utf-8"))
+    data_file = backup_dir / (ENC_NAME if manifest.get("encrypted") else DB_NAME)
+    if not data_file.is_file():
+        raise StorageError("backup is incomplete (manifest or database missing)")
     if manifest.get("format") != "atlas-backup-1":
         raise StorageError("unknown backup format")
-    if _sha256(db_path) != manifest["sha256"]:
+    if _sha256(data_file) != manifest["sha256"]:
         raise StorageError("backup hash mismatch: file is corrupt or was modified")
     if manifest["schema_version"] > len(discover()):
         raise StorageError("backup was made by a newer build; refusing to restore")
-    probe = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
+    plain = _plain_bytes(backup_dir, manifest, key)
+    import tempfile
+
+    fd, tmp_name = tempfile.mkstemp(prefix="atlas-verify-", suffix=".sqlite")
+    tmp = Path(tmp_name)
     try:
-        result = probe.execute("PRAGMA integrity_check").fetchone()[0]
-        for table, expected in manifest["row_counts"].items():
-            got = probe.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]  # noqa: S608
-            if got != expected:
-                raise StorageError(f"row count mismatch in {table}: {got} != {expected}")
+        with os.fdopen(fd, "wb") as f:
+            f.write(plain)
+        probe = sqlite3.connect(f"file:{tmp.as_posix()}?mode=ro", uri=True)
+        try:
+            result = probe.execute("PRAGMA integrity_check").fetchone()[0]
+            for table, expected in manifest["row_counts"].items():
+                got = probe.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]  # noqa: S608
+                if got != expected:
+                    raise StorageError(f"row count mismatch in {table}: {got} != {expected}")
+        finally:
+            probe.close()
     finally:
-        probe.close()
+        tmp.unlink(missing_ok=True)
     if result != "ok":
         raise StorageError(f"integrity_check failed: {result}")
     return manifest
 
 
-def restore_backup(backup_dir: Path, target_db: Path, clock: Clock) -> RestoreReport:
+def restore_backup(
+    backup_dir: Path, target_db: Path, clock: Clock, key: bytes | None = None
+) -> RestoreReport:
     """Replace ``target_db`` with the verified backup. The target must not be open elsewhere."""
-    verify_backup(backup_dir)
+    manifest = verify_backup(backup_dir, key)
     staging = target_db.with_suffix(".restoring")
-    staging.write_bytes((backup_dir / DB_NAME).read_bytes())
+    staging.write_bytes(_plain_bytes(backup_dir, manifest, key))
     for suffix in ("-wal", "-shm"):
         side = Path(str(target_db) + suffix)
         if side.exists():

@@ -406,3 +406,52 @@ CI core-linux: 416 passed, 3 skipped (testes de macOS não executados)
 ```
 
 **Ainda não prova:** o Supervisor iniciando o serviço via launchd/SMAppService no Mac do proprietário (D-01).
+
+---
+
+## Etapas 4 e 5 (Alpha no núcleo e no runner macOS) — 2026-09-23 — branch `impl/alpha-app`
+
+**Implementado.**
+- **Daemon `python -m core`:**
+  - na primeira execução, cria a identidade; depois, recupera o estado após reinício;
+  - grava o token do app num arquivo 0600 e serve o IPC por Unix socket;
+  - o worker executa tarefas só com a inteligência configurada: credencial no Keychain, tetos de
+    orçamento e modelo validado pelo "Testar inteligência";
+  - sem isso, as tarefas ficam na fila e a saúde informa o motivo exato.
+- **Novos métodos IPC:** `identity.get`, `credentials.register` (só pelo app local; nunca devolve o
+  segredo), `intelligence.check`, `artifacts.list`, `approvals.list`.
+- **Supervisor (Swift):**
+  - inicia o serviço de Keychain e o núcleo com tokens em arquivos 0600 dentro de pastas 0700;
+  - reinicia o núcleo após um crash, com backoff limitado;
+  - encerra os dois de verdade.
+- **App SwiftUI:** Conversa, Trabalho, Aprovações, Configurações e Diagnóstico. Sair do app encerra
+  os serviços; fechar só a janela os mantém.
+- **Pacote Atlas.app de desenvolvimento** (ADR-014): Python embutido com hash fixado, verificação
+  headless e artefato `Atlas-dev.zip` no CI.
+- **Backups cifrados** com AES-256-GCM.
+
+**Evidência (CI macos-15, commit 60a73ca):**
+
+```text
+swift test: 7 tests, 0 failures. SupervisorTests: sobe o Keychain e o núcleo, conversa por IPC,
+            derruba o núcleo com SIGKILL, confirma que foi reiniciado com nova sessão, encerra tudo
+            e confirma que o processo terminou
+pytest macOS: 420 passed, 1 skipped (chamada real opt-in, D-03), incluindo
+  test_daemon_e2e::test_alpha_flow_with_real_keychain_and_fake_model: chave no Keychain real
+  via IPC, orçamento salvo, "Testar inteligência" contra um servidor de modelo FALSO local,
+  tarefa delegada concluída pelo worker com entregável verificado, estado preservado
+  após reinício e nenhuma chamada repetida
+Atlas.app: runtime conferido ("python.tgz: OK"), assinatura ad-hoc; atlas-bundle-check com
+  env -i PATH=/usr/bin:/bin (sem Python do sistema) iniciou o Supervisor, falou com o núcleo
+  e criou uma tarefa
+Artefato: Atlas-dev-app (Atlas-dev.zip, ~31 MB)
+```
+
+**NÃO EXECUTADO / NÃO PROVADO:**
+- Uso interativo do app, item de login (SMAppService) e comportamento no Mac do proprietário (D-01).
+- Chamada a um modelo real (D-03).
+- VM de trabalho, navegador e pesquisa pública.
+- Criptografia do banco em uso (D-09).
+- Voz, canal remoto e notarização (D-07).
+
+**Custos incorridos:** zero.

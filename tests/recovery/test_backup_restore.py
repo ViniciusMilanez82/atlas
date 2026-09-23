@@ -114,3 +114,73 @@ def test_backup_directory_must_be_new(world: World, tmp_path: Path) -> None:
     (tmp_path / "exists").mkdir()
     with pytest.raises(FileExistsError):
         create_backup(world.conn, tmp_path / "exists", world.clock)
+
+
+# --- encrypted backups (THREAT_MODEL T-12, backup part) ------------------------------------------
+
+
+def test_encrypted_backup_round_trip_and_no_plaintext_on_disk(world: World, tmp_path: Path) -> None:
+    import os
+
+    from storage.migrate import discover
+
+    key = os.urandom(32)
+    with transaction(world.conn):
+        world.conn.execute(
+            "INSERT INTO owners VALUES ('marcador-sintetico-owner', 'Marcador Unico XYZ', '2026-01-01T00:00:00.000Z')"
+        )
+    manifest = create_backup(world.conn, tmp_path / "bk", world.clock, key=key)
+    assert manifest["encrypted"] is True and manifest["cipher"] == "AES-256-GCM"
+    files = sorted(p.name for p in (tmp_path / "bk").iterdir())
+    assert files == ["atlas.sqlite.enc", "manifest.json"]  # no plaintext copy left behind
+    assert b"Marcador Unico XYZ" not in (tmp_path / "bk" / "atlas.sqlite.enc").read_bytes()
+    verify_backup(tmp_path / "bk", key)
+    world.conn.close()
+    restore_backup(tmp_path / "bk", world.path, world.clock, key=key)
+    world.conn = open_store(world.path, world.clock)
+    assert (
+        world.conn.execute("SELECT display_name FROM owners WHERE id='marcador-sintetico-owner'").fetchone()[
+            0
+        ]
+        == "Marcador Unico XYZ"
+    )
+    assert len(discover()) >= 1
+
+
+def test_encrypted_backup_needs_the_right_key(world: World, tmp_path: Path) -> None:
+    import os
+
+    key = os.urandom(32)
+    create_backup(world.conn, tmp_path / "bk", world.clock, key=key)
+    with pytest.raises(StorageError, match="key is required"):
+        verify_backup(tmp_path / "bk")
+    with pytest.raises(StorageError, match="cannot be decrypted"):
+        verify_backup(tmp_path / "bk", os.urandom(32))
+
+
+def test_encrypted_backup_tampering_is_detected(world: World, tmp_path: Path) -> None:
+    import os
+
+    key = os.urandom(32)
+    manifest = create_backup(world.conn, tmp_path / "bk", world.clock, key=key)
+    enc = tmp_path / "bk" / "atlas.sqlite.enc"
+    data = bytearray(enc.read_bytes())
+    data[40] ^= 0x01
+    enc.write_bytes(bytes(data))
+    with pytest.raises(StorageError, match="hash mismatch"):
+        verify_backup(tmp_path / "bk", key)
+    # Even if an attacker also rewrites the manifest hash, authenticated encryption refuses it.
+    mf = tmp_path / "bk" / "manifest.json"
+    m = json.loads(mf.read_text(encoding="utf-8"))
+    import hashlib
+
+    m["sha256"] = hashlib.sha256(bytes(data)).hexdigest()
+    mf.write_text(json.dumps(m), encoding="utf-8")
+    with pytest.raises(StorageError, match="cannot be decrypted"):
+        verify_backup(tmp_path / "bk", key)
+    assert manifest["encrypted"] is True
+
+
+def test_backup_key_must_be_256_bits(world: World, tmp_path: Path) -> None:
+    with pytest.raises(StorageError, match="32 bytes"):
+        create_backup(world.conn, tmp_path / "bk", world.clock, key=b"short")

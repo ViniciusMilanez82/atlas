@@ -28,7 +28,7 @@ repetida automaticamente.
 `storage.backup.create_backup` gera cópia consistente (API de backup do SQLite) e manifesto com
 SHA-256, versão de schema e contagem de linhas. `restore_backup` confere hash e versão antes de
 restaurar e, depois, **revoga** aprovações APPROVED/RESERVED e mandatos ativos, porque um backup
-antigo poderia repetir efeitos (spec 12.4). A cópia de backup ainda não é cifrada (T-12).
+antigo poderia repetir efeitos (spec 12.4). Com chave, o backup é cifrado (AES-256-GCM) e a cópia em claro é removida. **Sem a chave não há restauração**: a chave deve ficar no Keychain e ter cópia de recuperação sob controle do proprietário.
 
 ## 5. Retenção (propostas da spec 16.2, ainda não automatizadas)
 
@@ -47,3 +47,22 @@ reconstruído a qualquer momento com `MemoryManager.rebuild_index()`.
 Com o computador desligado, ocorrências vencidas não são repetidas uma a uma. A política padrão
 consolida tudo numa única tarefa e, se ela tiver efeito externo, aguarda confirmação do
 proprietário (estado WAITING_USER).
+
+## 8. App de desenvolvimento (Atlas.app)
+
+O CI macOS publica `Atlas-dev.zip` (artefato **Atlas-dev-app** de cada execução). É um pacote Apple
+Silicon, com assinatura apenas ad-hoc e **sem notarização**: o macOS pede confirmação na primeira
+abertura (clique com o botão direito em Atlas.app e escolha Abrir).
+
+| Ação | Efeito |
+| --- | --- |
+| Fechar a janela | Os serviços continuam |
+| Pare tudo (menu Funcionário, Cmd+.) | Pausa as tarefas e pede a parada das ações em andamento |
+| Encerrar serviços, ou sair do app | Encerra o núcleo e o serviço de Keychain |
+
+Dados ficam em `~/Library/Application Support/Atlas`. Para usar um modelo real:
+1. Em Configurações, guarde a chave no Keychain.
+2. Salve os tetos de orçamento.
+3. Rode "Testar inteligência".
+
+Sem esses três passos, as tarefas ficam na fila e o Diagnóstico mostra o motivo.
