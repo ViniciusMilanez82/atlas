@@ -62,9 +62,9 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 
 | ID | Requisito | Marco | Implementação | Teste | Estado |
 | --- | --- | --- | --- | --- | --- |
-| REQ-8-1 | Camadas; política/credencial não são memória; inferências ficam `proposed` | M7 | — | GA-04 | PLANEJADO |
-| REQ-8-2 | Registro mínimo e estados proposed/confirmed/disputed/superseded/deleted | M2/M7 | tabelas `memories`, `memory_versions` | `test_storage.py` | PARCIAL (schema OK; motor de memória: M7) |
-| REQ-8-3 | Busca híbrida; índices reconstruíveis; correção versionada | M7 | FTS5 | GA-01, GA-04 | PLANEJADO |
+| REQ-8-1 | Camadas; política/credencial não são memória; inferências ficam `proposed` | M7 | `runtime/memory/manager.py` | `tests/integration/test_memory.py` | OK |
+| REQ-8-2 | Registro mínimo e estados proposed/confirmed/disputed/superseded/deleted | M2/M7 | tabelas `memories`, `memory_versions` | `test_storage.py` | OK |
+| REQ-8-3 | Busca híbrida; índices reconstruíveis; correção versionada | M7 | FTS5 | GA-01, GA-04 | PARCIAL (FTS5 + reconstrução OK; índice semântico depende de modelo, M6) |
 | REQ-8-4 | Dados temporais UTC + IANA; dia inteiro com semântica própria | M7 | `shared/clock.py` | GA-02 | PARCIAL |
 | REQ-8-5 | Aprendizado seguro; skill nova passa por sandbox e testes | M15 | — | — | PLANEJADO |
 
@@ -75,7 +75,7 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 | REQ-9-1 | Entidades Objective..Evidence; tarefa com campos obrigatórios | M2/M5 | schema SQL, `task.schema.json` | contrato + storage | PARCIAL |
 | REQ-9-2 | Máquina de estados 9.2; UNKNOWN → BLOCKED(EXTERNAL_EFFECT_UNKNOWN) | M5 | `runtime/tasks/state_machine.py` | `test_task_state_machine.py` | OK |
 | REQ-9-3 | Leases, heartbeat, fencing; checkpoints; jobs com fuso | M5 | `runtime/tasks/engine.py` | `test_task_engine.py` | OK |
-| REQ-9-4 | Limites de tentativa; backoff com jitter; circuit breaker | M5/M6 | — | — | PLANEJADO |
+| REQ-9-4 | Limites de tentativa; backoff com jitter; circuit breaker | M5/M6 | `runtime/tasks/limits.py` | `tests/integration/test_limits_and_scheduler.py` | OK |
 
 ## Ferramentas e navegador (cap. 10)
 
@@ -133,7 +133,7 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 | REQ-15-3 | COMPLETED só com critérios obrigatórios satisfeitos | M5/M11 | PARCIAL (COMPLETED exige critérios com evidência; validadores: M11) |
 | REQ-16-1 | Mínimo necessário; fixtures sintéticas | todos | OK para fixtures atuais (varredura de segredos/CPF) |
 | REQ-16-2 | Retenção configurável | M7/M15 | PLANEJADO |
-| REQ-16-3 | Exclusão de índices; backup testado por restauração | M2/M7 | PARCIAL (backup/restore OK; exclusão de índices: M7) |
+| REQ-16-3 | Exclusão de índices; backup testado por restauração | M2/M7 | OK para memória e backup; artefatos: M8 |
 | REQ-16-4 | Atualização assinada; ponto de recuperação antes de migração | M16 | NÃO EXECUTADO (D-07) |
 | REQ-17-1 | Eventos com campos 17.1; redação de sensíveis | M2 | OK |
 | REQ-17-2 | Metas de aceitação medidas | M17 | NÃO EXECUTADO (D-01) |
@@ -142,10 +142,10 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 
 | ID | Cenário | Depende de | Estado |
 | --- | --- | --- | --- |
-| GA-01 | Memória e reinício | M7 | PLANEJADO |
+| GA-01 | Memória e reinício | M7 | OK |
 | GA-02 | Cruzamento temporal | M7 | PLANEJADO |
 | GA-03 | Pesquisa e relatório | M9–M11, D-03 | PLANEJADO |
-| GA-04 | Preferência corrigida | M7 | PLANEJADO |
+| GA-04 | Preferência corrigida | M7 | OK |
 | GA-05 | Obstáculo legítimo | M9 | NÃO EXECUTADO (D-01) |
 | GA-06 | Recurso pago | M3, M10 | PARCIAL (autorização testada; fluxo completo em M10) |
 | GA-07 | Mudança material | M3 | OK |
@@ -156,5 +156,5 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 | GA-12 | Comando de parada | M5 | OK |
 | GA-13 | Operação remota | M14 | PLANEJADO |
 | GA-14 | Mac indisponível | M14 | PLANEJADO |
-| GA-15 | Backup e exclusão | M2, M7 | PARCIAL |
+| GA-15 | Backup e exclusão | M2, M7 | PARCIAL (backup/restore e exclusão de memória OK; artefatos: M8) |
 | GA-16 | Instalação limpa | M16 | NÃO EXECUTADO (D-01, D-07) |

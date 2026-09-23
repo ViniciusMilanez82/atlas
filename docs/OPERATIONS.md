@@ -34,3 +34,16 @@ antigo poderia repetir efeitos (spec 12.4). A cópia de backup ainda não é cif
 
 Logs operacionais detalhados: 30 dias. Screenshots: só os necessários à evidência. Áudio bruto:
 não retido após processamento. A automação dessas regras é tarefa do backlog (AT-013/AT-019).
+
+## 6. Memória
+
+Excluir uma memória apaga o conteúdo de todas as suas versões e as entradas do índice derivado.
+O registro da exclusão continua no journal, sem o conteúdo. Backups feitos antes da exclusão
+ainda contêm o texto; a interface precisa avisar isso (spec 16.3). O índice FTS5 pode ser
+reconstruído a qualquer momento com `MemoryManager.rebuild_index()`.
+
+## 7. Tarefas recorrentes
+
+Com o computador desligado, ocorrências vencidas não são repetidas uma a uma. A política padrão
+consolida tudo numa única tarefa e, se ela tiver efeito externo, aguarda confirmação do
+proprietário (estado WAITING_USER).

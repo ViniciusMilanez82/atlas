@@ -31,7 +31,7 @@ Todo conteúdo que cruza 3, 4, 5 ou 6 é **dado não confiável**, nunca instru�
 | ID | Ameaça | Controle | Teste de bloqueio | Estado |
 | --- | --- | --- | --- | --- |
 | T-01 | Prompt injection | Proposta sem campos de autoridade (schema); política determinística; efeito vem do registro | `tests/contract/test_schemas.py::test_llm_proposal_cannot_carry_authority_fields`; `tests/security/test_prompt_injection.py` | OK (camada de autoridade; comportamento do modelo: M6/M10) |
-| T-02 | Contaminação de memória | Fonte, estado `proposed`, confirmação | a implementar em M7 | Planejado |
+| T-02 | Contaminação de memória | Fonte com confiança derivada do canal, estado `proposed`, confirmação só pelo proprietário | `tests/integration/test_memory.py::test_t02_external_text_never_becomes_confirmed_preference` | OK |
 | T-03 | Vazamento por ferramenta | Dados mínimos, destino permitido, broker | `tests/security/test_broker.py` (destino fora do escopo) | OK (broker, destino e SECRET_DATA_EGRESS) |
 | T-04 | Escape de workspace | VM, sem pastas pessoais, sem shell de host | M1: arquivo-sentinela no host | **NÃO EXECUTADO** (requer Mac) |
 | T-05 | Código malicioso | Execution Box sem segredos e sem rede | M8 | **NÃO EXECUTADO** (requer VM) |

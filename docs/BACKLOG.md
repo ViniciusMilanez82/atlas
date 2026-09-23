@@ -53,8 +53,8 @@ Estados: `FEITO` (testes executados e aprovados), `EM CURSO`, `A FAZER`, `BLOQUE
 | AT-010.2 | Leases com expiração, heartbeat e fencing token | 010.1 | any | worker antigo perde despacho | FEITO |
 | AT-010.3 | Pausa, retomada, cancelamento e "pare tudo" | 010.2 | any | parada < 2 s no teste local | FEITO |
 | AT-010.4 | Recuperação pós-reinício (leases, DISPATCHING→UNKNOWN, reavaliação) | 010.2, 017.1 | any | sem repetição cega | FEITO |
-| AT-010.5 | Checkpoints e limites de tentativa (3 transitórias, 2 replanejamentos, 20 passos) | 010.1 | any | loops param | A FAZER |
-| AT-010.6 | Jobs agendados com fuso IANA e política de execuções perdidas | 010.1 | any | ocorrências perdidas consolidadas | A FAZER |
+| AT-010.5 | Checkpoints e limites de tentativa (3 transitórias, 2 replanejamentos, 20 passos) | 010.1 | any | loops param | FEITO |
+| AT-010.6 | Jobs agendados com fuso IANA e política de execuções perdidas | 010.1 | any | ocorrências perdidas consolidadas | FEITO |
 
 ## M6 em diante (resumo; detalhar ao iniciar cada marco)
 
@@ -62,7 +62,7 @@ Estados: `FEITO` (testes executados e aprovados), `EM CURSO`, `A FAZER`, `BLOQUE
 | --- | --- | --- | --- |
 | AT-011 | Adaptador OpenAI (catálogo, health, streaming, resposta normalizada) | any + D-03 para chamada real | A FAZER |
 | AT-012.2 | Router por capacidade/privacidade/orçamento; modos simples | any | A FAZER |
-| AT-013 | Memória: camadas, proveniência, FTS5, correção versionada, exclusão | any | A FAZER |
+| AT-013 | Memória: camadas, proveniência, FTS5, correção versionada, exclusão | any | FEITO (texto/FTS5, proveniência, correção, exclusão); índice semântico: pós-M6 |
 | AT-014 | Registry de ferramentas + Artifact Broker (any) e Execution Box (mac) | any / mac | A FAZER |
 | AT-015 | Playwright no guest, perfis, takeover | mac | BLOQUEADO (D-01) |
 | AT-016 | Planner e Verifier | any + D-03 | A FAZER |

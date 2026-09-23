@@ -42,7 +42,9 @@ para o navegador pessoal (spec 5.2, 5.4).
 | `security/budget` | Reservas e tetos de orçamento | Implementado (parte de M6) |
 | `runtime/tasks` | Estados, leases, fencing, pausa, parada, recuperação | Implementado (M5 núcleo) |
 | `runtime/tools/registry.py` | Tool Registry confiável | Implementado (M3) |
-| `runtime/{agent,models,memory,tools,verification}` | Inteligência, memória, ferramentas | M6–M11, não iniciado |
+| `runtime/tasks/limits.py`, `scheduler.py` | Limites de tentativa, backoff, circuit breaker, jobs com fuso | Implementado (M5) |
+| `runtime/memory/manager.py` | Memória com proveniência, correção, exclusão, FTS5 reconstruível | Implementado (M7, sem índice semântico) |
+| `runtime/{agent,models,verification}` | Planner, modelos, verificadores | M6, M10, M11: não iniciado |
 | `platform/{macos,workspace,execution}` | Swift, VM, Execution Box | Requer Mac, não iniciado |
 | `apps/macos`, `apps/companion-web` | Interfaces | Não iniciado |
 | `config/atlas.default.yaml` | Configuração de referência (spec 7.5) | Implementado, validado |

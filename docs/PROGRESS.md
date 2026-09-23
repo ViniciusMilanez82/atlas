@@ -175,3 +175,47 @@ manifesto mas ainda não é imposto pelo broker. Períodos de orçamento usam o 
 
 **Próxima tarefa.** AT-010.5 (limites de tentativa e checkpoints) e AT-010.6 (jobs agendados),
 depois M6 (adaptador de modelo sem chamada real até D-03) e M7 (memória).
+
+---
+
+## M5 (restante) e M7 — Limites, agendamento e memória (AT-010.5, AT-010.6, AT-013) — 2026-09-23
+
+**Objetivo.** Loops param sozinhos; jobs recorrentes respeitam fuso e não repetem ocorrências
+perdidas; memória duradoura com fonte, correção e exclusão.
+
+**Critérios de aceite.** Até 3 tentativas por erro transitório, 2 replanejamentos sem progresso e
+20 passos sem resultado verificável, configuráveis só dentro de limites seguros; backoff com
+jitter; ocorrências perdidas consolidadas com confirmação; memória persiste após reinício;
+correção substitui a resposta antiga sem perder a fonte; fonte externa não vira mandato nem
+preferência; índices reconstruídos mantêm o resultado.
+
+**Implementado.**
+- `runtime/tasks/limits.py`: `ProgressGuard` (RETRYING com backoff e jitter; BLOCKED com
+  RETRY_LIMIT ou NO_PROGRESS), `promote_due_retries`, `CircuitBreaker` por provedor.
+- `runtime/tasks/scheduler.py`: jobs por intervalo ou por horário local diário com horário de
+  verão correto; políticas CONSOLIDATE_AND_CONFIRM, SKIP e RUN_ONCE; deduplicação por
+  `job_runs(job_id, occurrence_at)`.
+- `runtime/memory/manager.py`: confiança da fonte derivada do canal (o Runtime não consegue
+  forjar mensagem do proprietário); só o proprietário confirma; identidade, preferência e
+  procedimento só são corrigidos pelo proprietário; segredos e textos com cara de credencial
+  são recusados; janela de validade; isolamento por funcionário; consulta FTS5 neutralizada;
+  exclusão remove conteúdo e índice; reconstrução do índice.
+- Migração 0004 (`task_progress`, `job_runs`, horário local e dono do job).
+
+**Evidência.**
+
+```text
+$ python scripts/check.py
+ruff: All checks passed!
+secret scan: 0 finding(s)
+mypy --strict: Success
+pytest: 309 passed, 1 skipped (Keychain: NÃO EXECUTADO, requer Mac)
+SUMMARY: ruff=PASS, secrets=PASS, mypy=PASS, pytest=PASS
+```
+
+**Limitações.** Sem índice semântico (depende de modelo de embeddings e de D-03). O motor de
+memória ainda não é chamado por um Planner, que é M6/M10.
+
+**Próxima tarefa.** M6 sem chamada real: interfaces `ModelProvider`/`ModelRouter`/`ContextBuilder`,
+roteamento por capacidade e orçamento, e um provedor falso para testes. A chamada real ao modelo e
+a validação dos IDs dependem de D-03.
