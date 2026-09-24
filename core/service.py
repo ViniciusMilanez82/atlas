@@ -41,6 +41,7 @@ OWNER_ONLY = {
     "tasks.resume",
     "tasks.cancel",
     "tasks.reevaluate",
+    "capabilities.decide",
     "approvals.decide",
     "memories.propose",
     "memories.correct",
@@ -115,6 +116,8 @@ class CoreService:
             "memories.list": self._mem_list,
             "memories.export": self._mem_export,
             "artifacts.all": self._artifacts_all,
+            "capabilities.list": self._capabilities_list,
+            "capabilities.decide": self._capabilities_decide,
             "tasks.update_instruction": self._update_instruction,
         }
 
@@ -401,6 +404,21 @@ class CoreService:
         self.memory.require_owned(p["memory_id"], s.employee_id)
         reach = self.memory.delete(p["memory_id"], actor=s.actor, scope=p.get("scope", "erase"))
         return {"memory_id": p["memory_id"], "deleted": True, **reach}
+
+    def _capabilities_list(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
+        from runtime.capabilities.requests import CapabilityRequests
+
+        return {"requests": CapabilityRequests(self.conn, self.clock).pending(s.employee_id)}
+
+    def _capabilities_decide(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
+        from runtime.capabilities.requests import CapabilityRequests
+
+        row = self.conn.execute("SELECT employee_id FROM capability_requests WHERE id = ?", (p["request_id"],)).fetchone()
+        if row is None or row[0] != s.employee_id:
+            raise AtlasError(ErrorCode.INVALID_INPUT, "capability request not found for this employee")
+        return CapabilityRequests(self.conn, self.clock).decide(
+            p["request_id"], actor=s.actor, approve=p["decision"] == "APPROVE", note=p.get("note", "")
+        )
 
     def _mem_list(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
         statuses = tuple(p.get("statuses") or ("proposed", "confirmed", "disputed"))

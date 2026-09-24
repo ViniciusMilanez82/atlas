@@ -62,7 +62,9 @@
         "memories.forget_preview",
         "memories.list",
         "memories.export",
-        "artifacts.all"
+        "artifacts.all",
+        "capabilities.list",
+        "capabilities.decide"
       ]
     },
     "params": {
@@ -608,6 +610,38 @@
         "properties": {
           "params": {
             "$ref": "#/$defs/p_base_list"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "capabilities.list"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_base"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "capabilities.decide"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_capability_decide"
           }
         }
       }
@@ -1433,6 +1467,37 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 500
+        }
+      }
+    },
+    "p_capability_decide": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id",
+        "request_id",
+        "decision"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "decision": {
+          "enum": [
+            "APPROVE",
+            "REJECT"
+          ]
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 500
         }
       }
     }

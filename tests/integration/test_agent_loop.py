@@ -60,6 +60,7 @@ def decision(
             "input_json": json.dumps(inp or {}),
             "artifact_id": artifact,
             "question": question,
+            "capability_json": "",
         }
     )
 

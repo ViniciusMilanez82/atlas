@@ -57,16 +57,51 @@ from storage.db import transaction
 DECISION_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["decision", "summary", "tool_id", "input_json", "artifact_id", "question"],
+    "required": ["decision", "summary", "tool_id", "input_json", "artifact_id", "question", "capability_json"],
     "properties": {
-        "decision": {"type": "string", "enum": ["tool", "finish", "ask_owner"]},
+        "decision": {"type": "string", "enum": ["tool", "finish", "ask_owner", "request_capability"]},
         "summary": {"type": "string", "maxLength": 300},
         "tool_id": {"type": "string"},
         "input_json": {"type": "string", "description": "JSON object with the tool input"},
         "artifact_id": {"type": "string", "description": "deliverable artifact id when finishing"},
         "question": {"type": "string"},
+        "capability_json": {
+            "type": "string",
+            "description": "request_capability only: JSON with problem, missing_capability, provider, evidence, "
+            "price {amount, currency, recurrence once|monthly|yearly, source}, data_shared [classes], "
+            "alternatives [..], risk, test_plan",
+        },
     },
 }
+CAPABILITY_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["problem", "missing_capability", "provider", "evidence", "price", "data_shared", "alternatives",
+                 "risk", "test_plan"],
+    "properties": {
+        "problem": {"type": "string", "minLength": 5, "maxLength": 600},
+        "missing_capability": {"type": "string", "minLength": 3, "maxLength": 300},
+        "provider": {"type": "string", "minLength": 2, "maxLength": 200},
+        "evidence": {"type": "string", "minLength": 5, "maxLength": 600},
+        "price": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["amount", "currency", "recurrence", "source"],
+            "properties": {
+                "amount": {"type": "string", "pattern": "^[0-9]+([.,][0-9]{1,2})?$"},
+                "currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
+                "recurrence": {"enum": ["once", "monthly", "yearly"]},
+                "source": {"type": "string", "minLength": 3, "maxLength": 300},
+            },
+        },
+        "data_shared": {"type": "array", "maxItems": 10,
+                        "items": {"enum": ["PUBLIC", "INTERNAL", "PERSONAL", "SENSITIVE"]}},
+        "alternatives": {"type": "array", "maxItems": 10, "items": {"type": "string", "maxLength": 300}},
+        "risk": {"type": "string", "minLength": 3, "maxLength": 400},
+        "test_plan": {"type": "string", "minLength": 3, "maxLength": 400},
+    },
+}
+_CAPABILITY_VALIDATOR = Draft202012Validator(CAPABILITY_SCHEMA)
 _DECISION_VALIDATOR = Draft202012Validator(DECISION_SCHEMA)
 MAX_OBSERVATION_CHARS = 40_000
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
@@ -187,6 +222,16 @@ class AgentRunner:
             return "ok-finish"
         if decision["decision"] == "ask_owner":
             return "ok-ask" if str(decision.get("question", "")).strip() else "ask_owner needs a question"
+        if decision["decision"] == "request_capability":
+            try:
+                cap = json.loads(decision["capability_json"] or "null")
+            except json.JSONDecodeError:
+                return "capability_json is not valid JSON"
+            errors = sorted(_CAPABILITY_VALIDATOR.iter_errors(cap), key=lambda e: list(e.absolute_path))
+            if errors:
+                where = "/".join(str(p) for p in errors[0].absolute_path) or "(root)"
+                return f"capability request incomplete at {where}: {errors[0].message[:160]}"
+            return "ok-capability"
         manifest = self.catalog.get(str(decision.get("tool_id", "")))
         if manifest is None:
             return f"tool '{decision.get('tool_id', '')}' is not in the catalog"
@@ -563,6 +608,15 @@ class AgentRunner:
                     lease, TaskState.WAITING_USER, "agent asked the owner a question", notice=("question", question, None)
                 )
                 return self._outcome(task_id, "waiting for the owner", steps)
+            if decision["decision"] == "request_capability":  # N18: concrete request, owner decides
+                from runtime.capabilities.requests import CapabilityRequests
+
+                CapabilityRequests(self.conn, self.clock).file(
+                    task_id=task_id,
+                    worker=Actor("worker", lease.worker_id, "internal"),
+                    request=json.loads(decision["capability_json"]),
+                )
+                return self._outcome(task_id, "waiting for the owner's decision on a capability request", steps)
             if decision["decision"] == "finish":
                 result = self.verifier.verify_text_artifact(task_id, decision.get("artifact_id", ""), spec)
                 self._last_verification = result

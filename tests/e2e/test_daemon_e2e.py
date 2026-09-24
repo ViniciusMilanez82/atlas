@@ -83,6 +83,7 @@ class FakeModelServer:
                                 "input_json": "{}",
                                 "artifact_id": written[-1],
                                 "question": "",
+                                "capability_json": "",
                             }
                         )
                     else:
@@ -98,6 +99,7 @@ class FakeModelServer:
                                 "input_json": json.dumps({"name": "relatorio.md", "content": report}),
                                 "artifact_id": "",
                                 "question": "",
+                                "capability_json": "",
                             }
                         )
                 self._json(
