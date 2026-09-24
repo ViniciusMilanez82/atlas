@@ -4,6 +4,10 @@ Cada requisito obrigatório aponta para marco, implementação e teste (spec 21)
 IDs `REQ-<seção>-<n>` são atribuídos aqui aos requisitos DEVE/NÃO DEVE da spec; UX-, AT- e GA-
 mantêm a numeração original.
 
+**Contrato v2.0 (vigente, ADR-015):** a rastreabilidade dos achados A3-01..A3-32 (requisito →
+correção → regressão → evidência) está em `docs/AUDIT_REMEDIATION.md`; as capacidades da V1 e o que
+ainda falta estão em `docs/CAPABILITY_MATRIX.md`. As linhas abaixo mantêm a numeração da spec v1.
+
 **Estados:** `OK` implementado e testado neste host · `PARCIAL` parte independente de plataforma
 feita · `PLANEJADO` ainda não iniciado · `NÃO EXECUTADO` depende de Mac/credencial (ver
 EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.

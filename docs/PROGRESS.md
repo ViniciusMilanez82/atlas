@@ -8,8 +8,47 @@ próxima tarefa. Testes marcados **NÃO EXECUTADO** indicam a dependência exata
 | Gate | Estado |
 | --- | --- |
 | READY TO CODE | Atingido (spec 23.1) |
+| G0 (contrato v2) | Atingido — baseline, contrato adotado, matriz e regressões |
+| G1 (contrato v2) | Correções e regressões concluídas no núcleo; validação no Mac do proprietário pendente (D-01) |
 | READY FOR BETA | **Não atingido** |
 | READY FOR RELEASE | **Não atingido** |
+
+## Contrato v2.0 — sessão de 2026-09-24 (branch `impl/contract-v2`)
+
+Contrato vigente: `docs/spec/v2/ATLAS_CONTRATO_IMPLEMENTACAO_v2.md` (ADR-015). Baseline factual em
+`docs/BASELINE.md`; matriz dos achados em `docs/AUDIT_REMEDIATION.md`; capacidades em
+`docs/CAPABILITY_MATRIX.md`.
+
+**Feito nesta sessão.** G0 completo; os 32 achados A3 corrigidos com regressão executada (reprodução
+antes da correção registrada em cada commit); pacotes N02-N05 (autoridade, inbox/outbox, supervisão,
+egress/orçamento) e partes de N06-N12 (conhecimento comum, intenções, extração de documentos, critérios,
+uploads, interface) no nível de núcleo e ViewModel. Quatro achados novos (B-01..B-04) registrados e tratados.
+
+**Evidência (comandos exatos).**
+
+```text
+Windows local: %USERPROFILE%\.venvstlas\Scripts\python.exe scripts/check.py
+  ruff=PASS secrets=PASS mypy=PASS (88 arquivos) pytest: 592 passed, 8 skipped
+  skips: 2 daemon E2E + 1 servidor UDS + 1 teste A3-28 com processos (sem Unix sockets no Windows),
+         1 symlink (privilégio), 1 chamada real opt-in (D-03), 1 probe Swift e 1 Keychain real (D-01)
+CI (GitHub Actions, commits da branch): core-linux, core-macos e app-evidence verdes até 7aa1c24;
+  Swift no macOS 15: 35 testes, 0 falhas (inclui A304RegressionTests, G3RegressionTests e
+  SupervisorTests com processos reais: segunda instância recusada, parada com prazo)
+  bundle Atlas.app gerado com as novas dependências e iniciado sem Python do sistema
+```
+
+**Estados, separados.** Implementado e testado em integração: sim (ver matriz). Compilado no macOS: sim.
+Modelo real: **não** (D-03). Uso interativo por uma pessoa num Mac: **não** (D-01). VM, navegador, voz,
+companion, contas, skills: **não implementados** (N14-N21).
+
+**Custos incorridos:** zero. Nenhuma credencial usada ou solicitada.
+
+**Próximos itens desbloqueados (ordem):** N11 geração de PDF/DOCX/XLSX/PPTX como entregáveis; N09 cálculos
+e datas estruturados (agenda com fusos/recorrências); N06 tela Memória e índice semântico local; N12 telas
+Trabalho/Memória/Arquivos ligadas aos estados; N13 modos de inteligência (router com perfis reais) — a
+validação real depende de conta e teto (D-03); N14/N15 dependem de um Mac com virtualização (D-01).
+
+---
 
 ## Diagnóstico do ambiente — 2026-09-23
 
