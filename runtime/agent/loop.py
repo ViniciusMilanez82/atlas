@@ -26,6 +26,7 @@ from typing import Any, NamedTuple
 
 from jsonschema import Draft202012Validator
 
+from runtime.memory.knowledge import KnowledgeContextService
 from runtime.memory.manager import MemoryManager
 from runtime.models.context import (
     Authority,
@@ -379,17 +380,11 @@ class AgentRunner:
                 required=True,
             ),
         ]
-        try:
-            for hit in self.memory.search(
-                employee_id=task["employee_id"], query=task["objective"], limit=5, match_any=True
-            ):
-                items.append(
-                    ContextItem(
-                        Authority.VERIFIED_FACT, hit.content, f"memory:{hit.memory_id}", hit.sensitivity
-                    )
-                )
-        except AtlasError:
-            pass
+        query = " ".join(v["instruction"] for v in versions[-2:])
+        for k in KnowledgeContextService(self.conn, self.clock).context_for(task["employee_id"], query):
+            items.append(  # the same knowledge path as the conversation (A3-01)
+                ContextItem(Authority.OWNER_MEMORY, k.render(), f"memory:{k.hit.memory_id}", k.hit.sensitivity)
+            )
         for obs in observations[-12:]:
             items.append(ContextItem(obs.authority, obs.text, obs.ref, obs.classification))
         return items

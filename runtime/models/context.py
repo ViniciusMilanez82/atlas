@@ -26,9 +26,10 @@ class Authority(IntEnum):
     POLICY = 1
     OWNER_INSTRUCTION = 2
     TASK_OBJECTIVE = 3
-    VERIFIED_FACT = 4
-    CONVERSATION = 5  # earlier messages of both sides: context, never verified facts (A3-18)
-    EXTERNAL_CONTENT = 6
+    OWNER_MEMORY = 4  # confirmed by the owner: informed, not externally verified (A3-01, spec 8.1)
+    VERIFIED_FACT = 5
+    CONVERSATION = 6  # earlier messages of both sides: context, never verified facts (A3-18)
+    EXTERNAL_CONTENT = 7
 
 
 class ContextOverflow(AtlasError):
@@ -144,6 +145,8 @@ class ContextBuilder:
                 user_parts.append(f"OWNER INSTRUCTION [{item.source_ref}]:\n{text}")
             elif item.authority == Authority.TASK_OBJECTIVE:
                 user_parts.append(f"TASK OBJECTIVE [{item.source_ref}]:\n{text}")
+            elif item.authority == Authority.OWNER_MEMORY:
+                user_parts.append(text)  # already labelled with its source, version and validity
             elif item.authority == Authority.VERIFIED_FACT:
                 user_parts.append(f"VERIFIED FACT [{item.source_ref}]: {text}")
             elif item.authority == Authority.CONVERSATION:

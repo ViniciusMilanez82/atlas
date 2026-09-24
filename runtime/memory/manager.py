@@ -530,6 +530,43 @@ class MemoryManager:
                 break
         return hits
 
+    _HIT_SQL = (
+        "SELECT m.id, m.type, m.status, m.current_version, v.content, v.source_id, v.valid_from,"
+        " v.valid_until, s.kind AS source_kind, s.trust AS source_trust, m.sensitivity"
+        " FROM memories m JOIN memory_versions v ON v.memory_id = m.id AND v.version = m.current_version"
+        " JOIN sources s ON s.id = v.source_id"
+    )
+
+    def _hit(self, r: sqlite3.Row, when: datetime) -> MemoryHit | None:
+        if r["valid_from"] and parse_utc(r["valid_from"]) > when:
+            return None
+        if r["valid_until"] and parse_utc(r["valid_until"]) <= when:
+            return None
+        return MemoryHit(
+            r["id"], r["type"], r["status"], r["current_version"], r["content"], r["source_id"],
+            r["source_kind"], r["source_trust"], r["valid_from"], r["valid_until"], r["sensitivity"],
+        )
+
+    def get_current(self, memory_id: str, at: datetime | None = None) -> MemoryHit | None:
+        """The current version of a CONFIRMED memory valid now, or None."""
+        r = self.conn.execute(self._HIT_SQL + " WHERE m.id = ? AND m.status = 'confirmed'", (memory_id,)).fetchone()
+        return self._hit(r, at or self.clock.now()) if r is not None else None
+
+    def search_terms(self, *, employee_id: str, terms: list[str], limit: int = 8) -> list[MemoryHit]:
+        """Confirmed memories matching ANY of the prefix terms (already folded to [a-z0-9]), bm25-ranked."""
+        safe = [t for t in terms if re.fullmatch(r"[a-z0-9]{2,40}", t)]
+        if not safe:
+            raise AtlasError(ErrorCode.INVALID_INPUT, "empty search query")
+        rows = self.conn.execute(
+            self._HIT_SQL.replace("FROM memories m", "FROM memory_fts f JOIN memories m ON m.id = f.memory_id")
+            + " WHERE memory_fts MATCH ? AND m.employee_id = ? AND m.status = 'confirmed'"
+            " ORDER BY bm25(memory_fts) LIMIT ?",
+            (" OR ".join(f"{t}*" for t in safe), employee_id, limit * 3),
+        ).fetchall()
+        when = self.clock.now()
+        hits = [h for h in (self._hit(r, when) for r in rows) if h is not None]
+        return hits[:limit]
+
     def history(self, memory_id: str) -> list[tuple[int, str, str]]:
         """(version, content, source_id) oldest first. Superseded versions remain traceable."""
         return [

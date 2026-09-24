@@ -24,6 +24,7 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from core.intelligence import IntelligenceSetup
+from runtime.memory.knowledge import KnowledgeContextService
 from runtime.memory.manager import MemoryManager
 from runtime.models.context import (
     Authority,
@@ -1046,6 +1047,11 @@ class ConversationService:
                 required=True,
             )
         )
+        # A3-01: durable knowledge, not only the last messages (same service as tasks).
+        for k in KnowledgeContextService(self.conn, self.clock).context_for(employee_id, text):
+            items.append(
+                ContextItem(Authority.OWNER_MEMORY, k.render(), f"memory:{k.hit.memory_id}", k.hit.sensitivity)
+            )
         guard = EgressGuard(self.conn)
         try:
             built = ContextBuilder().build(items, max_classification=guard.max_allowed("openai", "conversation"))
