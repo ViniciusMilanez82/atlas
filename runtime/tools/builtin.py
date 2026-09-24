@@ -97,6 +97,7 @@ class BuiltinTools:
                     "sha256": art.sha256,
                     "text": text[:200_000],
                     "trust": "untrusted",
+                    "classification": art.classification,
                 },
             )
         except AtlasError as exc:
@@ -115,6 +116,7 @@ class BuiltinTools:
                 task_id=task_id,
                 name=tool_input["name"],
                 content=tool_input["content"],
+                classification=self._derived_classification(conn, task_id),
             )
             return AdapterOutcome(
                 "SUCCEEDED",
@@ -133,6 +135,21 @@ class BuiltinTools:
         finally:
             conn.close()
 
+    @staticmethod
+    def _derived_classification(conn: Any, task_id: str) -> str:
+        """A deliverable inherits at least the protection of the task and of its inputs (spec 9.1)."""
+        levels = ("PUBLIC", "INTERNAL", "PERSONAL", "SENSITIVE")
+        found = [conn.execute("SELECT data_policy FROM tasks WHERE id = ?", (task_id,)).fetchone()[0]]
+        found += [
+            r[0]
+            for r in conn.execute(
+                "SELECT a.classification FROM artifact_links l JOIN artifacts a ON a.id = l.artifact_id"
+                " WHERE l.task_id = ? AND l.relation = 'input'",
+                (task_id,),
+            )
+        ]
+        return max((c for c in found if c in levels), key=levels.index, default="INTERNAL")
+
     def search_memory(self, tool_input: dict[str, Any], ctx: Any) -> AdapterOutcome:
         conn = connect(self.db_path)
         try:
@@ -140,10 +157,13 @@ class BuiltinTools:
             hits = MemoryManager(conn, self.clock).search(
                 employee_id=employee_id, query=tool_input["query"], limit=10
             )
+            levels = ("PUBLIC", "INTERNAL", "PERSONAL", "SENSITIVE")
+            cls = max((h.sensitivity for h in hits), key=levels.index, default="INTERNAL")
             return AdapterOutcome(
                 "SUCCEEDED",
                 external_reference="memory.search",
                 output={
+                    "classification": cls,
                     "hits": [
                         {
                             "memory_id": h.memory_id,

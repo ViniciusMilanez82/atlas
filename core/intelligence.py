@@ -27,6 +27,7 @@ from runtime.models.pricing import SPEC_REFERENCE_TABLE, PriceTable
 from runtime.models.router import BudgetedModelClient, CatalogEntry, Consent, ModelRouter, Requirements
 from runtime.models.types import Message, ModelCapabilities, ModelRequest, ProviderCallError, Role
 from security.budget.budget import BudgetError, BudgetManager
+from security.egress.guard import EgressGuard
 from security.vault.vault import SecretValue, Vault, VaultError
 from shared.actors import Actor
 from shared.clock import Clock, to_utc_str
@@ -171,7 +172,8 @@ class IntelligenceSetup:
         )
         router = ModelRouter(
             [CatalogEntry("openai", model, "general", 2, CAPS, validated=True)],
-            Consent({"openai"}),
+            # Sensitive disclosure is decided per purpose by the Egress Guard on the final payload.
+            Consent({"openai"}, sensitive_data_providers={"openai"}),
             mode="manual",
             manual_model=model,
         )
@@ -183,6 +185,7 @@ class IntelligenceSetup:
             {"openai": provider},
             self.prices,
             BudgetManager.live(self.conn, self.clock, cap_minor=per_call_cap),
+            egress=EgressGuard(self.conn),
         )
 
     def build_client(self) -> BudgetedModelClient:

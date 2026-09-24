@@ -22,12 +22,18 @@ import json
 import re
 import sqlite3
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NamedTuple
 
 from jsonschema import Draft202012Validator
 
 from runtime.memory.manager import MemoryManager
-from runtime.models.context import Authority, ContextBuilder, ContextItem, ContextOverflow
+from runtime.models.context import (
+    Authority,
+    ContextBuilder,
+    ContextItem,
+    ContextOverflow,
+    RequiredContextWithheld,
+)
 from runtime.models.router import BudgetedModelClient, Requirements
 from runtime.models.types import ModelRequest
 from runtime.notifications import texts
@@ -39,6 +45,7 @@ from runtime.tasks.state_machine import TaskState
 from runtime.tools.registry import RegistryError, ToolManifest
 from runtime.verification.verifier import DeliverableSpec, Verifier
 from security.broker.broker import Broker, DispatchResult
+from security.egress.guard import EgressBlocked, highest, rank
 from shared.actors import Actor
 from shared.clock import Clock, to_utc_str
 from shared.errors import AtlasError, ErrorCode
@@ -84,6 +91,15 @@ def parse_decision(text: str) -> dict[str, Any]:
         raise ValueError(f"the decision violates its schema at {where}: {errors[0].message[:160]}")
     assert isinstance(decision, dict)
     return decision
+
+
+class Observation(NamedTuple):
+    """Operational observation fed back to the model, with the classification of what it contains."""
+
+    text: str
+    ref: str
+    authority: Authority
+    classification: str = "INTERNAL"
 
 
 @dataclass
@@ -186,7 +202,7 @@ class AgentRunner:
 
     # ------------------------------------------------------------------ resumption (3C)
 
-    def _resume_state(self, task_id: str) -> tuple[str, list[tuple[str, str, Authority]]]:
+    def _resume_state(self, task_id: str) -> tuple[str, list[Observation]]:
         """Latest plan + observations rebuilt from the database. A new plan only on the first run."""
         row = self.conn.execute(
             "SELECT id FROM plans WHERE task_id = ? ORDER BY version DESC LIMIT 1", (task_id,)
@@ -194,8 +210,8 @@ class AgentRunner:
         if row is None:
             return self._new_plan(task_id, "initial plan: iterate one verified step at a time"), []
         self._settle_interrupted_steps(task_id)
-        observations: list[tuple[str, str, Authority]] = [
-            (
+        observations: list[Observation] = [
+            Observation(
                 "This task was interrupted and is being resumed. Earlier completed steps are listed; do not "
                 "repeat actions whose results are already known.",
                 "system",
@@ -203,21 +219,22 @@ class AgentRunner:
             )
         ]
         for step in self.conn.execute(
-            "SELECT s.description, s.status, o.content, o.trust FROM steps s LEFT JOIN step_observations o"
+            "SELECT s.description, s.status, o.content, o.trust, o.classification FROM steps s"
+            " LEFT JOIN step_observations o"
             " ON o.step_id = s.id WHERE s.task_id = ? ORDER BY s.created_at, s.rowid",
             (task_id,),
         ).fetchall():
-            observations.append((f"Earlier step ({step[1]}): {step[0]}", "system", Authority.VERIFIED_FACT))
+            observations.append(Observation(f"Earlier step ({step[1]}): {step[0]}", "system", Authority.VERIFIED_FACT))
             if step[2]:
                 auth = Authority.EXTERNAL_CONTENT if step[3] == "untrusted" else Authority.VERIFIED_FACT
-                observations.append((step[2], "step-observation", auth))
+                observations.append(Observation(step[2], "step-observation", auth, step[4] or "INTERNAL"))
         observations += self._owner_messages(task_id)
         self._journal(
             task_id, "task.resumed", f"resumed on plan {row[0]} with {len(observations)} observation(s)"
         )
         return str(row[0]), observations
 
-    def _owner_messages(self, task_id: str) -> list[tuple[str, str, Authority]]:
+    def _owner_messages(self, task_id: str) -> list[Observation]:
         try:
             rows = self.conn.execute(
                 "SELECT id, role, kind, content FROM messages WHERE task_id = ? AND kind IN"
@@ -226,12 +243,12 @@ class AgentRunner:
             ).fetchall()
         except sqlite3.OperationalError:
             return []
-        out: list[tuple[str, str, Authority]] = []
+        out: list[Observation] = []
         for r in rows:
             if r[1] == "owner":
-                out.append((f"Owner answer: {r[3]}", f"message:{r[0]}", Authority.OWNER_INSTRUCTION))
+                out.append(Observation(f"Owner answer: {r[3]}", f"message:{r[0]}", Authority.OWNER_INSTRUCTION))
             else:
-                out.append((f"You asked the owner: {r[3]}", f"message:{r[0]}", Authority.VERIFIED_FACT))
+                out.append(Observation(f"You asked the owner: {r[3]}", f"message:{r[0]}", Authority.VERIFIED_FACT))
         return out
 
     def _settle_interrupted_steps(self, task_id: str) -> None:
@@ -259,12 +276,14 @@ class AgentRunner:
             else:
                 self._finish_step(step[0], "FAILED")
 
-    def _observe(self, step_id: str, task_id: str, content: str, trust: str) -> None:
+    def _observe(
+        self, step_id: str, task_id: str, content: str, trust: str, classification: str = "INTERNAL"
+    ) -> None:
         with transaction(self.conn):
             self.conn.execute(
-                "INSERT OR REPLACE INTO step_observations(step_id, task_id, content, trust, created_at)"
-                " VALUES (?,?,?,?,?)",
-                (step_id, task_id, content[:20_000], trust, to_utc_str(self.clock.now())),
+                "INSERT OR REPLACE INTO step_observations(step_id, task_id, content, trust, created_at,"
+                " classification) VALUES (?,?,?,?,?,?)",
+                (step_id, task_id, content[:20_000], trust, to_utc_str(self.clock.now()), classification),
             )
 
     def _deliver(self, task_id: str) -> None:
@@ -333,7 +352,7 @@ class AgentRunner:
                 task = self.tasks.get(task_id)
 
     def _context(
-        self, task: dict[str, Any], observations: list[tuple[str, str, Authority]]
+        self, task: dict[str, Any], observations: list[Observation]
     ) -> list[ContextItem]:
         items = [ContextItem(Authority.POLICY, POLICY_SUMMARY, "policy", required=True)]
         versions = self.tasks.instructions(task["task_id"])
@@ -364,11 +383,15 @@ class AgentRunner:
             for hit in self.memory.search(
                 employee_id=task["employee_id"], query=task["objective"], limit=5, match_any=True
             ):
-                items.append(ContextItem(Authority.VERIFIED_FACT, hit.content, f"memory:{hit.memory_id}"))
+                items.append(
+                    ContextItem(
+                        Authority.VERIFIED_FACT, hit.content, f"memory:{hit.memory_id}", hit.sensitivity
+                    )
+                )
         except AtlasError:
             pass
-        for text, ref, auth in observations[-12:]:
-            items.append(ContextItem(auth, text, ref))
+        for obs in observations[-12:]:
+            items.append(ContextItem(obs.authority, obs.text, obs.ref, obs.classification))
         return items
 
     def _attached(self, task_id: str) -> list[str]:
@@ -379,14 +402,33 @@ class AgentRunner:
         ).fetchall()
         return [f"{r[1]} (artifact_id {r[0]})" for r in rows]
 
-    def _decide(self, task: dict[str, Any], observations: list[tuple[str, str, Authority]]) -> dict[str, Any]:
-        built = self.ctx_builder.build(self._context(task, observations))
+    def _decide(self, task: dict[str, Any], observations: list[Observation]) -> dict[str, Any]:
+        items = self._context(task, observations)
+        ceiling = self._egress_ceiling()
+        built = self.ctx_builder.build(items, max_classification=ceiling)
+        if any(not ref.startswith("memory:") for ref in built.withheld):
+            # Work content (a document, a tool result) may not be disclosed: never decide without it.
+            raise RequiredContextWithheld(built.withheld, "SENSITIVE")
+        classification = highest(task["data_policy"], built.classification)
         resp = self.model.call(
             task_id=task["task_id"],
-            req=Requirements(structured_output=True, data_classification=task["data_policy"]),
-            request=ModelRequest("auto", built.messages, max_output_tokens=4000, json_schema=DECISION_SCHEMA),
+            req=Requirements(structured_output=True, data_classification=classification),
+            request=ModelRequest(
+                "auto",
+                built.messages,
+                max_output_tokens=4000,
+                json_schema=DECISION_SCHEMA,
+                classification=classification,
+            ),
         )
         return parse_decision(resp.output_text)
+
+    def _egress_ceiling(self) -> str | None:
+        guard = getattr(self.model, "egress", None)
+        if guard is None:
+            return None
+        providers = {e.provider for e in self.model.router.catalog}
+        return min((guard.max_allowed(p, "task") for p in providers), key=rank, default="PERSONAL")
 
     # ------------------------------------------------------------------ run
 
@@ -425,7 +467,7 @@ class AgentRunner:
                 seen_revision = int(task["instruction_revision"])
                 plan_id = self._new_plan(task_id, f"re-plan after owner instruction revision {seen_revision}")
                 observations.append(
-                    (
+                    Observation(
                         f"The owner changed the instructions (now revision {seen_revision}, shown as CURRENT). "
                         "Re-plan the remaining work; keep results already obtained, do not repeat them.",
                         "system",
@@ -434,6 +476,21 @@ class AgentRunner:
                 )
             try:
                 decision = self._decide(task, observations)
+            except (RequiredContextWithheld, EgressBlocked) as exc:  # A3-02: ask, never leak or guess
+                self._safe_release(
+                    lease,
+                    TaskState.WAITING_USER,
+                    exc.message,
+                    notice=(
+                        "question",
+                        "Para continuar preciso enviar ao provedor de IA conteúdo classificado como sensível "
+                        "desta tarefa. Sem a sua autorização eu não envio. Você pode autorizar esse uso em "
+                        "Configurações › Privacidade (só para tarefas), retirar o trecho sensível ou pedir que "
+                        "eu entregue o que for possível sem ele. Nada foi enviado.",
+                        None,
+                    ),
+                )
+                return self._outcome(task_id, exc.message, steps)
             except ContextOverflow as exc:  # never drop the request silently: ask the owner (A3-18)
                 self._safe_release(
                     lease,
@@ -471,7 +528,7 @@ class AgentRunner:
                     return self._outcome(task_id, reason, steps)
                 state = self.guard.record(lease, StepOutcome.NO_NEW_RESULT)
                 observations.append(
-                    (f"Your previous answer was rejected: {reason}", "system", Authority.VERIFIED_FACT)
+                    Observation(f"Your previous answer was rejected: {reason}", "system", Authority.VERIFIED_FACT)
                 )
                 if state != TaskState.RUNNING:
                     return self._outcome(task_id, reason, steps)
@@ -487,7 +544,7 @@ class AgentRunner:
             verdict = self._validate(decision)
             if isinstance(verdict, str) and not verdict.startswith("ok-"):
                 observations.append(
-                    (
+                    Observation(
                         f"Your decision was rejected before execution: {verdict}",
                         "system",
                         Authority.VERIFIED_FACT,
@@ -510,7 +567,7 @@ class AgentRunner:
                     return self._complete(task_id, lease, result.evidence_id, decision["artifact_id"], steps)
                 gaps = result.gaps
                 observations.append(
-                    (
+                    Observation(
                         "Verification failed, the task is NOT complete. Gaps: " + "; ".join(gaps),
                         "verifier",
                         Authority.VERIFIED_FACT,
@@ -542,7 +599,7 @@ class AgentRunner:
         lease: Lease,
         decision: dict[str, Any],
         validated: tuple[ToolManifest, dict[str, Any]],
-        observations: list[tuple[str, str, Authority]],
+        observations: list[Observation],
         instruction_revision: int,
     ) -> str | None:
         manifest, tool_input = validated
@@ -566,9 +623,9 @@ class AgentRunner:
             if exc.code == ErrorCode.UNAUTHORIZED:
                 return "lease revoked (paused, stopped or cancelled)"
             if exc.code == ErrorCode.VERSION_CONFLICT:  # a correction arrived: not a lack of progress
-                observations.append((f"Proposal discarded: {exc.message}", "broker", Authority.VERIFIED_FACT))
+                observations.append(Observation(f"Proposal discarded: {exc.message}", "broker", Authority.VERIFIED_FACT))
                 return None
-            observations.append((f"Proposal refused: {exc.message}", "broker", Authority.VERIFIED_FACT))
+            observations.append(Observation(f"Proposal refused: {exc.message}", "broker", Authority.VERIFIED_FACT))
             state = self.guard.record(lease, StepOutcome.NO_NEW_RESULT)
             return None if state == TaskState.RUNNING else "no progress"
         if res.status == "CONFIRMED":
@@ -577,9 +634,10 @@ class AgentRunner:
                 if res.output is not None
                 else f"{tool_id} confirmed without output"
             )
-            self._observe(step_id, task_id, text, "untrusted")  # persisted before the step is marked done
+            cls = str((res.output or {}).get("classification") or "INTERNAL")  # set by the trusted adapter
+            self._observe(step_id, task_id, text, "untrusted", cls)  # persisted before the step is marked done
             self._finish_step(step_id, "DONE")
-            observations.append((text, f"tool:{tool_id}", Authority.EXTERNAL_CONTENT))
+            observations.append(Observation(text, f"tool:{tool_id}", Authority.EXTERNAL_CONTENT, cls))
             wrote = tool_id == "artifact.write_text"
             self.guard.record(lease, StepOutcome.VERIFIED_RESULT if wrote else StepOutcome.NO_NEW_RESULT)
             return None
@@ -590,7 +648,7 @@ class AgentRunner:
                 "UNKNOWN": "external effect unknown",
                 "BUDGET_EXCEEDED": "budget exhausted",
             }[res.status]
-        observations.append((f"Action {res.status}: {res.reason}", "broker", Authority.VERIFIED_FACT))
+        observations.append(Observation(f"Action {res.status}: {res.reason}", "broker", Authority.VERIFIED_FACT))
         state = self.guard.record(
             lease,
             StepOutcome.TRANSIENT_FAILURE

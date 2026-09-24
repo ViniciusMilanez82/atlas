@@ -45,6 +45,7 @@ class MemoryHit:
     source_trust: str
     valid_from: str | None
     valid_until: str | None
+    sensitivity: str = "INTERNAL"
 
 
 STOPWORDS = frozenset(
@@ -309,7 +310,7 @@ class MemoryManager:
         when = at or self.clock.now()
         rows = self.conn.execute(
             "SELECT m.id, m.type, m.status, m.current_version, v.content, v.source_id, v.valid_from,"
-            " v.valid_until, s.kind AS source_kind, s.trust AS source_trust"
+            " v.valid_until, s.kind AS source_kind, s.trust AS source_trust, m.sensitivity"
             " FROM memory_fts f JOIN memories m ON m.id = f.memory_id"
             " JOIN memory_versions v ON v.memory_id = m.id AND v.version = m.current_version"
             " JOIN sources s ON s.id = v.source_id"
@@ -335,6 +336,7 @@ class MemoryManager:
                     r["source_trust"],
                     r["valid_from"],
                     r["valid_until"],
+                    r["sensitivity"],
                 )
             )
             if len(hits) >= limit:

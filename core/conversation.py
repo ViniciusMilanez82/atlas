@@ -25,12 +25,19 @@ from jsonschema import Draft202012Validator
 
 from core.intelligence import IntelligenceSetup
 from runtime.memory.manager import MemoryManager
-from runtime.models.context import Authority, ContextBuilder, ContextItem, ContextOverflow
+from runtime.models.context import (
+    Authority,
+    ContextBuilder,
+    ContextItem,
+    ContextOverflow,
+    RequiredContextWithheld,
+)
 from runtime.models.router import Requirements
 from runtime.models.types import ModelRequest
 from runtime.tasks.engine import TaskEngine
 from runtime.tasks.state_machine import TaskState
 from security.broker.broker import Broker
+from security.egress.guard import EgressGuard
 from shared.actors import Actor
 from shared.canonical import canonical_hash
 from shared.clock import Clock, parse_utc, to_utc_str
@@ -49,9 +56,17 @@ _STATUS = re.compile(
     re.IGNORECASE,
 )
 _CORRECTION = re.compile(r"^\s*(nao era isso|na verdade|corrigindo|correcao|mudei de ideia)\b", re.IGNORECASE)
+# Conservative detector of sensitive personal data in the owner's own words (spec 9.1). A hit makes
+# the message SENSITIVE: it is stored, but not sent to a cloud model without a scoped consent (A3-02).
 _SENSITIVE = re.compile(
-    r"\b(saude|medic|doenc|cpf|rg|document|filh|crianc|endereco|banco|salario)", re.IGNORECASE
+    r"\b(saude|medic|doenc|diagnost|exame|remedio|cpf|rg\b|passaporte|filh|crianc|endereco|"
+    r"conta bancaria|agencia|salario|renda|religi|sexual|biometr)",
+    re.IGNORECASE,
 )
+
+
+def classify_owner_text(text: str) -> str:
+    return "SENSITIVE" if _SENSITIVE.search(normalize(text)) else "INTERNAL"
 CHAT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -125,6 +140,7 @@ class ConversationService:
             "artifact_id": row["artifact_id"],
             "memory_id": row["memory_id"],
             "created_at": row["created_at"],
+            "classification": row["classification"],
         }
 
     def get_message(self, message_id: str) -> dict[str, Any]:
@@ -145,11 +161,12 @@ class ConversationService:
         artifact_id: str | None = None,
         memory_id: str | None = None,
         client_message_id: str | None = None,
+        classification: str = "INTERNAL",
     ) -> str:
         mid = new_id()
         self.conn.execute(
             "INSERT INTO messages(id, conversation_id, role, origin, client_message_id, content, task_id, kind,"
-            " artifact_id, memory_id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            " artifact_id, memory_id, created_at, classification) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 mid,
                 conversation_id,
@@ -162,6 +179,7 @@ class ConversationService:
                 artifact_id,
                 memory_id,
                 to_utc_str(self.clock.now()),
+                classification,
             ),
         )
         return mid
@@ -176,6 +194,7 @@ class ConversationService:
         artifact_id: str | None = None,
         memory_id: str | None = None,
         reply_marker: str | None = None,
+        classification: str = "INTERNAL",
     ) -> dict[str, Any]:
         if reply_marker is not None:  # a resumed request finds its reply instead of writing it twice
             existing = self.conn.execute(
@@ -194,6 +213,7 @@ class ConversationService:
                 artifact_id=artifact_id,
                 memory_id=memory_id,
                 client_message_id=reply_marker,
+                classification=classification,
             )
         return self.get_message(mid)
 
@@ -316,7 +336,13 @@ class ConversationService:
             else:
                 origin = "local_app" if actor.channel == "local_app" else "paired_device"
                 mid = self.post_in_txn(
-                    cid, role="owner", kind="chat", content=p["text"], origin=origin, client_message_id=key
+                    cid,
+                    role="owner",
+                    kind="chat",
+                    content=p["text"],
+                    origin=origin,
+                    client_message_id=key,
+                    classification=classify_owner_text(p["text"]),
                 )
             self.conn.execute(
                 "INSERT INTO request_receipts(employee_id, operation, request_key, payload_hash, state, message_id,"
@@ -683,6 +709,11 @@ class ConversationService:
         ).fetchone()
         kind, sensitivity, content = row[0], row[1], row[2]
         self._set_kind(mid, "memory")
+        with transaction(self.conn):  # the request and its echo carry the memory's protection (A3-02)
+            self.conn.execute(
+                "UPDATE messages SET classification = ? WHERE id = ? AND classification <> 'SENSITIVE'",
+                (sensitivity if sensitivity != "PUBLIC" else "INTERNAL", mid),
+            )
         note = (
             " Por ser uma informação sensível, ela ficará restrita e poderá ser excluída a qualquer momento."
             if sensitivity == "SENSITIVE"
@@ -695,6 +726,7 @@ class ConversationService:
             f"«{content}». Confirme para guardar; você pode corrigir ou excluir depois.{note}",
             memory_id=memory_id,
             reply_marker=marker,
+            classification=sensitivity if sensitivity != "PUBLIC" else "INTERNAL",
         )
         return self._result(mid, reply, "memory", None, memory_id=memory_id)
 
@@ -723,6 +755,7 @@ class ConversationService:
             client_request_id=mid,
             original_request=objective,
             source_message_id=mid,
+            data_policy=self._message_classification(mid),
             input_artifact_ids=artifact_ids,  # linked in the same commit as the task (A3-12)
         )
         # Delegating an earlier message keeps its first reply (e.g. "not configured") and adds the ack.
@@ -738,6 +771,10 @@ class ConversationService:
             reply_marker=marker,
         )
         return self._result(mid, reply, "delegate", tid)
+
+    def _message_classification(self, mid: str) -> str:
+        row = self.conn.execute("SELECT classification FROM messages WHERE id = ?", (mid,)).fetchone()
+        return str(row[0]) if row else "INTERNAL"
 
     def _chat(
         self,
@@ -780,11 +817,36 @@ class ConversationService:
                 continue
             who = "owner" if msg["role"] == "owner" else "atlas (earlier reply, may be wrong)"
             items.append(  # earlier turns are context, never instructions or verified facts (A3-18)
-                ContextItem(Authority.CONVERSATION, f"{who}: {msg['content']}", f"message:{msg['message_id']}")
+                ContextItem(
+                    Authority.CONVERSATION,
+                    f"{who}: {msg['content']}",
+                    f"message:{msg['message_id']}",
+                    msg["classification"],
+                )
             )
-        items.append(ContextItem(Authority.OWNER_INSTRUCTION, text, f"message:{mid}", required=True))
+        items.append(
+            ContextItem(
+                Authority.OWNER_INSTRUCTION,
+                text,
+                f"message:{mid}",
+                self._message_classification(mid),
+                required=True,
+            )
+        )
+        guard = EgressGuard(self.conn)
         try:
-            built = ContextBuilder().build(items)
+            built = ContextBuilder().build(items, max_classification=guard.max_allowed("openai", "conversation"))
+        except RequiredContextWithheld:
+            reply = self.say(
+                cid,
+                "error",
+                "Sua mensagem parece conter um dado sensível (saúde, documento pessoal, dados de crianças, "
+                "finanças…). Sem a sua autorização eu não envio isso ao provedor de IA. Você pode autorizar "
+                "esse uso em Configurações › Privacidade, reescrever sem o dado ou pedir que eu apenas guarde "
+                "a informação. Nada foi enviado.",
+                reply_marker=marker,
+            )
+            return self._result(mid, reply, "chat_blocked_sensitive", None)
         except ContextOverflow:
             reply = self.say(
                 cid,
@@ -799,8 +861,14 @@ class ConversationService:
                 task_id=None,
                 employee_id=employee_id,
                 purpose="conversation",
-                req=Requirements(structured_output=True, data_classification="INTERNAL"),
-                request=ModelRequest("auto", built.messages, max_output_tokens=800, json_schema=CHAT_SCHEMA),
+                req=Requirements(structured_output=True, data_classification=built.classification),
+                request=ModelRequest(
+                    "auto",
+                    built.messages,
+                    max_output_tokens=800,
+                    json_schema=CHAT_SCHEMA,
+                    classification=built.classification,
+                ),
             )
             decision = json.loads(resp.output_text)
             if next(_CHAT_VALIDATOR.iter_errors(decision), None) is not None:  # full contract (A3-06)

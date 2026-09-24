@@ -69,6 +69,22 @@ class BuiltContext:
     included: list[str] = field(default_factory=list)
     dropped: list[str] = field(default_factory=list)
     fence: str = ""
+    classification: str = "PUBLIC"  # highest classification actually included (A3-02)
+    withheld: list[str] = field(default_factory=list)  # left out because disclosure is not allowed
+
+
+class RequiredContextWithheld(AtlasError):
+    """Mandatory content may not be disclosed to this destination: refuse, never send without it."""
+
+    def __init__(self, refs: list[str], classification: str) -> None:
+        super().__init__(
+            ErrorCode.POLICY_DENIED,
+            f"required context is {classification} and may not be sent without the owner's consent",
+            persisted="nothing sent",
+            recommended_action="ask the owner for a scoped consent or process locally",
+        )
+        self.refs = refs
+        self.classification = classification
 
 
 class ContextBuilder:
@@ -78,9 +94,22 @@ class ContextBuilder:
         self.max_chars = max_chars
         self.redactor = redactor or default_redactor
 
-    def build(self, items: list[ContextItem]) -> BuiltContext:
+    def build(self, items: list[ContextItem], max_classification: str | None = None) -> BuiltContext:
+        """``max_classification``: the highest class the destination may receive now (Egress Guard).
+        Optional items above it are withheld; a required one above it refuses the whole build."""
+        from security.egress.guard import highest, rank
+
         fence = f"EXTERNAL-DATA-{secrets.token_hex(8)}"
         result = BuiltContext(messages=(), fence=fence)
+        if max_classification is not None:
+            over = [i for i in items if rank(i.classification) > rank(max_classification)]
+            blocked = [i for i in over if i.required]
+            if blocked:
+                raise RequiredContextWithheld(
+                    [i.source_ref for i in blocked], highest(*(i.classification for i in blocked))
+                )
+            result.withheld = [i.source_ref for i in over]
+            items = [i for i in items if rank(i.classification) <= rank(max_classification)]
         allowed = [
             (n, i)
             for n, i in enumerate(items)
@@ -127,6 +156,7 @@ class ContextBuilder:
                     f"<<{fence} source={item.source_ref} trust=untrusted>>\n{safe}\n<</{fence}>>"
                 )
             result.included.append(item.source_ref)
+        result.classification = highest("PUBLIC", *(i.classification for i in chosen))
         msgs = [Message(Role.SYSTEM, "\n\n".join(system_parts))]
         if user_parts:
             msgs.append(Message(Role.USER, "\n\n".join(user_parts)))
