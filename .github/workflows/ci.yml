@@ -47,6 +47,16 @@ jobs:
           name: Atlas-dev-app
           path: ${{ runner.temp }}/dist/Atlas-dev.zip
           retention-days: 14
+  app-evidence:
+    # Clean runner: builds the app and records what a first launch really shows. No test suite runs
+    # before, so any system prompt here comes from the app itself. Evidence only - not interactive use.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build development Atlas.app
+        run: packaging/macos/build_app.sh "$RUNNER_TEMP/dist"
+      - name: Screen right after the build
+        run: mkdir -p "$RUNNER_TEMP/shots" && screencapture -x "$RUNNER_TEMP/shots/0-after-build.png"
       - name: Bisect the Local Network prompt with the embedded Python (diagnostic)
         continue-on-error: true
         run: |
