@@ -200,7 +200,6 @@ class Core:
                 verifier=verifier,
                 tools=tools,
                 worker_id=f"worker-{os.getpid()}",
-                notify=conversation.notify,
             )
             outcome = Core.run_one(runner, row[0], spec, self.monitor, broker.tasks)
             if outcome is None:

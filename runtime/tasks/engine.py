@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
 
+from runtime.notifications.outbox import Notice, enqueue_in_txn
 from runtime.tasks.state_machine import TERMINAL, TaskState, check_transition
 from shared.actors import SYSTEM, Actor
 from shared.clock import Clock, parse_utc, to_utc_str
@@ -359,12 +360,31 @@ class TaskEngine:
             self.conn.execute("UPDATE tasks SET lease_expires_at = ? WHERE id = ?", (expires, lease.task_id))
         return Lease(lease.task_id, lease.worker_id, lease.fencing_token, expires)
 
-    def release(self, lease: Lease, to: TaskState, reason: str, blocked_reason: str | None = None) -> None:
+    def release(
+        self,
+        lease: Lease,
+        to: TaskState,
+        reason: str,
+        blocked_reason: str | None = None,
+        notice: Notice | None = None,
+    ) -> None:
+        """Leave RUNNING. ``notice`` (kind, content, artifact_id) is queued for the owner in the SAME
+        commit as the state change (A3-27): a task never waits for the owner without telling them."""
         with transaction(self.conn):
             row = self.check_lease_in_txn(lease.task_id, lease.worker_id, lease.fencing_token)
             self.transition_in_txn(
                 row, to, Actor("worker", lease.worker_id, "internal"), reason, blocked_reason=blocked_reason
             )
+            if notice is not None:
+                enqueue_in_txn(
+                    self.conn,
+                    self.clock,
+                    employee_id=row["employee_id"],
+                    task_id=row["id"],
+                    kind=notice[0],
+                    content=notice[1],
+                    artifact_id=notice[2],
+                )
 
     # ------------------------------------------------------------------ owner controls
 
@@ -620,8 +640,11 @@ class TaskEngine:
             if cur.rowcount != 1:
                 raise _err(ErrorCode.INVALID_INPUT, "unknown criterion")
 
-    def complete(self, task_id: str, *, actor: Actor, expected_version: int) -> None:
-        """COMPLETED only when every required criterion has evidence (spec 15.3)."""
+    def complete(
+        self, task_id: str, *, actor: Actor, expected_version: int, notice: Notice | None = None
+    ) -> None:
+        """COMPLETED only when every required criterion has evidence (spec 15.3). The delivery notice
+        commits together with the state (A3-27)."""
         with transaction(self.conn):
             row = self._row(task_id)
             if row["version"] != expected_version:
@@ -641,6 +664,16 @@ class TaskEngine:
             if self._unknown_actions(task_id):
                 raise _err(ErrorCode.EXTERNAL_EFFECT_UNKNOWN, "task has actions with unknown outcome")
             self.transition_in_txn(row, TaskState.COMPLETED, actor, "all required criteria satisfied")
+            if notice is not None:
+                enqueue_in_txn(
+                    self.conn,
+                    self.clock,
+                    employee_id=row["employee_id"],
+                    task_id=task_id,
+                    kind=notice[0],
+                    content=notice[1],
+                    artifact_id=notice[2],
+                )
 
     def checkpoint(self, task_id: str, state: dict[str, Any]) -> str:
         """Operational checkpoint. Private model reasoning is never stored (spec 9.3)."""

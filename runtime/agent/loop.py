@@ -21,7 +21,6 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -31,6 +30,8 @@ from runtime.memory.manager import MemoryManager
 from runtime.models.context import Authority, ContextBuilder, ContextItem
 from runtime.models.router import BudgetedModelClient, Requirements
 from runtime.models.types import ModelRequest
+from runtime.notifications import texts
+from runtime.notifications.outbox import Notice, OutboxDispatcher
 from runtime.tasks.engine import Lease, TaskEngine
 from runtime.tasks.lease_keeper import DEFAULT_INTERVAL_S, LeaseKeeper, database_path
 from runtime.tasks.limits import AttemptLimits, ProgressGuard, StepOutcome
@@ -60,19 +61,11 @@ DECISION_SCHEMA: dict[str, Any] = {
 }
 _DECISION_VALIDATOR = Draft202012Validator(DECISION_SCHEMA)
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
-Notifier = Callable[[str, str, str, "str | None"], object]
 POLICY_SUMMARY = (
     "Only the tools in the catalog are available, each with the exact input schema shown. External writes and purchases need task permission and may need "
     "owner approval; you cannot grant or assume approval. Finish only by naming the artifact_id of a "
     "deliverable you created; it will be verified objectively."
 )
-
-
-STATUS_TEXT = {
-    "waiting for owner approval": "Preciso da sua aprovação para continuar esta tarefa.",
-    "external effect unknown": "Uma ação ficou com resultado incerto; vou conferir antes de qualquer repetição.",
-    "budget exhausted": "O orçamento desta tarefa acabou; ela ficou bloqueada até você decidir.",
-}
 
 
 def parse_decision(text: str) -> dict[str, Any]:
@@ -117,7 +110,6 @@ class AgentRunner:
         worker_id: str = "agent-1",
         max_steps: int = 20,
         limits: AttemptLimits | None = None,
-        notify: Notifier | None = None,
     ) -> None:
         self.conn = conn
         self.clock = clock
@@ -128,7 +120,6 @@ class AgentRunner:
         self.verifier = verifier
         self.catalog = self._catalog(tools)
         self.tools = list(self.catalog)
-        self.notify = notify
         self.worker_id = worker_id
         self.max_steps = max_steps
         self.guard = ProgressGuard(self.tasks, limits)
@@ -276,12 +267,11 @@ class AgentRunner:
                 (step_id, task_id, content[:20_000], trust, to_utc_str(self.clock.now())),
             )
 
-    def _tell_owner(self, task_id: str, kind: str, content: str, artifact_id: str | None = None) -> None:
-        if self.notify is None:
-            return
+    def _deliver(self, task_id: str) -> None:
+        """Best-effort immediate delivery; anything not delivered stays PENDING for the dispatcher."""
         try:
-            self.notify(task_id, kind, content, artifact_id)
-        except Exception:  # noqa: S110 - a failed notification never breaks the task
+            OutboxDispatcher(self.conn, self.clock).deliver_pending(task_id)
+        except Exception:  # noqa: S110 - the notice is durable in the outbox; the watchdog retries
             pass
 
     # ------------------------------------------------------------------ persistence helpers
@@ -403,7 +393,10 @@ class AgentRunner:
         lease = self.tasks.acquire_lease(task_id, self.worker_id)
         path = database_path(self.conn)
         if path is None:  # in-memory database: no second connection can renew the lease
-            return self._run_leased(task_id, spec, lease)
+            try:
+                return self._run_leased(task_id, spec, lease)
+            finally:
+                self._deliver(task_id)
         keeper = LeaseKeeper(
             path, self.clock, lease, lease_ttl=self.tasks.lease_ttl, interval_s=self.keeper_interval_s
         )
@@ -412,6 +405,7 @@ class AgentRunner:
                 return self._run_leased(task_id, spec, lease)
             finally:
                 self.last_keeper_beats = keeper.beats
+                self._deliver(task_id)
 
     def _run_leased(self, task_id: str, spec: DeliverableSpec, lease: Lease) -> RunOutcome:
         plan_id, observations = self._resume_state(task_id)
@@ -445,13 +439,19 @@ class AgentRunner:
                     ErrorCode.UNAUTHORIZED,
                     ErrorCode.POLICY_DENIED,
                 ):
+                    budget = exc.code == ErrorCode.BUDGET_EXCEEDED
                     self._safe_release(
                         lease,
-                        TaskState.BLOCKED
-                        if exc.code == ErrorCode.BUDGET_EXCEEDED
-                        else TaskState.WAITING_USER,
+                        TaskState.BLOCKED if budget else TaskState.WAITING_USER,
                         reason,
-                        "BUDGET_EXCEEDED" if exc.code == ErrorCode.BUDGET_EXCEEDED else None,
+                        "BUDGET_EXCEEDED" if budget else None,
+                        (
+                            "status",
+                            texts.BUDGET_EXHAUSTED
+                            if budget
+                            else f"Não consegui usar a inteligência ({reason}). A tarefa aguarda você.",
+                            None,
+                        ),
                     )
                     return self._outcome(task_id, reason, steps)
                 state = self.guard.record(lease, StepOutcome.NO_NEW_RESULT)
@@ -485,8 +485,9 @@ class AgentRunner:
             if decision["decision"] == "ask_owner":
                 question = decision["question"][:900]
                 self._journal(task_id, "task.question", question)
-                self._safe_release(lease, TaskState.WAITING_USER, "agent asked the owner a question")
-                self._tell_owner(task_id, "question", question)
+                self._safe_release(
+                    lease, TaskState.WAITING_USER, "agent asked the owner a question", notice=("question", question, None)
+                )
                 return self._outcome(task_id, "waiting for the owner", steps)
             if decision["decision"] == "finish":
                 result = self.verifier.verify_text_artifact(task_id, decision.get("artifact_id", ""), spec)
@@ -512,12 +513,11 @@ class AgentRunner:
             outcome = self._run_tool(
                 task_id, plan_id, lease, decision, verdict, observations, int(task["instruction_revision"])
             )
-            if outcome is not None:
-                if outcome in ("waiting for owner approval", "external effect unknown", "budget exhausted"):
-                    self._tell_owner(task_id, "status", STATUS_TEXT[outcome])
+            if outcome is not None:  # the broker already queued its notice with the state change
                 return self._outcome(task_id, outcome, steps)
-        self._safe_release(lease, TaskState.BLOCKED, "step budget exhausted", "NO_PROGRESS")
-        self._tell_owner(task_id, "status", "Parei esta tarefa: muitos passos sem um resultado verificado.")
+        self._safe_release(
+            lease, TaskState.BLOCKED, "step budget exhausted", "NO_PROGRESS", ("status", texts.NO_PROGRESS, None)
+        )
         return self._outcome(task_id, "step budget exhausted", steps, gaps=gaps)
 
     def _run_tool(
@@ -592,22 +592,28 @@ class AgentRunner:
             if c["required"]:
                 self.tasks.satisfy_criterion(task_id, c["criterion_id"], evidence_id)
         self.tasks.release(lease, TaskState.VERIFYING, "deliverable verified")
-        self.tasks.complete(task_id, actor=self.actor, expected_version=self.tasks.get(task_id)["version"])
-        self._journal(task_id, "task.delivered", f"deliverable artifact {artifact_id} verified")
         name = self.conn.execute("SELECT name FROM artifacts WHERE id = ?", (artifact_id,)).fetchone()
-        self._tell_owner(
+        self.tasks.complete(
             task_id,
-            "result",
-            f"Concluí a tarefa. Entrega verificada: {name[0] if name else artifact_id}.",
-            artifact_id,
+            actor=self.actor,
+            expected_version=self.tasks.get(task_id)["version"],
+            notice=("result", f"Concluí a tarefa. Entrega verificada: {name[0] if name else artifact_id}.", artifact_id),
         )
+        self._journal(task_id, "task.delivered", f"deliverable artifact {artifact_id} verified")
         out = self._outcome(task_id, "completed with verified deliverable", steps)
         out.deliverable_id = artifact_id
         return out
 
-    def _safe_release(self, lease: Lease, to: TaskState, reason: str, blocked: str | None = None) -> None:
+    def _safe_release(
+        self,
+        lease: Lease,
+        to: TaskState,
+        reason: str,
+        blocked: str | None = None,
+        notice: Notice | None = None,
+    ) -> None:
         try:
-            self.tasks.release(lease, to, reason, blocked_reason=blocked)
+            self.tasks.release(lease, to, reason, blocked_reason=blocked, notice=notice)
         except AtlasError:
             pass  # lease already revoked by the owner; nothing to release
 

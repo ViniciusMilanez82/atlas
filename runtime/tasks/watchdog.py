@@ -16,6 +16,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass, field
 
+from runtime.notifications.outbox import OutboxDispatcher
 from runtime.tasks.engine import TaskEngine
 from runtime.tasks.limits import ProgressGuard
 from runtime.tasks.scheduler import RunReport, Scheduler
@@ -28,6 +29,7 @@ class WatchdogReport:
     reclaimed: list[str] = field(default_factory=list)
     retried: list[str] = field(default_factory=list)
     scheduled: list[RunReport] = field(default_factory=list)
+    delivered: int = 0
 
 
 class Watchdog:
@@ -52,4 +54,5 @@ class Watchdog:
                 report.reclaimed.append(task_id)
         report.retried = self.guard.promote_due_retries()
         report.scheduled = self.scheduler.run_due()
+        report.delivered = OutboxDispatcher(self.conn, self.clock).deliver_pending()  # A3-27 retries
         return report

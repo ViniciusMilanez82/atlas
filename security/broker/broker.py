@@ -28,6 +28,8 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
+from runtime.notifications import texts
+from runtime.notifications.outbox import enqueue_in_txn
 from runtime.tasks.engine import Lease, TaskEngine
 from runtime.tasks.state_machine import TaskState
 from runtime.tools.registry import RegistryError, ToolManifest, ToolRegistry
@@ -490,6 +492,10 @@ class Broker:
                 self.tasks.transition_in_txn(
                     task, TaskState.WAITING_APPROVAL, BROKER, f"approval needed for {manifest.tool_id}"
                 )
+                enqueue_in_txn(
+                    self.conn, self.clock, employee_id=employee_id, task_id=task["id"], kind="status",
+                    content=texts.APPROVAL_NEEDED,
+                )
                 return DispatchResult("APPROVAL_REQUIRED", action_id, decision.reason_code, approval=approval)
             # APPROVED: reserve atomically against the exact hash
             self.approvals.reserve_in_txn(
@@ -521,6 +527,10 @@ class Broker:
                 )
                 self.tasks.transition_in_txn(
                     task, TaskState.BLOCKED, BROKER, f"budget: {exc.reason}", blocked_reason="BUDGET_EXCEEDED"
+                )
+                enqueue_in_txn(
+                    self.conn, self.clock, employee_id=employee_id, task_id=task["id"], kind="status",
+                    content=texts.BUDGET_EXHAUSTED,
                 )
                 event("action.budget_blocked", f"{manifest.tool_id}: {exc.reason}")
                 return DispatchResult("BUDGET_EXCEEDED", action_id, exc.reason)
@@ -648,6 +658,10 @@ class Broker:
                         BROKER,
                         "external effect unknown",
                         blocked_reason="EXTERNAL_EFFECT_UNKNOWN",
+                    )
+                    enqueue_in_txn(
+                        self.conn, self.clock, employee_id=task["employee_id"], task_id=task["id"], kind="status",
+                        content=texts.EFFECT_UNKNOWN,
                     )
                 final = "UNKNOWN"
             tool_result = {
