@@ -27,7 +27,7 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from runtime.memory.manager import MemoryManager
-from runtime.models.context import Authority, ContextBuilder, ContextItem
+from runtime.models.context import Authority, ContextBuilder, ContextItem, ContextOverflow
 from runtime.models.router import BudgetedModelClient, Requirements
 from runtime.models.types import ModelRequest
 from runtime.notifications import texts
@@ -335,7 +335,7 @@ class AgentRunner:
     def _context(
         self, task: dict[str, Any], observations: list[tuple[str, str, Authority]]
     ) -> list[ContextItem]:
-        items = [ContextItem(Authority.POLICY, POLICY_SUMMARY, "policy")]
+        items = [ContextItem(Authority.POLICY, POLICY_SUMMARY, "policy", required=True)]
         versions = self.tasks.instructions(task["task_id"])
         for v in versions:  # the owner's words, oldest first; the last revision prevails (A3-03)
             label = "CURRENT (prevails over earlier instructions)" if v is versions[-1] else "superseded context"
@@ -344,6 +344,7 @@ class AgentRunner:
                     Authority.OWNER_INSTRUCTION,
                     f"[revision {v['revision']} {v['kind']} - {label}]\n{v['instruction']}",
                     f"task:{task['task_id']}:rev{v['revision']}",
+                    required=v is versions[-1] or v["kind"] == "ORIGINAL",
                 )
             )
         items += [
@@ -356,6 +357,7 @@ class AgentRunner:
                 + "\nAttached artifacts: "
                 + ", ".join(self._attached(task["task_id"])),
                 "criteria",
+                required=True,
             ),
         ]
         try:
@@ -432,6 +434,19 @@ class AgentRunner:
                 )
             try:
                 decision = self._decide(task, observations)
+            except ContextOverflow as exc:  # never drop the request silently: ask the owner (A3-18)
+                self._safe_release(
+                    lease,
+                    TaskState.WAITING_USER,
+                    exc.message,
+                    notice=(
+                        "question",
+                        "O pedido e as instruções em vigor desta tarefa não cabem de uma vez no contexto do "
+                        "modelo. Qual parte devo fazer primeiro? Nada foi enviado ao modelo.",
+                        None,
+                    ),
+                )
+                return self._outcome(task_id, exc.message, steps)
             except (AtlasError, ValueError) as exc:
                 reason = exc.message if isinstance(exc, AtlasError) else f"invalid decision: {exc}"
                 if isinstance(exc, AtlasError) and exc.code in (

@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 
 from runtime.models.types import Message, Role
+from shared.errors import AtlasError, ErrorCode
 from shared.redaction import Redactor, default_redactor
 
 
@@ -26,7 +27,22 @@ class Authority(IntEnum):
     OWNER_INSTRUCTION = 2
     TASK_OBJECTIVE = 3
     VERIFIED_FACT = 4
-    EXTERNAL_CONTENT = 5
+    CONVERSATION = 5  # earlier messages of both sides: context, never verified facts (A3-18)
+    EXTERNAL_CONTENT = 6
+
+
+class ContextOverflow(AtlasError):
+    """The mandatory context (current request, active instructions, policy) does not fit. The call is
+    refused instead of silently dropping any of it (A3-18, spec 7.3)."""
+
+    def __init__(self, needed: int, budget: int, refs: list[str]) -> None:
+        super().__init__(
+            ErrorCode.INVALID_INPUT,
+            f"required context needs {needed} characters but the budget is {budget}",
+            persisted="nothing sent",
+            recommended_action="split the request or ask the owner which part matters now",
+        )
+        self.refs = refs
 
 
 SYSTEM_RULES = (
@@ -44,6 +60,7 @@ class ContextItem:
     text: str
     source_ref: str
     classification: str = "INTERNAL"
+    required: bool = False  # must reach the model, or the call is refused (current message, CURRENT rules)
 
 
 @dataclass
@@ -64,19 +81,30 @@ class ContextBuilder:
     def build(self, items: list[ContextItem]) -> BuiltContext:
         fence = f"EXTERNAL-DATA-{secrets.token_hex(8)}"
         result = BuiltContext(messages=(), fence=fence)
-        allowed = [i for i in items if i.classification != "SECRET" and i.authority != Authority.SYSTEM_RULES]
+        allowed = [
+            (n, i)
+            for n, i in enumerate(items)
+            if i.classification != "SECRET" and i.authority != Authority.SYSTEM_RULES
+        ]
         result.dropped += [i.source_ref for i in items if i.classification == "SECRET"]
-        # Stable order: by authority, then by insertion.
-        ordered = sorted(enumerate(allowed), key=lambda p: (p[1].authority, p[0]))
         budget = self.max_chars - len(SYSTEM_RULES)
-        chosen: list[ContextItem] = []
-        for _, item in ordered:
+        required = [(n, i) for n, i in allowed if i.required]
+        need = sum(len(i.text) + 200 for _, i in required)
+        if need > budget:
+            raise ContextOverflow(need, budget, [i.source_ref for _, i in required])
+        budget -= need
+        picked = {n for n, _ in required}
+        # Optional material: by authority, and within one authority the most RECENT first (A3-18).
+        for n, item in sorted(
+            (p for p in allowed if not p[1].required), key=lambda p: (p[1].authority, -p[0])
+        ):
             size = len(item.text) + 200
             if size <= budget:
-                chosen.append(item)
+                picked.add(n)
                 budget -= size
             else:
                 result.dropped.append(item.source_ref)
+        chosen = [i for n, i in sorted(allowed, key=lambda p: (p[1].authority, p[0])) if n in picked]
         system_parts = [SYSTEM_RULES]
         user_parts: list[str] = []
         for item in chosen:
@@ -89,6 +117,10 @@ class ContextBuilder:
                 user_parts.append(f"TASK OBJECTIVE [{item.source_ref}]:\n{text}")
             elif item.authority == Authority.VERIFIED_FACT:
                 user_parts.append(f"VERIFIED FACT [{item.source_ref}]: {text}")
+            elif item.authority == Authority.CONVERSATION:
+                user_parts.append(
+                    f"EARLIER MESSAGE [{item.source_ref}] (unverified conversation history): {text}"
+                )
             else:
                 safe = text.replace(fence, "[fence-removed]")
                 user_parts.append(

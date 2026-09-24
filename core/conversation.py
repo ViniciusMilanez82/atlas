@@ -25,7 +25,7 @@ from jsonschema import Draft202012Validator
 
 from core.intelligence import IntelligenceSetup
 from runtime.memory.manager import MemoryManager
-from runtime.models.context import Authority, ContextBuilder, ContextItem
+from runtime.models.context import Authority, ContextBuilder, ContextItem, ContextOverflow
 from runtime.models.router import Requirements
 from runtime.models.types import ModelRequest
 from runtime.tasks.engine import TaskEngine
@@ -772,15 +772,28 @@ class ConversationService:
                 "(intent=chat, reply=your answer in Portuguese). Never claim to have started work; "
                 "the system creates tasks, not you.",
                 "policy",
+                required=True,
             )
         ]
-        for msg in history[:-1]:
-            auth = Authority.OWNER_INSTRUCTION if msg["role"] == "owner" else Authority.VERIFIED_FACT
-            items.append(
-                ContextItem(auth, f"{msg['role']}: {msg['content']}", f"message:{msg['message_id']}")
+        for msg in history:
+            if msg["message_id"] == mid:
+                continue
+            who = "owner" if msg["role"] == "owner" else "atlas (earlier reply, may be wrong)"
+            items.append(  # earlier turns are context, never instructions or verified facts (A3-18)
+                ContextItem(Authority.CONVERSATION, f"{who}: {msg['content']}", f"message:{msg['message_id']}")
             )
-        items.append(ContextItem(Authority.OWNER_INSTRUCTION, text, f"message:{mid}"))
-        built = ContextBuilder().build(items)
+        items.append(ContextItem(Authority.OWNER_INSTRUCTION, text, f"message:{mid}", required=True))
+        try:
+            built = ContextBuilder().build(items)
+        except ContextOverflow:
+            reply = self.say(
+                cid,
+                "error",
+                "Sua mensagem é longa demais para eu responder de uma vez. Divida em partes ou use "
+                "«Delegar como tarefa» para eu trabalhar nela por etapas. Nada foi enviado ao modelo.",
+                reply_marker=marker,
+            )
+            return self._result(mid, reply, "chat_error", None)
         try:
             resp = self.intelligence.build_client().call(
                 task_id=None,
