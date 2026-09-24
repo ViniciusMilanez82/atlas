@@ -4,7 +4,7 @@ Aplicativo macOS de um funcionário digital persistente, com identidade, memóri
 ambiente de trabalho próprios. O usuário conversa e delega objetivos; o Atlas planeja, executa
 dentro das autorizações, verifica e entrega.
 
-**Estado:** em desenvolvimento, fase de fundação. **Não é um produto utilizável ainda.**
+**Estado:** Alpha de desenvolvimento. O núcleo conversa, delega, retoma e verifica tarefas com um modelo falso nos testes; nenhuma chamada a modelo real foi feita (D-03) e o app nunca foi usado interativamente num Mac (D-01). **Não é um produto utilizável ainda.** Homologado apenas em macOS 15 (runner de CI).
 Nenhum gate (READY FOR BETA, READY FOR RELEASE) foi atingido. Veja [docs/PROGRESS.md](docs/PROGRESS.md).
 
 | Documento | Para quê |
