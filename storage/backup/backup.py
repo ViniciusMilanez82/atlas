@@ -164,6 +164,17 @@ def restore_backup(
 ) -> RestoreReport:
     """Replace ``target_db`` with the verified backup. The target must not be open elsewhere."""
     manifest = verify_backup(backup_dir, key)
+    tombstones: list[dict[str, Any]] = []
+    if target_db.exists():  # A3-17: forget decisions taken after the backup must survive the restore
+        current = connect(target_db)
+        try:
+            has = current.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'forget_tombstones'"
+            ).fetchone()
+            if has:
+                tombstones = [dict(r) for r in current.execute("SELECT * FROM forget_tombstones")]
+        finally:
+            current.close()
     staging = target_db.with_suffix(".restoring")
     staging.write_bytes(_plain_bytes(backup_dir, manifest, key))
     for suffix in ("-wal", "-shm"):
@@ -228,6 +239,10 @@ def restore_backup(
                         f" {len(u_rows)} in-flight actions set UNKNOWN, {leases} leases released"
                     ),
                 )
+        if tombstones:
+            from runtime.memory.manager import MemoryManager
+
+            MemoryManager(conn, clock).reapply_tombstones(tombstones)
         version = current_version(conn)
     finally:
         conn.close()

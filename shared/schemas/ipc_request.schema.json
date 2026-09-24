@@ -58,7 +58,8 @@
         "artifacts.read",
         "control.stop",
         "tasks.update_instruction",
-        "tasks.reevaluate"
+        "tasks.reevaluate",
+        "memories.forget_preview"
       ]
     },
     "params": {
@@ -556,6 +557,22 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "memories.forget_preview"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_forget_preview"
+          }
+        }
+      }
     }
   ],
   "$defs": {
@@ -928,6 +945,29 @@
         },
         "source_id": {
           "$ref": "#/$defs/uuid"
+        },
+        "valid_from": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/utc_timestamp"
+            }
+          ]
+        },
+        "valid_until": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/utc_timestamp"
+            }
+          ]
+        },
+        "change_validity": {
+          "type": "boolean"
         }
       }
     },
@@ -948,6 +988,12 @@
         },
         "memory_id": {
           "$ref": "#/$defs/uuid"
+        },
+        "scope": {
+          "enum": [
+            "stop_using",
+            "erase"
+          ]
         }
       }
     },
@@ -1273,6 +1319,26 @@
           "maxLength": 32000
         },
         "client_message_id": {
+          "$ref": "#/$defs/uuid"
+        }
+      }
+    },
+    "p_forget_preview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id",
+        "memory_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "memory_id": {
           "$ref": "#/$defs/uuid"
         }
       }

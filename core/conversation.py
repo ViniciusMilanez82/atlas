@@ -1019,8 +1019,14 @@ class ConversationService:
                 required=True,
             )
         ]
+        excluded = {
+            r[0]
+            for r in self.conn.execute(
+                "SELECT id FROM messages WHERE conversation_id = ? AND context_excluded = 1", (cid,)
+            )
+        }  # forgotten or 'do not use' content never reaches a model (A3-17)
         for msg in history:
-            if msg["message_id"] == mid:
+            if msg["message_id"] == mid or msg["message_id"] in excluded:
                 continue
             who = "owner" if msg["role"] == "owner" else "atlas (earlier reply, may be wrong)"
             items.append(  # earlier turns are context, never instructions or verified facts (A3-18)

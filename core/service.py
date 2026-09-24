@@ -109,6 +109,7 @@ class CoreService:
             "artifacts.read": self._read,
             "control.stop": self._control_stop,
             "tasks.reevaluate": self._task_reevaluate,
+            "memories.forget_preview": self._mem_forget_preview,
             "tasks.update_instruction": self._update_instruction,
         }
 
@@ -380,13 +381,19 @@ class CoreService:
             content=p["content"],
             source_id=p["source_id"],
             employee_id=s.employee_id,  # session -> employee -> memory (A3-26)
+            change_validity=bool(p.get("change_validity", False)),  # A3-16: window kept unless asked
+            **{k: p[k] for k in ("valid_from", "valid_until") if k in p},
         )
         return {"memory_id": p["memory_id"], "version": v}
 
     def _mem_delete(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
         self.memory.require_owned(p["memory_id"], s.employee_id)
-        self.memory.delete(p["memory_id"], actor=s.actor)
-        return {"memory_id": p["memory_id"], "deleted": True}
+        reach = self.memory.delete(p["memory_id"], actor=s.actor, scope=p.get("scope", "erase"))
+        return {"memory_id": p["memory_id"], "deleted": True, **reach}
+
+    def _mem_forget_preview(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
+        self.memory.require_owned(p["memory_id"], s.employee_id)
+        return {"memory_id": p["memory_id"], **self.memory.forget_preview(p["memory_id"])}
 
     def _events(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
         events = journal.events_after(self.conn, s.employee_id, p["after_sequence_id"])
