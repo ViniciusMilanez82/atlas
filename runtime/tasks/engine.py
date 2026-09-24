@@ -85,7 +85,7 @@ class TaskEngine:
         objective: str,
         external_writes: bool = False,
         purchases: bool = False,
-        criteria: list[tuple[str, bool]] | None = None,
+        criteria: list[tuple[Any, ...]] | None = None,
         priority: str = "NORMAL",
         data_policy: str = "INTERNAL",
         budget_limit: Money | None = None,
@@ -154,10 +154,18 @@ class TaskEngine:
                     client_request_id,
                 ),
             )
-            for text, required in criteria or []:
+            for c in criteria or []:  # (description, required[, check_kind, params]) - A3-07
                 self.conn.execute(
-                    "INSERT INTO task_criteria(id, task_id, description, required) VALUES (?,?,?,?)",
-                    (new_id(), task_id, text, int(required)),
+                    "INSERT INTO task_criteria(id, task_id, description, required, check_kind, params_json)"
+                    " VALUES (?,?,?,?,?,?)",
+                    (
+                        new_id(),
+                        task_id,
+                        c[0],
+                        int(c[1]),
+                        c[2] if len(c) > 2 else None,
+                        json.dumps(c[3]) if len(c) > 3 and c[3] else None,
+                    ),
                 )
             for aid in dict.fromkeys(input_artifact_ids or []):
                 art = self.conn.execute("SELECT employee_id FROM artifacts WHERE id = ?", (aid,)).fetchone()

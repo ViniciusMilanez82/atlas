@@ -186,10 +186,7 @@ class Core:
             if row is None:
                 self.stop.wait(interval)
                 continue
-            inputs = broker.conn.execute(
-                "SELECT COUNT(*) FROM artifact_links WHERE task_id = ? AND relation = 'input'", (row[0],)
-            ).fetchone()[0]
-            spec = DeliverableSpec(min_chars=200, min_sources=min(int(inputs), 5))
+            spec = DeliverableSpec(min_chars=200)  # business criteria live with the task (A3-07)
             runner = AgentRunner(
                 broker.conn,
                 self.clock,

@@ -144,6 +144,7 @@ class AgentRunner:
         self.ctx_builder = ContextBuilder()
         self.actor = Actor("runtime", worker_id, "internal")
         self.keeper_interval_s = DEFAULT_INTERVAL_S
+        self._last_verification: Any = None
         self.last_keeper_beats = 0
 
     # ------------------------------------------------------------------ tool catalog (3A)
@@ -559,6 +560,7 @@ class AgentRunner:
                 return self._outcome(task_id, "waiting for the owner", steps)
             if decision["decision"] == "finish":
                 result = self.verifier.verify_text_artifact(task_id, decision.get("artifact_id", ""), spec)
+                self._last_verification = result
                 if result.passed:
                     return self._complete(task_id, lease, result.evidence_id, decision["artifact_id"], steps)
                 gaps = result.gaps
@@ -569,7 +571,17 @@ class AgentRunner:
                         Authority.VERIFIED_FACT,
                     )
                 )
-                state = self.guard.record(lease, StepOutcome.REPLANNED_WITHOUT_PROGRESS)
+                state = self.guard.record(
+                    lease,
+                    StepOutcome.REPLANNED_WITHOUT_PROGRESS,
+                    notice=(
+                        "status",
+                        "Não concluí: a entrega não passou na verificação. Faltou: "
+                        + "; ".join(gaps)[:1500]
+                        + ". O arquivo parcial continua disponível; diga se devo continuar ou aceitar assim.",
+                        decision["artifact_id"] if result.checks.get("belongs_to_task") else None,
+                    ),
+                )
                 if state != TaskState.RUNNING:
                     return self._outcome(task_id, "verification kept failing", steps, gaps=gaps)
                 plan_id = self._new_plan(
@@ -665,9 +677,11 @@ class AgentRunner:
         self, task_id: str, lease: Lease, evidence_id: str | None, artifact_id: str, steps: int
     ) -> RunOutcome:
         assert evidence_id is not None
+        per = self._last_verification.criteria if self._last_verification else {}
         for c in self.tasks.get(task_id)["completion_criteria"]:
-            if c["required"]:
-                self.tasks.satisfy_criterion(task_id, c["criterion_id"], evidence_id)
+            own = per.get(c["criterion_id"])
+            if own is not None and own.passed and own.evidence_id:  # its OWN evidence (A3-07)
+                self.tasks.satisfy_criterion(task_id, c["criterion_id"], own.evidence_id)
         self.tasks.release(lease, TaskState.VERIFYING, "deliverable verified")
         name = self.conn.execute("SELECT name FROM artifacts WHERE id = ?", (artifact_id,)).fetchone()
         self.tasks.complete(

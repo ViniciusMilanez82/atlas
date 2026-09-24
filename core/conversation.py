@@ -37,6 +37,7 @@ from runtime.models.router import Requirements
 from runtime.models.types import ModelRequest
 from runtime.tasks.engine import TaskEngine
 from runtime.tasks.state_machine import TaskState
+from runtime.verification.criteria import derive_criteria
 from security.broker.broker import Broker
 from security.egress.guard import EgressGuard
 from shared.actors import Actor
@@ -957,7 +958,9 @@ class ConversationService:
             actor,
             employee_id=employee_id,
             objective=objective[:4000],
-            criteria=[("Resultado entregue e verificado", True)],
+            criteria=[  # derived from the request by code, one check each (A3-07)
+                (c.description, c.required, c.kind, c.params) for c in derive_criteria(objective, bool(artifact_ids))
+            ],
             conversation_id=cid,
             client_request_id=mid,
             original_request=objective,

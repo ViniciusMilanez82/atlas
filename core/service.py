@@ -25,6 +25,7 @@ from runtime.artifacts.manager import ArtifactManager
 from runtime.artifacts.uploads import UploadStore, staging_path
 from runtime.memory.manager import MemoryManager
 from runtime.tasks.engine import TaskEngine
+from runtime.verification.criteria import derive_criteria
 from security.approvals.engine import ApprovalEngine
 from security.broker.broker import Broker
 from shared.clock import Clock, to_utc_str
@@ -253,7 +254,10 @@ class CoreService:
             priority=p.get("priority", "NORMAL"),
             budget_limit=budget,
             deadline=p.get("deadline"),
-            criteria=[("Resultado entregue e verificado", True)],
+            criteria=[
+                (c.description, c.required, c.kind, c.params)
+                for c in derive_criteria(p["objective"], bool(p["artifact_ids"]))
+            ],
             conversation_id=p.get("conversation_id"),
             client_request_id=p.get("client_request_id"),
             input_artifact_ids=p["artifact_ids"],  # same commit as the task (A3-12)

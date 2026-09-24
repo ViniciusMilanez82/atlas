@@ -72,6 +72,10 @@ def test_correction_between_decision_and_dispatch(world: World, tmp_path: Path) 
                 "tool", tool="artifact.read_text", inp={"artifact_id": ids[0]}, summary="ler alfa"
             )
         if turn == 2:
+            return decision(
+                "tool", tool="artifact.read_text", inp={"artifact_id": ids[1]}, summary="ler beta"
+            )
+        if turn == 3:
             # The model already decided (by price). Before the broker sees it, the owner corrects.
             out = state["side"].handle(
                 world.owner,
@@ -86,7 +90,7 @@ def test_correction_between_decision_and_dispatch(world: World, tmp_path: Path) 
                 summary="relatorio por preco",
             )
         state.setdefault("prompts_after", []).append(prompt)
-        if turn == 3:
+        if turn == 4:
             criterion = "prazo" if "priorize prazo" in prompt else "preco"
             return decision(
                 "tool",
@@ -113,8 +117,9 @@ def test_correction_between_decision_and_dispatch(world: World, tmp_path: Path) 
     assert len(writes) == 1 and "por prazo" in writes[0][0]  # the stale price report never dispatched
     assert "CURRENT" in state["prompts_after"][0] and "priorize prazo" in state["prompts_after"][0]
     reads = world.conn.execute(
-        "SELECT COUNT(*) FROM actions WHERE task_id = ? AND tool_id = 'artifact.read_text' AND status = 'CONFIRMED'",
-        (tid,),
+        "SELECT COUNT(*) FROM actions WHERE task_id = ? AND tool_id = 'artifact.read_text' AND status = 'CONFIRMED'"
+        " AND instr(input_json, ?) > 0",
+        (tid, state["ids"][0]),
     ).fetchone()[0]
     assert reads == 1  # the effect confirmed before the correction is kept, not repeated
     assert out.state == "COMPLETED", out.reason

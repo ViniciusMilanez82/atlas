@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
 
+from runtime.notifications.outbox import Notice, enqueue_in_txn
 from runtime.tasks.engine import Lease, TaskEngine
 from runtime.tasks.state_machine import TaskState
 from shared.actors import Actor
@@ -77,8 +78,9 @@ class ProgressGuard:
         ).fetchone()
         return row
 
-    def record(self, lease: Lease, outcome: StepOutcome) -> TaskState:
-        """Record one step for the lease holder. Returns the task state afterwards."""
+    def record(self, lease: Lease, outcome: StepOutcome, notice: Notice | None = None) -> TaskState:
+        """Record one step for the lease holder. Returns the task state afterwards. ``notice`` is queued
+        for the owner in the same commit when the step makes the task leave RUNNING (A3-27)."""
         worker = Actor("worker", lease.worker_id, "internal")
         now = self.clock.now()
         with transaction(self.conn):
@@ -124,6 +126,16 @@ class ProgressGuard:
                     f"limits: failures={fails} replans={replans} steps_without_result={steps}",
                     blocked_reason=reason,
                 )
+                if notice is not None and target == TaskState.BLOCKED:
+                    enqueue_in_txn(
+                        self.conn,
+                        self.clock,
+                        employee_id=task["employee_id"],
+                        task_id=task["id"],
+                        kind=notice[0],
+                        content=notice[1],
+                        artifact_id=notice[2],
+                    )
                 return target
             return TaskState.RUNNING
 
