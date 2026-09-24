@@ -47,6 +47,29 @@ jobs:
           name: Atlas-dev-app
           path: ${{ runner.temp }}/dist/Atlas-dev.zip
           retention-days: 14
+      - name: Bisect the Local Network prompt with the embedded Python (diagnostic)
+        continue-on-error: true
+        run: |
+          R="$RUNNER_TEMP/dist/Atlas.app/Contents/Resources"
+          export PYTHONPATH="$R/core-src:$R/site-packages" PYTHONNOUSERSITE=1
+          mkdir -p "$RUNNER_TEMP/shots"
+          "$R/python/bin/python3" -c "import time; time.sleep(6)"
+          screencapture -x "$RUNNER_TEMP/shots/1-bare-python.png"
+          "$R/python/bin/python3" -c "import core.daemon, core.service, runtime.agent.loop, security.broker.executor; import time; time.sleep(6)"
+          screencapture -x "$RUNNER_TEMP/shots/2-import-core.png"
+          D=$(mktemp -d /tmp/lnp.XXXX); mkdir -m 700 "$D/data" "$D/ipc"
+          "$R/python/bin/python3" -m core --data-dir "$D/data" --ipc-dir "$D/ipc" --openai-base-url http://127.0.0.1:9/v1 &
+          CORE=$!
+          sleep 12
+          screencapture -x "$RUNNER_TEMP/shots/3-daemon-running.png"
+          kill $CORE || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Atlas-local-network-bisect
+          path: ${{ runner.temp }}/shots
+          if-no-files-found: warn
+          retention-days: 7
       - name: Open the built app on the runner and capture the real window (evidence only; not interactive validation)
         continue-on-error: true
         run: |
