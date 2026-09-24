@@ -28,7 +28,7 @@ uploads, interface) no nível de núcleo e ViewModel. Quatro achados novos (B-01
 
 ```text
 Windows local: python scripts/check.py (venv em %USERPROFILE%/.venvs/atlas)
-  ruff=PASS secrets=PASS mypy=PASS (88 arquivos) pytest: 592 passed, 8 skipped
+  ruff=PASS secrets=PASS mypy=PASS (92 arquivos) pytest: 627 passed, 8 skipped (fim da sessão)
   skips: 2 daemon E2E + 1 servidor UDS + 1 teste A3-28 com processos (sem Unix sockets no Windows),
          1 symlink (privilégio), 1 chamada real opt-in (D-03), 1 probe Swift e 1 Keychain real (D-01)
 CI (GitHub Actions, commits da branch): core-linux, core-macos e app-evidence verdes até 7aa1c24;
@@ -43,10 +43,22 @@ companion, contas, skills: **não implementados** (N14-N21).
 
 **Custos incorridos:** zero. Nenhuma credencial usada ou solicitada.
 
-**Próximos itens desbloqueados (ordem):** N11 geração de PDF/DOCX/XLSX/PPTX como entregáveis; N09 cálculos
-e datas estruturados (agenda com fusos/recorrências); N06 tela Memória e índice semântico local; N12 telas
-Trabalho/Memória/Arquivos ligadas aos estados; N13 modos de inteligência (router com perfis reais) — a
-validação real depende de conta e teto (D-03); N14/N15 dependem de um Mac com virtualização (D-01).
+**Pacotes do produto avançados na mesma sessão (depois dos 32 achados).**
+
+| Pacote | Commit | O que ficou pronto | Evidência |
+| --- | --- | --- | --- |
+| N11 | `a50d283` | PDF/DOCX/XLSX/PPTX gerados e validados por releitura | `tests/integration/test_generate_documents.py` |
+| N09 | `efaaf6b` | `calc.evaluate` (Decimal) e `calendar.analyze` (fusos, DST, dia inteiro, recorrência/exceções) | `tests/integration/test_compute_tools.py` |
+| N13 | `86105bd` | Modos mudam o modelo chamado; só perfis validados; tela com modo simples e IDs no Avançado | `tests/integration/test_intelligence_modes.py` |
+| N06/N12 | `437f401` | Telas Memória (confirmar, corrigir, esquecer com prévia, exportar) e Arquivos | `test_memory_files_screens.py`, `G3RegressionTests` |
+| N18 | `6a1c832`, `2aa46d0` | Pedido concreto de recurso decidido pelo dono (sem compra, sem liberar dados) | `tests/integration/test_capability_requests.py` |
+| N23 | `377ff7f` | SBOM CycloneDX do runtime embutido | `tests/contract/test_sbom.py` |
+
+**Próximos itens desbloqueados (ordem):** índice semântico local (embeddings) no serviço de conhecimento; onboarding leigo (N22: identidade, modo,
+orçamento, privacidade) no app; núcleo de voz (N20: separar "pare de falar" de "pare o trabalho"); protocolo e
+relay local do companion (N21) com biblioteca criptográfica estabelecida. Dependem de decisão/recurso do
+proprietário: VM e Execution Box (N14/N15, Mac com virtualização — D-01), inteligência real (D-03), conta e
+e-mail operacional (N17), domínio do relay (N21), assinatura Apple (N23, D-07).
 
 ---
 
