@@ -133,7 +133,10 @@ class MemoryManager:
         sensitivity: str = "INTERNAL",
         valid_from: str | None = None,
         valid_until: str | None = None,
+        require_confirmation: bool = False,
     ) -> str:
+        """``require_confirmation`` keeps even an owner statement as a proposal until the owner confirms the
+        exact text that will be stored (used when memory is requested from the conversation)."""
         if type not in TYPES:
             raise AtlasError(ErrorCode.INVALID_INPUT, f"unknown memory type {type}")
         self._check_content(content, sensitivity)
@@ -141,9 +144,8 @@ class MemoryManager:
             raise AtlasError(ErrorCode.INVALID_INPUT, "valid_until must be after valid_from")
         src = self._source(source_id)
         # Only an owner statement on an authenticated channel may be stored as confirmed directly.
-        status = (
-            "confirmed" if (src["trust"] == "owner_authenticated" and actor.kind == "owner") else "proposed"
-        )
+        owner_statement = src["trust"] == "owner_authenticated" and actor.kind == "owner"
+        status = "confirmed" if owner_statement and not require_confirmation else "proposed"
         mid = new_id()
         now = to_utc_str(self.clock.now())
         with transaction(self.conn):

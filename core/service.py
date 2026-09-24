@@ -9,14 +9,20 @@ error (never a simulated success).
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
+import json
 import sqlite3
-import unicodedata
+import threading
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
+from core.conversation import ConversationService
 from core.intelligence import IntelligenceSetup
 from core.ipc.sessions import Session
-from runtime.artifacts.manager import ArtifactManager
+from runtime.artifacts.manager import MAX_IMPORT_BYTES, ArtifactManager
 from runtime.memory.manager import MemoryManager
 from runtime.tasks.engine import TaskEngine
 from security.approvals.engine import ApprovalEngine
@@ -25,12 +31,10 @@ from shared.clock import Clock, to_utc_str
 from shared.config import parse_config
 from shared.contracts import ContractError, errors_for
 from shared.errors import AtlasError, ErrorCode
-from shared.ids import new_id
 from shared.money import Money
 from storage import journal
 from storage.db import transaction
 
-STOP_WORDS = {"pare", "pare tudo", "parar", "stop", "stop all", "pause tudo", "pausa tudo"}
 OWNER_ONLY = {
     "tasks.pause",
     "tasks.resume",
@@ -40,16 +44,13 @@ OWNER_ONLY = {
     "memories.correct",
     "memories.delete",
     "settings.update",
-    "artifacts.export",
     "credentials.register",
     "intelligence.check",
+    "memories.confirm",
+    "artifacts.upload",
+    "artifacts.import",
 }
 OWNER_OR_DEVICE = {"conversations.send", "tasks.create"}
-
-
-def _normalize(text: str) -> str:
-    nfkd = unicodedata.normalize("NFKD", text.strip().lower().rstrip("!.")).encode("ascii", "ignore").decode()
-    return " ".join(nfkd.split())
 
 
 class CoreService:
@@ -72,6 +73,8 @@ class CoreService:
         self.version = version
         self.intelligence = intelligence
         self.artifacts = artifacts
+        self.conversation = ConversationService(conn, clock, broker, intelligence)
+        self._uploads_lock = threading.Lock()
         self.handlers: dict[str, Callable[[Session, dict[str, Any]], dict[str, Any]]] = {
             "system.health": self._health,
             "conversations.send": self._send,
@@ -95,6 +98,13 @@ class CoreService:
             "intelligence.check": self._intelligence_check,
             "artifacts.list": self._artifacts_list,
             "approvals.list": self._approvals_list,
+            "settings.get": self._settings_get,
+            "conversations.current": self._conv_current,
+            "conversations.history": self._conv_history,
+            "memories.confirm": self._mem_confirm,
+            "artifacts.upload": self._upload,
+            "artifacts.import": self._import,
+            "artifacts.read": self._read,
         }
 
     # ------------------------------------------------------------------ dispatch
@@ -191,50 +201,33 @@ class CoreService:
         }
 
     def _send(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
-        actor = self._owner_actor(s)
-        now = to_utc_str(self.clock.now())
-        with transaction(self.conn):
+        out = self.conversation.handle(self._owner_actor(s), s.employee_id, p)
+        return {
+            **out,
+            "message_id": out["message"]["message_id"],
+            "control": "stopped" if out["intent"] == "control" else None,
+            "paused_tasks": out.get("paused", []),
+        }
+
+    def _conv_current(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
+        return {"conversation_id": self.conversation.current(s.employee_id)}
+
+    def _conv_history(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
+        return self.conversation.history(
+            p["conversation_id"], s.employee_id, p.get("before_message_id"), int(p.get("limit", 50))
+        )
+
+    def _task_create(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
+        for aid in p["artifact_ids"]:  # validate every attachment before creating anything
+            row = self.conn.execute("SELECT employee_id FROM artifacts WHERE id = ?", (aid,)).fetchone()
+            if row is None or row[0] != s.employee_id:
+                raise AtlasError(ErrorCode.INVALID_INPUT, "artifact not found for this employee")
+        if "conversation_id" in p:
             conv = self.conn.execute(
                 "SELECT employee_id FROM conversations WHERE id = ?", (p["conversation_id"],)
             ).fetchone()
-            if conv is None:
-                self.conn.execute(
-                    "INSERT INTO conversations(id, employee_id, created_at) VALUES (?,?,?)",
-                    (p["conversation_id"], s.employee_id, now),
-                )
-            elif conv[0] != s.employee_id:
-                raise AtlasError(ErrorCode.UNAUTHORIZED, "conversation belongs to another employee")
-            existing = self.conn.execute(
-                "SELECT id, task_id FROM messages WHERE conversation_id = ? AND client_message_id = ?",
-                (p["conversation_id"], p["client_message_id"]),
-            ).fetchone()
-            if existing:  # idempotent resend from the client
-                return {"message_id": existing[0], "task_id": existing[1], "control": None, "duplicate": True}
-            mid = new_id()
-            origin = "local_app" if s.actor.channel == "local_app" else "paired_device"
-            self.conn.execute(
-                "INSERT INTO messages(id, conversation_id, role, origin, client_message_id, content, created_at)"
-                " VALUES (?,?,'owner',?,?,?,?)",
-                (mid, p["conversation_id"], origin, p["client_message_id"], p["text"], now),
-            )
-        control = None
-        paused: list[str] = []
-        in_flight: list[str] = []
-        if _normalize(p["text"]) in STOP_WORDS:
-            rep = self.tasks.stop_all(actor=actor, employee_id=s.employee_id)
-            for tid in rep.paused_tasks:
-                self.broker.request_cancel(tid)
-            control, paused, in_flight = "stopped", rep.paused_tasks, rep.in_flight_actions
-        return {
-            "message_id": mid,
-            "task_id": None,
-            "control": control,
-            "paused_tasks": paused,
-            "in_flight_actions": in_flight,
-            "duplicate": False,
-        }
-
-    def _task_create(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
+            if conv is None or conv[0] != s.employee_id:
+                raise AtlasError(ErrorCode.INVALID_INPUT, "conversation not found for this employee")
         budget = Money.from_json(p["budget_limit"]) if "budget_limit" in p else None
         tid = self.tasks.create(
             self._owner_actor(s),
@@ -246,11 +239,10 @@ class CoreService:
             budget_limit=budget,
             deadline=p.get("deadline"),
             criteria=[("Resultado entregue e verificado", True)],
+            conversation_id=p.get("conversation_id"),
+            client_request_id=p.get("client_request_id"),
         )
         for aid in p["artifact_ids"]:
-            row = self.conn.execute("SELECT employee_id FROM artifacts WHERE id = ?", (aid,)).fetchone()
-            if row is None or row[0] != s.employee_id:
-                raise AtlasError(ErrorCode.INVALID_INPUT, "artifact not found for this employee")
             with transaction(self.conn):
                 self.conn.execute(
                     "INSERT OR IGNORE INTO artifact_links(artifact_id, task_id, relation) VALUES (?,?,'input')",
@@ -350,8 +342,6 @@ class CoreService:
         return {"valid": True}
 
     def _settings_update(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
-        import json
-
         cfg = parse_config(p["settings"])
         with transaction(self.conn):
             current = int(self.conn.execute("SELECT COALESCE(MAX(revision), 0) FROM settings").fetchone()[0])
@@ -374,7 +364,25 @@ class CoreService:
                 actor=s.actor,
                 summary=f"settings revision {current + 1}",
             )
-        return {"revision": current + 1}
+        return {"revision": current + 1, "settings": cfg}
+
+    def _settings_get(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
+        """The app always starts from the saved revision (review A1): no hard-coded expected_revision."""
+        row = self.conn.execute(
+            "SELECT revision, config_json FROM settings ORDER BY revision DESC LIMIT 1"
+        ).fetchone()
+        intel = self.intelligence.status() if self.intelligence else None
+        return {
+            "revision": int(row[0]) if row else 0,
+            "settings": json.loads(row[1]) if row else None,
+            "price_table": intel.price_table if intel else None,
+            "prices_verified": bool(intel.prices_verified) if intel else False,
+            "intelligence": {
+                "configured": bool(intel and intel.configured),
+                "reason": intel.reason if intel else "intelligence setup not loaded",
+                "model_id": intel.model_id if intel else None,
+            },
+        }
 
     # ------------------------------------------------------------------ app support (Alpha)
 
@@ -391,12 +399,12 @@ class CoreService:
             "timezone": row[3],
             "owner_name": row[4],
             "actor_kind": s.actor.kind,
+            "settings_revision": int(
+                self.conn.execute("SELECT COALESCE(MAX(revision), 0) FROM settings").fetchone()[0]
+            ),
         }
 
     def _credentials_register(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
-        import base64
-        import binascii
-
         if self.intelligence is None:
             raise AtlasError(ErrorCode.UNAUTHORIZED, "credential store is not available")
         if s.actor.channel != "local_app":
@@ -449,3 +457,101 @@ class CoreService:
             (s.employee_id,),
         ).fetchall()
         return {"approvals": [self.approvals.get(r[0]) for r in rows]}
+
+    # ------------------------------------------------------------------ memory confirmation (Alpha 2)
+
+    def _mem_confirm(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
+        row = self.conn.execute("SELECT employee_id FROM memories WHERE id = ?", (p["memory_id"],)).fetchone()
+        if row is None or row[0] != s.employee_id:
+            raise AtlasError(ErrorCode.INVALID_INPUT, "memory not found for this employee")
+        self.memory.confirm(p["memory_id"], actor=s.actor)
+        return {"memory_id": p["memory_id"], "status": "confirmed"}
+
+    # ------------------------------------------------------------------ attachments (Alpha 2, review A4)
+
+    def _artifact_store(self) -> ArtifactManager:
+        if self.artifacts is None:
+            raise AtlasError(ErrorCode.INVALID_INPUT, "artifact store is not available")
+        return self.artifacts
+
+    def _upload_path(self, s: Session, upload_ref: str) -> Path:
+        folder = self._artifact_store().root / "uploads"
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder / f"{s.employee_id}-{upload_ref}.part"
+
+    def _upload(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
+        """Chunked copy of ONE file the owner picked; the core never touches the original on disk."""
+        if s.actor.channel != "local_app":
+            raise AtlasError(ErrorCode.UNAUTHORIZED, "attachments are added on the local app")
+        try:
+            chunk = base64.b64decode(p["data_b64"], validate=True)
+        except (binascii.Error, ValueError):
+            raise AtlasError(ErrorCode.INVALID_INPUT, "chunk is not valid base64") from None
+        path = self._upload_path(s, p["upload_ref"])
+        with self._uploads_lock:
+            size = path.stat().st_size if path.exists() else 0
+            offset = p["offset"]
+            if offset < size:  # resend after a lost reply: accepted only when identical
+                with path.open("rb") as fh:
+                    fh.seek(offset)
+                    same = fh.read(len(chunk)) == chunk
+                if same and offset + len(chunk) <= size:
+                    return {"upload_ref": p["upload_ref"], "received_bytes": size, "duplicate": True}
+                raise AtlasError(ErrorCode.VERSION_CONFLICT, f"upload already has {size} bytes")
+            if offset > size:
+                raise AtlasError(ErrorCode.VERSION_CONFLICT, f"upload has {size} bytes; resend from there")
+            if size + len(chunk) > MAX_IMPORT_BYTES:
+                path.unlink(missing_ok=True)
+                raise AtlasError(ErrorCode.INVALID_INPUT, "file exceeds the import size limit")
+            with path.open("ab") as fh:
+                fh.write(chunk)
+            return {"upload_ref": p["upload_ref"], "received_bytes": size + len(chunk), "duplicate": False}
+
+    def _import(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
+        store = self._artifact_store()
+        if "task_id" in p:
+            self._check_task(s, p["task_id"])
+        path = self._upload_path(s, p["upload_ref"])
+        if not path.is_file():
+            raise AtlasError(ErrorCode.INVALID_INPUT, "upload not found; send the file again")
+        try:
+            art = store.import_file(
+                path,
+                actor=s.actor,
+                employee_id=s.employee_id,
+                declared_name=p["declared_name"],
+                task_id=p.get("task_id"),
+            )
+        finally:
+            path.unlink(missing_ok=True)  # validated or rejected, the staging copy never lingers
+        return {
+            "artifact_id": art.id,
+            "name": art.name,
+            "mime_type": art.mime_type,
+            "sha256": art.sha256,
+            "size_bytes": art.size_bytes,
+            "version": art.version,
+        }
+
+    def _read(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
+        """Chunked read: the app previews as plain text or saves a copy and verifies the hash itself."""
+        store = self._artifact_store()
+        row = self.conn.execute(
+            "SELECT employee_id FROM artifacts WHERE id = ?", (p["artifact_id"],)
+        ).fetchone()
+        if row is None or row[0] != s.employee_id:
+            raise AtlasError(ErrorCode.INVALID_INPUT, "artifact not found for this employee")
+        art = store.get(p["artifact_id"])
+        data = store.read_bytes(p["artifact_id"])  # re-verifies the stored hash on every read
+        chunk = data[p["offset"] : p["offset"] + p["length"]]
+        return {
+            "artifact_id": art.id,
+            "name": art.name,
+            "mime_type": art.mime_type,
+            "sha256": art.sha256,
+            "size_bytes": art.size_bytes,
+            "offset": p["offset"],
+            "data_b64": base64.b64encode(chunk).decode("ascii"),
+            "chunk_sha256": hashlib.sha256(chunk).hexdigest(),
+            "eof": p["offset"] + len(chunk) >= len(data),
+        }
