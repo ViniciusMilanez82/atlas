@@ -39,6 +39,7 @@ OWNER_ONLY = {
     "tasks.pause",
     "tasks.resume",
     "tasks.cancel",
+    "tasks.reevaluate",
     "approvals.decide",
     "memories.propose",
     "memories.correct",
@@ -107,6 +108,7 @@ class CoreService:
             "artifacts.import": self._import,
             "artifacts.read": self._read,
             "control.stop": self._control_stop,
+            "tasks.reevaluate": self._task_reevaluate,
             "tasks.update_instruction": self._update_instruction,
         }
 
@@ -221,7 +223,12 @@ class CoreService:
 
     def _conv_history(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
         return self.conversation.history(
-            p["conversation_id"], s.employee_id, p.get("before_message_id"), int(p.get("limit", 50))
+            p["conversation_id"],
+            s.employee_id,
+            p.get("before_message_id"),
+            int(p.get("limit", 50)),
+            after_sequence=p.get("after_sequence"),
+            changed_since_revision=p.get("changed_since_revision"),
         )
 
     def _task_create(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
@@ -312,6 +319,14 @@ class CoreService:
         self._check_task(s, p["task_id"])
         state = self.tasks.resume(p["task_id"], actor=s.actor, expected_version=p["expected_version"])
         return {"task": self.tasks.get(p["task_id"]), "resumed_to": str(state)}
+
+    def _task_reevaluate(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
+        """A3-30: re-check the blocking condition with current data; never re-dispatch an UNKNOWN effect."""
+        self._check_task(s, p["task_id"])
+        state, why = self.tasks.reevaluate(
+            p["task_id"], actor=s.actor, expected_version=p["expected_version"], budget=self.broker.budget
+        )
+        return {"task": self.tasks.get(p["task_id"]), "state": str(state), "explanation": why}
 
     def _task_cancel(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
         self._check_task(s, p["task_id"])

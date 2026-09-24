@@ -30,7 +30,9 @@ def test_second_lock_on_the_same_directory_is_refused(tmp_path: Path) -> None:
     InstanceLock(tmp_path).acquire().release()  # released by the owner -> free again
 
 
-@pytest.mark.skipif(not hasattr(os, "fork") or sys.platform == "win32", reason="atlas-core needs Unix sockets")
+@pytest.mark.skipif(
+    not hasattr(os, "fork") or sys.platform == "win32", reason="atlas-core needs Unix sockets"
+)
 def test_two_daemons_one_owner_and_orphan_socket_recovery() -> None:
     import shutil
     import tempfile

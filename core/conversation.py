@@ -108,6 +108,10 @@ class Receipt:
     decision: dict[str, Any] | None = None
     busy: bool = False
 EMPLOYEE = Actor("runtime", "conversation", "internal")
+# Stable order (rowid) and latest global change of each message (A3-23).
+MSG = (
+    "m.rowid AS sequence, (SELECT MAX(c.seq) FROM message_changes c WHERE c.message_id = m.id) AS revision, m.*"
+)
 
 
 def normalize(text: str) -> str:
@@ -156,10 +160,12 @@ class ConversationService:
             "memory_id": row["memory_id"],
             "created_at": row["created_at"],
             "classification": row["classification"],
+            "sequence": row["sequence"],
+            "revision": row["revision"],
         }
 
     def get_message(self, message_id: str) -> dict[str, Any]:
-        row = self.conn.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
+        row = self.conn.execute(f"SELECT {MSG} FROM messages m WHERE m.id = ?", (message_id,)).fetchone()  # noqa: S608 - MSG is a constant column list
         if row is None:
             raise AtlasError(ErrorCode.INVALID_INPUT, "unknown message")
         return self._message(row)
@@ -233,13 +239,46 @@ class ConversationService:
         return self.get_message(mid)
 
     def history(
-        self, conversation_id: str, employee_id: str, before_message_id: str | None, limit: int
+        self,
+        conversation_id: str,
+        employee_id: str,
+        before_message_id: str | None,
+        limit: int,
+        *,
+        after_sequence: int | None = None,
+        changed_since_revision: int | None = None,
     ) -> dict[str, Any]:
+        """Paged history. ``after_sequence`` returns everything after the client's last confirmed
+        message (oldest first, no gaps); ``changed_since_revision`` returns messages created OR changed
+        since that revision, so the client upserts them (A3-23)."""
         conv = self.conn.execute(
             "SELECT employee_id FROM conversations WHERE id = ?", (conversation_id,)
         ).fetchone()
         if conv is None or conv[0] != employee_id:
             raise AtlasError(ErrorCode.UNAUTHORIZED, "conversation belongs to another employee")
+        if changed_since_revision is not None:
+            rows = self.conn.execute(
+                f"SELECT {MSG} FROM messages m WHERE m.conversation_id = ? AND m.id IN"  # noqa: S608 - MSG is a constant column list
+                " (SELECT message_id FROM message_changes WHERE seq > ?) ORDER BY m.rowid LIMIT ?",
+                (conversation_id, changed_since_revision, limit + 1),
+            ).fetchall()
+            has_more = len(rows) > limit
+            return {
+                "conversation_id": conversation_id,
+                "messages": [self._message(r) for r in rows[:limit]],
+                "has_more": has_more,
+            }
+        if after_sequence is not None:
+            rows = self.conn.execute(
+                f"SELECT {MSG} FROM messages m WHERE m.conversation_id = ? AND m.rowid > ? ORDER BY m.rowid LIMIT ?",  # noqa: S608 - MSG is a constant column list
+                (conversation_id, after_sequence, limit + 1),
+            ).fetchall()
+            has_more = len(rows) > limit
+            return {
+                "conversation_id": conversation_id,
+                "messages": [self._message(r) for r in rows[:limit]],
+                "has_more": has_more,
+            }
         if before_message_id:
             ref = self.conn.execute(
                 "SELECT rowid FROM messages WHERE id = ? AND conversation_id = ?",
@@ -248,12 +287,12 @@ class ConversationService:
             if ref is None:
                 raise AtlasError(ErrorCode.INVALID_INPUT, "unknown message in this conversation")
             rows = self.conn.execute(
-                "SELECT * FROM messages WHERE conversation_id = ? AND rowid < ? ORDER BY rowid DESC LIMIT ?",
+                f"SELECT {MSG} FROM messages m WHERE m.conversation_id = ? AND m.rowid < ? ORDER BY m.rowid DESC LIMIT ?",  # noqa: S608 - MSG is a constant column list
                 (conversation_id, ref[0], limit + 1),
             ).fetchall()
         else:
             rows = self.conn.execute(
-                "SELECT * FROM messages WHERE conversation_id = ? ORDER BY rowid DESC LIMIT ?",
+                f"SELECT {MSG} FROM messages m WHERE m.conversation_id = ? ORDER BY m.rowid DESC LIMIT ?",  # noqa: S608 - MSG is a constant column list
                 (conversation_id, limit + 1),
             ).fetchall()
         has_more = len(rows) > limit
@@ -477,7 +516,7 @@ class ConversationService:
         # ANSWER_QUESTION with an explicit target (the "Responder" action): never guessed (A3-14).
         if p.get("reply_to_message_id"):
             q = self.conn.execute(
-                "SELECT * FROM messages WHERE id = ? AND conversation_id = ? AND kind = 'question'",
+                f"SELECT {MSG} FROM messages m WHERE m.id = ? AND m.conversation_id = ? AND m.kind = 'question'",  # noqa: S608 - MSG is a constant column list
                 (p["reply_to_message_id"], cid),
             ).fetchone()
             if q is not None:
@@ -565,7 +604,7 @@ class ConversationService:
 
     def _pending_questions(self, cid: str) -> list[dict[str, Any]]:
         rows = self.conn.execute(
-            "SELECT m.*, t.objective FROM messages m JOIN tasks t ON t.id = m.task_id WHERE m.conversation_id = ?"
+            f"SELECT {MSG}, t.objective FROM messages m JOIN tasks t ON t.id = m.task_id WHERE m.conversation_id = ?"  # noqa: S608 - MSG is a constant column list
             " AND m.kind = 'question' AND t.state = 'WAITING_USER' AND NOT EXISTS (SELECT 1 FROM messages a"
             " WHERE a.task_id = m.task_id AND a.kind = 'answer' AND a.role = 'owner' AND a.rowid > m.rowid)"
             " ORDER BY m.rowid",

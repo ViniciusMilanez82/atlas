@@ -137,6 +137,19 @@
     "instruction_revision": {
       "type": "integer",
       "minimum": 1
+    },
+    "available_actions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "pause",
+          "resume",
+          "cancel",
+          "reevaluate",
+          "reconcile"
+        ]
+      }
     }
   },
   "$defs": {

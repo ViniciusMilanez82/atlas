@@ -85,8 +85,12 @@ def test_memory_keeps_the_owner_text_exactly(env: Any, world: World, text: str, 
 def _waiting_task(env: Any, world: World, conv: str, question: str, objective: str) -> tuple[str, str]:
     with transaction(world.conn):
         tid = insert_task(world.conn, world.owner_id, world.employee.id, state="WAITING_USER")
-        world.conn.execute("UPDATE tasks SET conversation_id = ?, objective = ? WHERE id = ?", (conv, objective, tid))
-    q = ConversationService(world.conn, world.clock, env.make().broker, None).notify(tid, "question", question)
+        world.conn.execute(
+            "UPDATE tasks SET conversation_id = ?, objective = ? WHERE id = ?", (conv, objective, tid)
+        )
+    q = ConversationService(world.conn, world.clock, env.make().broker, None).notify(
+        tid, "question", question
+    )
     assert q is not None
     return tid, q["message_id"]
 
@@ -94,9 +98,13 @@ def _waiting_task(env: Any, world: World, conv: str, question: str, objective: s
 def test_status_and_new_subject_do_not_answer_the_pending_question(env: Any, world: World) -> None:
     c = env.connect()
     conv = ok(c.call("conversations.current"))["conversation_id"]
-    tid, _ = _waiting_task(env, world, conv, "Qual formato você prefere: PDF ou planilha?", "Relatorio de vendas")
+    tid, _ = _waiting_task(
+        env, world, conv, "Qual formato você prefere: PDF ou planilha?", "Relatorio de vendas"
+    )
     assert send(c, env, conv, "Qual o status?")["intent"] == "status"  # before the fix: consumed as answer
-    new = send(c, env, conv, "Me ajude a escrever um convite de aniversário para sábado, por favor, com tom leve.")
+    new = send(
+        c, env, conv, "Me ajude a escrever um convite de aniversário para sábado, por favor, com tom leve."
+    )
     assert new["intent"] != "answer"
     assert world.conn.execute("SELECT state FROM tasks WHERE id = ?", (tid,)).fetchone()[0] == "WAITING_USER"
     short = send(c, env, conv, "Planilha")  # an unambiguous continuation is still linked
@@ -126,9 +134,11 @@ def test_two_pending_questions_are_never_guessed(env: Any, world: World) -> None
 def _file(env: Any, world: World, tmp_path: Path, name: str = "planilha.csv") -> str:
     f = tmp_path / name
     f.write_text("item;valor\nA;10\n", encoding="utf-8")
-    return ArtifactManager(world.conn, world.clock, env.store_root).import_file(
-        f, actor=world.owner, employee_id=world.employee.id
-    ).id
+    return (
+        ArtifactManager(world.conn, world.clock, env.store_root)
+        .import_file(f, actor=world.owner, employee_id=world.employee.id)
+        .id
+    )
 
 
 def test_store_complement_and_analyze_are_different(env: Any, world: World, tmp_path: Path) -> None:
@@ -137,7 +147,9 @@ def test_store_complement_and_analyze_are_different(env: Any, world: World, tmp_
     # 1) just keep it: no task
     a1 = _file(env, world, tmp_path, "a.csv")
     kept = send(c, env, conv, "Guarde este arquivo para depois", artifact_ids=[a1])
-    assert kept["task_id"] is None and kept["intent"] == "share_only"  # before the fix the app forced delegate
+    assert (
+        kept["task_id"] is None and kept["intent"] == "share_only"
+    )  # before the fix the app forced delegate
     assert world.conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 0
     linked = world.conn.execute(
         "SELECT COUNT(*) FROM message_attachments WHERE artifact_id = ?", (a1,)
@@ -151,9 +163,12 @@ def test_store_complement_and_analyze_are_different(env: Any, world: World, tmp_
     comp = send(c, env, conv, "Esse é o arquivo que faltava", artifact_ids=[a2], task_id=tid)
     assert comp["intent"] == "attach_to_task" and comp["task_id"] == tid
     assert world.conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 1
-    assert world.conn.execute(
-        "SELECT relation FROM artifact_links WHERE artifact_id = ? AND task_id = ?", (a2, tid)
-    ).fetchone()[0] == "input"
+    assert (
+        world.conn.execute(
+            "SELECT relation FROM artifact_links WHERE artifact_id = ? AND task_id = ?", (a2, tid)
+        ).fetchone()[0]
+        == "input"
+    )
     rev = world.conn.execute(
         "SELECT kind FROM task_instruction_versions WHERE task_id = ? ORDER BY revision DESC", (tid,)
     ).fetchone()[0]

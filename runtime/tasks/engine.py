@@ -221,6 +221,7 @@ class TaskEngine:
             "blocked_reason": r["blocked_reason"],
             "version": r["version"],
             "instruction_revision": r["instruction_revision"],
+            "available_actions": available_actions(r["state"], r["blocked_reason"]),
             "parent_task_id": r["parent_task_id"],
             "deadline": r["deadline"],
             "created_at": r["created_at"],
@@ -441,6 +442,46 @@ class TaskEngine:
                 row, target, actor, "resumed by owner after re-evaluation", blocked_reason=reason
             )
             return target
+
+    def reevaluate(
+        self, task_id: str, *, actor: Actor, expected_version: int, budget: Any
+    ) -> tuple[TaskState, str]:
+        """'Reavaliar bloqueio' (A3-30): unblock only when the cause is really gone. Budget is read
+        live; limits counters are reset for NO_PROGRESS/RETRY_LIMIT (the owner decided to try again);
+        UNKNOWN external effects stay blocked until reconciled - a button never re-dispatches them."""
+        with transaction(self.conn):
+            row = self._row(task_id)
+            self._owner_check(actor, row)
+            if row["version"] != expected_version:
+                raise _err(ErrorCode.VERSION_CONFLICT, "task changed; refresh and retry")
+            if row["state"] != TaskState.BLOCKED:
+                return TaskState(row["state"]), "a tarefa não está bloqueada"
+            reason = row["blocked_reason"]
+            if reason == "EXTERNAL_EFFECT_UNKNOWN" and self._unknown_actions(task_id):
+                return TaskState.BLOCKED, (
+                    "há ação com resultado incerto; é preciso conferir (reconciliar) antes de continuar"
+                )
+            if reason == "BUDGET_EXCEEDED":
+                lim = budget.limits
+                task_used = budget._committed("task", task_id)
+                from security.budget.budget import period_key
+
+                period_used = budget._committed("period", period_key(self.clock))
+                if (
+                    lim.monthly_limit_minor is None
+                    or lim.per_task_limit_minor is None
+                    or task_used >= lim.per_task_limit_minor
+                    or period_used >= lim.monthly_limit_minor
+                ):
+                    return TaskState.BLOCKED, "o orçamento continua esgotado; aumente o teto em Configurações"
+            if reason in ("NO_PROGRESS", "RETRY_LIMIT"):
+                self.conn.execute(
+                    "UPDATE task_progress SET transient_failures = 0, replans_without_progress = 0,"
+                    " steps_without_verified = 0, next_attempt_at = NULL WHERE task_id = ?",
+                    (task_id,),
+                )
+            self.transition_in_txn(row, TaskState.READY, actor, f"owner re-evaluated block ({reason})")
+            return TaskState.READY, "condição reavaliada; a tarefa voltou para a fila"
 
     def cancel(self, task_id: str, *, actor: Actor, expected_version: int) -> CancelReport:
         """Stop future dispatches. Effects that already happened are reported, never undone (spec 12.3)."""
@@ -761,6 +802,17 @@ class TaskEngine:
                 return TaskState.BLOCKED
             self.transition_in_txn(row, TaskState.READY, actor, "blocking condition resolved")
             return TaskState.READY
+
+
+def available_actions(state: str, blocked_reason: str | None) -> list[str]:
+    """What the owner may do now (A3-30, spec 6.1). The UI shows exactly these; nothing is guessed."""
+    if state in ("COMPLETED", "FAILED", "CANCELLED"):
+        return []
+    if state == "PAUSED":
+        return ["resume", "cancel"]
+    if state == "BLOCKED":
+        return ["reconcile" if blocked_reason == "EXTERNAL_EFFECT_UNKNOWN" else "reevaluate", "cancel"]
+    return ["pause", "cancel"]
 
 
 def is_terminal(state: str) -> bool:

@@ -57,7 +57,8 @@
         "artifacts.upload",
         "artifacts.read",
         "control.stop",
-        "tasks.update_instruction"
+        "tasks.update_instruction",
+        "tasks.reevaluate"
       ]
     },
     "params": {
@@ -536,6 +537,22 @@
         "properties": {
           "params": {
             "$ref": "#/$defs/p_update_instruction"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "tasks.reevaluate"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_task_mutation"
           }
         }
       }
@@ -1137,6 +1154,14 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 200
+        },
+        "after_sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "changed_since_revision": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     },
