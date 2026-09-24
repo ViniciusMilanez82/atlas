@@ -182,10 +182,10 @@ class CoreService:
         return a
 
     def _check_task(self, session: Session, task_id: str) -> dict[str, Any]:
-        task = self.tasks.get(task_id)
-        if task["employee_id"] != session.employee_id:
-            raise AtlasError(ErrorCode.UNAUTHORIZED, "task belongs to another employee")
-        return task
+        row = self.conn.execute("SELECT employee_id FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if row is None or row[0] != session.employee_id:  # same answer for "absent" and "not yours"
+            raise AtlasError(ErrorCode.INVALID_INPUT, "task not found for this employee")
+        return self.tasks.get(task_id)
 
     # ------------------------------------------------------------------ handlers
 
@@ -348,7 +348,7 @@ class CoreService:
         return {"hits": [h.__dict__ for h in hits]}
 
     def _mem_propose(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
-        mid = self.memory.propose(
+        mid = self.memory.propose(  # the source must belong to this employee (checked inside, A3-26)
             actor=s.actor,
             employee_id=s.employee_id,
             type=p["memory_type"],
@@ -366,10 +366,12 @@ class CoreService:
             expected_version=p["expected_version"],
             content=p["content"],
             source_id=p["source_id"],
+            employee_id=s.employee_id,  # session -> employee -> memory (A3-26)
         )
         return {"memory_id": p["memory_id"], "version": v}
 
     def _mem_delete(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
+        self.memory.require_owned(p["memory_id"], s.employee_id)
         self.memory.delete(p["memory_id"], actor=s.actor)
         return {"memory_id": p["memory_id"], "deleted": True}
 
@@ -504,9 +506,7 @@ class CoreService:
     # ------------------------------------------------------------------ memory confirmation (Alpha 2)
 
     def _mem_confirm(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
-        row = self.conn.execute("SELECT employee_id FROM memories WHERE id = ?", (p["memory_id"],)).fetchone()
-        if row is None or row[0] != s.employee_id:
-            raise AtlasError(ErrorCode.INVALID_INPUT, "memory not found for this employee")
+        self.memory.require_owned(p["memory_id"], s.employee_id)
         self.memory.confirm(p["memory_id"], actor=s.actor)
         return {"memory_id": p["memory_id"], "status": "confirmed"}
 

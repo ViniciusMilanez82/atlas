@@ -75,7 +75,7 @@ class MemoryManager:
 
     # ------------------------------------------------------------------ sources
 
-    def add_source(self, *, actor: Actor, kind: str, ref: str) -> str:
+    def add_source(self, *, actor: Actor, kind: str, ref: str, employee_id: str | None = None) -> str:
         """Register provenance. Trust is derived from who/what produced it, never from the text."""
         if kind not in SOURCE_KINDS:
             raise AtlasError(ErrorCode.INVALID_INPUT, f"unknown source kind {kind}")
@@ -92,17 +92,26 @@ class MemoryManager:
         sid = new_id()
         with transaction(self.conn):
             self.conn.execute(
-                "INSERT INTO sources(id, kind, trust, ref, captured_at) VALUES (?,?,?,?,?)",
-                (sid, kind, trust, ref[:512], to_utc_str(self.clock.now())),
+                "INSERT INTO sources(id, kind, trust, ref, captured_at, employee_id) VALUES (?,?,?,?,?,?)",
+                (sid, kind, trust, ref[:512], to_utc_str(self.clock.now()), employee_id),
             )
         return sid
 
-    def _source(self, source_id: str) -> sqlite3.Row:
+    def _source(self, source_id: str, employee_id: str | None = None) -> sqlite3.Row:
         row: sqlite3.Row | None = self.conn.execute(
             "SELECT * FROM sources WHERE id = ?", (source_id,)
         ).fetchone()
-        if row is None:
-            raise AtlasError(ErrorCode.INVALID_INPUT, "unknown source")
+        if row is None or (employee_id is not None and row["employee_id"] not in (None, employee_id)):
+            raise AtlasError(ErrorCode.INVALID_INPUT, "unknown source")  # same answer: reveals nothing (A3-26)
+        return row
+
+    def require_owned(self, memory_id: str, employee_id: str) -> sqlite3.Row:
+        """The memory exists AND belongs to this employee; otherwise the same 'not found' (A3-26)."""
+        row: sqlite3.Row | None = self.conn.execute(
+            "SELECT * FROM memories WHERE id = ?", (memory_id,)
+        ).fetchone()
+        if row is None or row["employee_id"] != employee_id:
+            raise AtlasError(ErrorCode.INVALID_INPUT, "memory not found for this employee")
         return row
 
     # ------------------------------------------------------------------ writes
@@ -143,7 +152,7 @@ class MemoryManager:
         self._check_content(content, sensitivity)
         if valid_from and valid_until and parse_utc(valid_until) <= parse_utc(valid_from):
             raise AtlasError(ErrorCode.INVALID_INPUT, "valid_until must be after valid_from")
-        src = self._source(source_id)
+        src = self._source(source_id, employee_id)
         # Only an owner statement on an authenticated channel may be stored as confirmed directly.
         owner_statement = src["trust"] == "owner_authenticated" and actor.kind == "owner"
         status = "confirmed" if owner_statement and not require_confirmation else "proposed"
@@ -224,16 +233,25 @@ class MemoryManager:
             )
 
     def correct(
-        self, memory_id: str, *, actor: Actor, expected_version: int, content: str, source_id: str
+        self,
+        memory_id: str,
+        *,
+        actor: Actor,
+        expected_version: int,
+        content: str,
+        source_id: str,
+        employee_id: str | None = None,
     ) -> int:
         """New version supersedes the old one; history stays traceable (spec 8.3)."""
-        row = self._row(memory_id)
+        row = self._row(memory_id) if employee_id is None else self.require_owned(memory_id, employee_id)
+        if actor.kind == "owner" and actor.id != self._owner_of(row["employee_id"]):
+            raise AtlasError(ErrorCode.INVALID_INPUT, "memory not found for this employee")
         if row["status"] == "deleted":
             raise AtlasError(ErrorCode.VERSION_CONFLICT, "memory was deleted")
         if row["current_version"] != expected_version:
             raise AtlasError(ErrorCode.VERSION_CONFLICT, "memory changed; refresh and retry")
         self._check_content(content, row["sensitivity"])
-        src = self._source(source_id)
+        src = self._source(source_id, row["employee_id"])
         owner_statement = src["trust"] == "owner_authenticated" and actor.kind == "owner"
         if row["type"] in OWNER_ONLY_TYPES and not owner_statement:
             raise AtlasError(

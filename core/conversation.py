@@ -682,7 +682,9 @@ class ConversationService:
         ).fetchone()
         if prior is not None:  # resumed request: the proposal already exists, reuse it
             return self._memory_reply(mid, cid, marker, str(prior[0]))
-        src = self.memory.add_source(actor=actor, kind="owner_message", ref=f"message:{mid}")
+        src = self.memory.add_source(
+            actor=actor, kind="owner_message", ref=f"message:{mid}", employee_id=employee_id
+        )
         kind = "PREFERENCE" if re.search(r"prefir|prefer|gosto|quero", normalize(content)) else "FACT"
         sensitivity = "SENSITIVE" if _SENSITIVE.search(normalize(content)) else "INTERNAL"
         try:
