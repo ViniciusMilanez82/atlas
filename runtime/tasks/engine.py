@@ -94,11 +94,16 @@ class TaskEngine:
         client_request_id: str | None = None,
         original_request: str | None = None,
         source_message_id: str | None = None,
+        input_artifact_ids: list[str] | None = None,
     ) -> str:
         """Persist a task before anything claims work has started (spec 3.3).
 
         ``original_request`` is the owner's full text (the objective may be a shorter statement); it is
         stored verbatim as instruction revision 1 so later summaries never replace it (spec 13.1).
+
+        Publication is atomic (A3-12, spec 5.2): the task row, criteria, instruction, input attachments and
+        the link to the source message commit together, so a worker can never pick up a task whose input
+        package is incomplete. Every attachment must belong to the employee or nothing is created.
 
         ``client_request_id`` makes creation idempotent: resending the same request (after a lost reply or
         a reconnect) returns the task that already exists instead of creating a duplicate.
@@ -152,6 +157,18 @@ class TaskEngine:
                 self.conn.execute(
                     "INSERT INTO task_criteria(id, task_id, description, required) VALUES (?,?,?,?)",
                     (new_id(), task_id, text, int(required)),
+                )
+            for aid in dict.fromkeys(input_artifact_ids or []):
+                art = self.conn.execute("SELECT employee_id FROM artifacts WHERE id = ?", (aid,)).fetchone()
+                if art is None or art["employee_id"] != employee_id:
+                    raise _err(ErrorCode.INVALID_INPUT, "attachment not found for this employee")
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO artifact_links(artifact_id, task_id, relation) VALUES (?,?,'input')",
+                    (aid, task_id),
+                )
+            if source_message_id is not None:
+                self.conn.execute(
+                    "UPDATE messages SET task_id = ? WHERE id = ? AND task_id IS NULL", (task_id, source_message_id)
                 )
             self.conn.execute(
                 "INSERT INTO task_instruction_versions(task_id, revision, kind, instruction, material, author,"

@@ -552,14 +552,8 @@ class ConversationService:
             client_request_id=mid,
             original_request=objective,
             source_message_id=mid,
+            input_artifact_ids=artifact_ids,  # linked in the same commit as the task (A3-12)
         )
-        with transaction(self.conn):
-            for aid in artifact_ids:
-                self.conn.execute(
-                    "INSERT OR IGNORE INTO artifact_links(artifact_id, task_id, relation) VALUES (?,?,'input')",
-                    (aid, tid),
-                )
-            self.conn.execute("UPDATE messages SET task_id = ? WHERE id = ?", (tid, mid))
         # Delegating an earlier message keeps its first reply (e.g. "not configured") and adds the ack.
         marker = f"reply:{mid}:delegated" if existing_message else (marker or f"reply:{mid}")
         n = len(artifact_ids)

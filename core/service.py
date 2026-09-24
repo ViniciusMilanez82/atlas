@@ -250,13 +250,8 @@ class CoreService:
             criteria=[("Resultado entregue e verificado", True)],
             conversation_id=p.get("conversation_id"),
             client_request_id=p.get("client_request_id"),
+            input_artifact_ids=p["artifact_ids"],  # same commit as the task (A3-12)
         )
-        for aid in p["artifact_ids"]:
-            with transaction(self.conn):
-                self.conn.execute(
-                    "INSERT OR IGNORE INTO artifact_links(artifact_id, task_id, relation) VALUES (?,?,'input')",
-                    (aid, tid),
-                )
         return {"task": self.tasks.get(tid)}  # the task exists before anyone says "started"
 
     def _control_stop(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
