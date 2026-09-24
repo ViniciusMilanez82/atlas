@@ -266,6 +266,7 @@ def main(argv: list[str] | None = None) -> int:
     server = UnixSocketServer(args.ipc_dir, sessions, core.service)
     core.write_session(sessions, owner_id, employee_id, server.path)
     worker = threading.Thread(target=core.worker, args=(employee_id, args.worker_interval), daemon=True)
+    core.monitor.starting()
     worker.start()
     threading.Thread(target=core.watchdog, args=(max(args.worker_interval, 1.0),), daemon=True).start()
 

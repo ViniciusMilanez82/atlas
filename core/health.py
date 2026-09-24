@@ -20,11 +20,17 @@ class WorkerMonitor:
     clock: Clock
     stale_after_s: float = 120.0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
-    _state: str = "not_started"  # not_started | running | stopped
+    _state: str = "not_started"  # not_started | starting | running | stopped
     _last_beat: datetime | None = None
     _last_error: str | None = None
     _last_error_at: datetime | None = None
     _errors: int = 0
+
+    def starting(self) -> None:
+        """The worker thread was launched but has not run its first iteration yet."""
+        with self._lock:
+            if self._state == "not_started":
+                self._state = "starting"
 
     def started(self) -> None:
         with self._lock:

@@ -190,6 +190,11 @@ def test_daemon_lifecycle_without_intelligence(dirs: tuple[Path, Path]) -> None:
         ident = d.call("identity.get")["result"]
         assert ident["name"] == "Atlas" and ident["timezone"] == "America/Sao_Paulo"
         health = d.call("system.health")["result"]
+        assert health["components"]["worker"] in ("starting", "ok")  # never "ok" before the thread runs
+        deadline = time.monotonic() + 10
+        while health["components"]["worker"] != "ok" and time.monotonic() < deadline:
+            time.sleep(0.1)
+            health = d.call("system.health")["result"]
         assert health["components"]["intelligence"] == "not_configured"
         assert health["components"]["worker"] == "ok" and health["status"] == "ok"  # real daemon has a live worker
         assert health["intelligence_reason"]  # the reason is explicit, never a fake reply
