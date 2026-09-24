@@ -46,14 +46,29 @@ from shared.ids import new_id
 from storage.db import transaction
 
 STOP_WORDS = {"pare", "pare tudo", "parar", "stop", "stop all", "pausa tudo", "pause tudo"}
+# MEMORY runs on the ORIGINAL text (accents kept, exact span removed): "lembrete" is not "lembre" (A3-13).
 _MEMORY = re.compile(
-    r"^\s*(?:por favor,?\s*)?(?:guarde|lembre-se|lembre|memorize|anote)"
-    r"(?:\s+(?:esta|essa)\s+(?:preferencia|informacao))?\s*(?:que|:|,)?\s*(?P<c>.+)$",
+    r"^\s*(?:por\s+favor,?\s*)?(?:guarde|lembre-se|lembre|memorize|anote)(?=[\s:,]|$)"
+    r"(?:\s+(?:esta|essa)\s+(?:prefer[eê]ncia|informa[cç][aã]o))?\s*(?:que\b|:|,)?\s*(?P<c>.+)$",
     re.IGNORECASE | re.DOTALL,
 )
+_WORK = r"(?:tarefa|tarefas|trabalho|trabalhos|pedido|pedidos|entrega|entregas|servico|servicos)"
+_OWN = r"(?:(?:minha|minhas|meu|meus|sua|suas|seu|seus)\s+)?"
+# STATUS runs on the normalized text and needs an explicit reference to work (A3-13): "como está o
+# tempo" or "o andamento da economia" are conversation, not task status.
 _STATUS = re.compile(
-    r"\b(status|andamento|progresso|como (?:esta|vai) (?:a|o|as|os)?\s*\w*|o que (?:voce )?(?:esta|anda) fazendo)\b",
-    re.IGNORECASE,
+    r"^(?:e\s+)?(?:(?:qual|como)\s+(?:e\s+|esta\s+|vai\s+|anda\s+)?(?:o\s+|a\s+|os\s+|as\s+)?)?"
+    r"(?:status|andamento|progresso)(?:\s+(?:da|do|das|dos|de)\s+" + _OWN + _WORK + r")?$"
+    r"|^(?:e\s+)?(?:o\s+)?que\s+(?:voce\s+)?(?:esta|anda)\s+fazendo$"
+    r"|^(?:e\s+)?como\s+(?:esta|vai|anda|estao|vao)\s+(?:o|a|os|as)\s+" + _OWN + _WORK + r"$"
+    r"|^(?:ja\s+)?terminou(?:\s+(?:o|a)\s+" + _WORK + r")?$"
+)
+_REQUEST_START = re.compile(
+    r"^(?:por favor,?\s*)?(?:me\s+ajude|ajude|escreva|faca|crie|prepare|pesquise|procure|analise|compare|"
+    r"resuma|envie|mande|monte|organize|calcule|traduza|revise|verifique|busque|gere|elabore)\b"
+)
+_STORE_ONLY = re.compile(
+    r"\b(guarde|guardar|arquive|arquivar|salve|salvar|so para voce ter|para depois|para referencia)\b"
 )
 _CORRECTION = re.compile(r"^\s*(nao era isso|na verdade|corrigindo|correcao|mudei de ideia)\b", re.IGNORECASE)
 # Conservative detector of sensitive personal data in the owner's own words (spec 9.1). A hit makes
@@ -255,21 +270,6 @@ class ConversationService:
             return None
         return self.say(row[0], kind, content, task_id=task_id, artifact_id=artifact_id)
 
-    def _pending_question(self, conversation_id: str, reply_to: str | None) -> dict[str, Any] | None:
-        if reply_to:
-            q = self.conn.execute(
-                "SELECT * FROM messages WHERE id = ? AND conversation_id = ? AND kind = 'question'",
-                (reply_to, conversation_id),
-            ).fetchone()
-            return self._message(q) if q else None
-        rows = self.conn.execute(
-            "SELECT m.* FROM messages m JOIN tasks t ON t.id = m.task_id WHERE m.conversation_id = ?"
-            " AND m.kind = 'question' AND t.state = 'WAITING_USER' AND NOT EXISTS (SELECT 1 FROM messages a"
-            " WHERE a.task_id = m.task_id AND a.kind = 'answer' AND a.rowid > m.rowid) ORDER BY m.rowid",
-            (conversation_id,),
-        ).fetchall()
-        return self._message(rows[0]) if len(rows) == 1 else None
-
     # ------------------------------------------------------------------ routing
 
     @staticmethod
@@ -344,6 +344,13 @@ class ConversationService:
                     client_message_id=key,
                     classification=classify_owner_text(p["text"]),
                 )
+                for aid in dict.fromkeys(p.get("artifact_ids", [])):  # A3-15: kept with the message
+                    art = self.conn.execute("SELECT employee_id FROM artifacts WHERE id = ?", (aid,)).fetchone()
+                    if art is None or art[0] != employee_id:
+                        raise AtlasError(ErrorCode.INVALID_INPUT, "attachment not found for this employee")
+                    self.conn.execute(
+                        "INSERT OR IGNORE INTO message_attachments(message_id, artifact_id) VALUES (?,?)", (mid, aid)
+                    )
             self.conn.execute(
                 "INSERT INTO request_receipts(employee_id, operation, request_key, payload_hash, state, message_id,"
                 " lease_expires_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
@@ -420,10 +427,13 @@ class ConversationService:
             self._active, self._decision = None, None
 
     def _route(self, actor: Actor, employee_id: str, p: dict[str, Any], mid: str) -> dict[str, Any]:
+        """Intent routing (spec 7.1). Deterministic for exact controls and explicit targets; general
+        language never lets a keyword, an attachment or a pending question decide on its own."""
         cid = p["conversation_id"]
         text: str = p["text"]
         norm = normalize(text)
         intent = p.get("intent", "auto")
+        attachments: list[str] = list(dict.fromkeys(p.get("artifact_ids", [])))
 
         # Explicit delegation of an earlier owner message (no second owner message is stored).
         if intent == "delegate" and p.get("reply_to_message_id"):
@@ -434,7 +444,7 @@ class ConversationService:
                 cid,
                 target["message_id"],
                 target["content"],
-                p.get("artifact_ids", []),
+                attachments + [a for a in self._attachments_of(mid) if a not in attachments],
                 existing_message=True,
             )
 
@@ -461,15 +471,37 @@ class ConversationService:
             reply = self.say(cid, "control", " ".join(parts), reply_marker=marker)
             return self._result(mid, reply, "control", None, paused=rep.paused_tasks)
 
-        question = None if intent == "delegate" else self._pending_question(cid, p.get("reply_to_message_id"))
-        if question is not None:
-            return self._answer(actor, mid, question, cid, marker)
+        if intent == "delegate":
+            return self._delegate(actor, employee_id, cid, mid, text, attachments, marker=marker)
 
-        m = _MEMORY.match(text) if intent != "delegate" and _MEMORY.match(norm) else None
-        if m:
+        # ANSWER_QUESTION with an explicit target (the "Responder" action): never guessed (A3-14).
+        if p.get("reply_to_message_id"):
+            q = self.conn.execute(
+                "SELECT * FROM messages WHERE id = ? AND conversation_id = ? AND kind = 'question'",
+                (p["reply_to_message_id"], cid),
+            ).fetchone()
+            if q is not None:
+                if not self._question_open(q["id"], q["task_id"]):
+                    self._set_kind(mid, "answer", q["task_id"])
+                    reply = self.say(
+                        cid,
+                        "error",
+                        "Essa pergunta já foi respondida ou a tarefa não está mais aguardando você; "
+                        "nada foi alterado.",
+                        task_id=q["task_id"],
+                        reply_marker=marker,
+                    )
+                    return self._result(mid, reply, "answer_rejected", q["task_id"])
+                return self._answer(actor, mid, self._message(q), cid, marker)
+
+        if attachments and not p.get("task_id") and _STORE_ONLY.search(norm):
+            return self._share_only(mid, cid, attachments, marker)
+
+        m = _MEMORY.match(text)
+        if m and not attachments:
             return self._remember(actor, employee_id, mid, m.group("c").strip(), cid, marker)
 
-        if intent != "delegate" and _STATUS.search(norm):
+        if _STATUS.search(norm):
             self._set_kind(mid, "status")
             return self._result(
                 mid,
@@ -478,16 +510,149 @@ class ConversationService:
                 None,
             )
 
-        if intent != "delegate" and (p.get("task_id") or _CORRECTION.match(norm)):
+        if p.get("task_id") or _CORRECTION.match(norm):
+            if attachments and p.get("task_id"):
+                return self._attach_to_task(actor, employee_id, cid, mid, text, p["task_id"], attachments, marker)
             handled = self._correct(actor, employee_id, cid, mid, text, p.get("task_id"), marker)
             if handled is not None:
                 return handled
 
-        if intent == "delegate":
-            return self._delegate(
-                actor, employee_id, cid, mid, text, p.get("artifact_ids", []), marker=marker
+        # ANSWER_QUESTION inferred only when unambiguous (A3-14): a short continuation right after the
+        # single open question. Status, memory, new requests and questions are never consumed.
+        pending = self._pending_questions(cid)
+        if pending and self._looks_like_answer(norm, text):
+            last_employee = self.conn.execute(
+                "SELECT id FROM messages WHERE conversation_id = ? AND role = 'employee' ORDER BY rowid DESC LIMIT 1",
+                (cid,),
+            ).fetchone()
+            if len(pending) == 1 and (
+                (last_employee is not None and last_employee[0] == pending[0]["message_id"])
+                or self._names_an_option(norm, pending[0]["content"])
+            ):
+                return self._answer(actor, mid, pending[0], cid, marker)
+            self._set_kind(mid, "answer")
+            titles = "\n".join(f"• {q['objective'][:80]}: «{q['content'][:80]}»" for q in pending[:5])
+            reply = self.say(
+                cid,
+                "question",
+                "Você está respondendo a qual pergunta? Não retomei nenhuma tarefa ainda.\n"
+                + titles
+                + "\nUse «Responder» na pergunta certa.",
+                reply_marker=marker,
             )
-        return self._chat(actor, employee_id, cid, mid, text, p.get("artifact_ids", []), marker)
+            return self._result(mid, reply, "answer_ambiguous", None)
+
+        return self._chat(actor, employee_id, cid, mid, text, attachments, marker)
+
+    def _attachments_of(self, mid: str) -> list[str]:
+        return [
+            r[0]
+            for r in self.conn.execute(
+                "SELECT artifact_id FROM message_attachments WHERE message_id = ? ORDER BY rowid", (mid,)
+            )
+        ]
+
+    def _question_open(self, question_id: str, task_id: str | None) -> bool:
+        if task_id is None:
+            return False
+        task = self.conn.execute("SELECT state FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        answered = self.conn.execute(
+            "SELECT 1 FROM messages a JOIN messages q ON q.id = ? WHERE a.task_id = q.task_id AND a.kind = 'answer'"
+            " AND a.role = 'owner' AND a.rowid > q.rowid",
+            (question_id,),
+        ).fetchone()
+        return task is not None and task[0] == "WAITING_USER" and answered is None
+
+    def _pending_questions(self, cid: str) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT m.*, t.objective FROM messages m JOIN tasks t ON t.id = m.task_id WHERE m.conversation_id = ?"
+            " AND m.kind = 'question' AND t.state = 'WAITING_USER' AND NOT EXISTS (SELECT 1 FROM messages a"
+            " WHERE a.task_id = m.task_id AND a.kind = 'answer' AND a.role = 'owner' AND a.rowid > m.rowid)"
+            " ORDER BY m.rowid",
+            (cid,),
+        ).fetchall()
+        return [{**self._message(r), "objective": r["objective"]} for r in rows]
+
+    @staticmethod
+    def _names_an_option(norm: str, question: str) -> bool:
+        """The short reply repeats a significant word of the question (e.g. "planilha" for "PDF ou
+        planilha?"), which makes the continuation unambiguous even after other exchanges."""
+        asked = set(normalize(question).replace("?", " ").replace(":", " ").replace(",", " ").split())
+        return any(len(w) >= 3 and w in asked for w in norm.split())
+
+    @staticmethod
+    def _looks_like_answer(norm: str, text: str) -> bool:
+        words = norm.split()
+        return (
+            0 < len(words) <= 12
+            and len(text) <= 120
+            and not text.rstrip().endswith("?")
+            and not _REQUEST_START.match(norm)
+            and not _MEMORY.match(text)
+        )
+
+    def _share_only(self, mid: str, cid: str, attachments: list[str], marker: str) -> dict[str, Any]:
+        """SHARE_ONLY (A3-15): keep the files with the message; no task, no analysis, nothing sent."""
+        names = [
+            str(self.conn.execute("SELECT name FROM artifacts WHERE id = ?", (aid,)).fetchone()[0])
+            for aid in attachments
+        ]
+        reply = self.say(
+            cid,
+            "ack",
+            f"Guardei {len(attachments)} arquivo(s): {', '.join(names)[:300]}. Não criei tarefa; quando quiser "
+            "que eu trabalhe neles, é só pedir.",
+            reply_marker=marker,
+        )
+        return self._result(mid, reply, "share_only", None)
+
+    def _attach_to_task(
+        self,
+        actor: Actor,
+        employee_id: str,
+        cid: str,
+        mid: str,
+        text: str,
+        task_id: str,
+        attachments: list[str],
+        marker: str,
+    ) -> dict[str, Any]:
+        """ATTACH_TO_TASK (A3-15): the files become inputs of THAT task and a new instruction revision."""
+        row = self.conn.execute(
+            "SELECT objective, employee_id, state FROM tasks WHERE id = ?", (task_id,)
+        ).fetchone()
+        if row is None or row["employee_id"] != employee_id:
+            raise AtlasError(ErrorCode.INVALID_INPUT, "task not found for this employee")
+        prior = self.conn.execute(
+            "SELECT revision FROM task_instruction_versions WHERE task_id = ? AND source_message_id = ?",
+            (task_id, mid),
+        ).fetchone()
+        if prior is None:
+            with transaction(self.conn):
+                for aid in attachments:
+                    self.conn.execute(
+                        "INSERT OR IGNORE INTO artifact_links(artifact_id, task_id, relation) VALUES (?,?,'input')",
+                        (aid, task_id),
+                    )
+            rev = self.tasks.update_instruction(
+                task_id,
+                actor=actor,
+                text=f"{text}\n[anexos: {', '.join(attachments)}]",
+                kind="ATTACHMENT",
+                source_message_id=mid,
+            )
+        else:
+            rev = int(prior[0])
+        self._set_kind(mid, "correction", task_id)
+        reply = self.say(
+            cid,
+            "ack",
+            f"Anexei {len(attachments)} arquivo(s) à tarefa «{row['objective'][:120]}» (revisão {rev} das "
+            "instruções). O próximo passo já considera esse material.",
+            task_id=task_id,
+            reply_marker=marker,
+        )
+        return self._result(mid, reply, "attach_to_task", task_id, instruction_revision=rev)
 
     # ------------------------------------------------------------------ intents
 
@@ -791,10 +956,11 @@ class ConversationService:
         status = self.intelligence.status() if self.intelligence else None
         if status is None or not status.configured:
             reason = status.reason if status else "inteligência não carregada"
+            kept = f"Recebi e guardei {len(artifact_ids)} arquivo(s). " if artifact_ids else ""
             reply = self.say(
                 cid,
                 "error",
-                "Ainda não consigo conversar livremente: " + reason + ". Se quiser que eu "
+                kept + "Ainda não consigo conversar livremente: " + reason + ". Se quiser que eu "
                 "trabalhe nisso, use «Delegar como tarefa».",
                 reply_marker=marker,
             )
