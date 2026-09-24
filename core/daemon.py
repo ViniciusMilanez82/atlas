@@ -38,7 +38,7 @@ from runtime.tools.builtin import BUILTIN_MANIFESTS, BuiltinTools
 from runtime.tools.registry import ToolRegistry
 from runtime.verification.verifier import DeliverableSpec, Verifier
 from security.broker.broker import Broker
-from security.budget.budget import BudgetLimits, BudgetManager
+from security.budget.budget import BudgetManager
 from security.policy.engine import PolicyEngine
 from security.vault.vault import Vault, VaultBackend, VaultUnavailable, platform_backend
 from shared.actors import Actor
@@ -79,14 +79,12 @@ class Core:
         BuiltinTools(self.db_path, self.store_root, self.clock).register(registry, enabled_by=SUPERVISOR)
         vault = Vault(conn, self.vault_backend, self.clock) if self.vault_backend else None
         intel = IntelligenceSetup(conn, self.clock, vault, self.base_url)
-        cfg = intel.latest_config()
-        limits = BudgetLimits.from_config(cfg) if cfg else BudgetLimits("USD", None, None)
         broker = Broker(
             conn,
             self.clock,
             registry=registry,
             policy=PolicyEngine(),
-            budget=BudgetManager(conn, self.clock, limits),
+            budget=BudgetManager.live(conn, self.clock),  # current revision in every reservation (A3-19)
             vault=vault,
         )
         return conn, broker, intel, ArtifactManager(conn, self.clock, self.store_root)

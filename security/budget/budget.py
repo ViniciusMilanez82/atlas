@@ -12,6 +12,7 @@ Estimate, reported cost and reconciliation are kept separate: ``amount_minor`` i
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass, field
 from typing import Any
@@ -72,10 +73,45 @@ def period_key(clock: Clock) -> str:
 
 
 class BudgetManager:
-    def __init__(self, conn: sqlite3.Connection, clock: Clock, limits: BudgetLimits) -> None:
+    """``live`` managers read the settings revision in force inside every reservation transaction
+    (A3-19, spec 12.1): a client or broker built before the owner lowered a ceiling cannot keep spending
+    under the old one. ``cap_minor`` further bounds the per-task ceiling (e.g. one intelligence check)."""
+
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        clock: Clock,
+        limits: BudgetLimits,
+        *,
+        live_settings: bool = False,
+        cap_minor: int | None = None,
+    ) -> None:
         self.conn = conn
         self.clock = clock
-        self.limits = limits
+        self._snapshot = limits
+        self.live_settings = live_settings
+        self.cap_minor = cap_minor
+
+    @classmethod
+    def live(cls, conn: sqlite3.Connection, clock: Clock, *, cap_minor: int | None = None) -> BudgetManager:
+        return cls(conn, clock, BudgetLimits("USD", None, None), live_settings=True, cap_minor=cap_minor)
+
+    @property
+    def limits(self) -> BudgetLimits:
+        base = self._snapshot
+        if self.live_settings:
+            row = self.conn.execute(
+                "SELECT config_json FROM settings ORDER BY revision DESC LIMIT 1"
+            ).fetchone()
+            base = BudgetLimits.from_config(json.loads(row[0])) if row else BudgetLimits("USD", None, None)
+        if self.cap_minor is not None and base.per_task_limit_minor is not None:
+            base = BudgetLimits(
+                base.currency,
+                base.monthly_limit_minor,
+                min(base.per_task_limit_minor, self.cap_minor),
+                base.warning_percentages,
+            )
+        return base
 
     def _committed(self, scope: str, key: str) -> int:
         """Reserved + settled amount for a task or for a period (inference and paid tools only)."""
@@ -104,7 +140,7 @@ class BudgetManager:
             ):
                 raise BudgetError("PURCHASE_ABOVE_APPROVED_CEILING", "purchase exceeds the approved amount")
         else:
-            lim = self.limits
+            lim = self.limits  # read inside this transaction: the revision in force right now
             if lim.monthly_limit_minor is None or lim.per_task_limit_minor is None:
                 raise BudgetError(
                     "NOT_CONFIGURED", "paid calls are blocked until the owner sets budget limits"

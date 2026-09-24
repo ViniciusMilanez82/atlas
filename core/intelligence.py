@@ -12,6 +12,8 @@ ceiling included), one check at a time.
 
 from __future__ import annotations
 
+import fnmatch
+import hashlib
 import json
 import sqlite3
 import threading
@@ -24,7 +26,7 @@ from runtime.models.openai_responses import DEFAULT_BASE_URL, OpenAIResponsesPro
 from runtime.models.pricing import SPEC_REFERENCE_TABLE, PriceTable
 from runtime.models.router import BudgetedModelClient, CatalogEntry, Consent, ModelRouter, Requirements
 from runtime.models.types import Message, ModelCapabilities, ModelRequest, ProviderCallError, Role
-from security.budget.budget import BudgetError, BudgetLimits, BudgetManager
+from security.budget.budget import BudgetError, BudgetManager
 from security.vault.vault import SecretValue, Vault, VaultError
 from shared.actors import Actor
 from shared.clock import Clock, to_utc_str
@@ -35,6 +37,8 @@ from storage.db import transaction
 
 PURPOSE = "model_inference"
 CAPS = ModelCapabilities(structured_output=True)
+# Part of the validation binding (A3-29): changing what Atlas relies on requires a new check.
+CAPABILITY_VERSION = "caps-" + hashlib.sha256(repr(CAPS).encode()).hexdigest()[:12]
 _CHECK_LOCK = threading.Lock()
 
 
@@ -144,13 +148,15 @@ class IntelligenceSetup:
         _, model = pre
         row = self.conn.execute(
             "SELECT passed FROM intelligence_validations WHERE provider = 'openai' AND model_id = ?"
+            " AND credential_ref = ? AND endpoint = ? AND capability_version = ?"
             " ORDER BY checked_at DESC, rowid DESC LIMIT 1",
-            (model,),
+            (model, self._credential_ref(), self.destination, CAPABILITY_VERSION),
         ).fetchone()
         if not row or not row[0]:
             return IntelligenceStatus(
                 False,
-                f"model {model} was not validated by 'Testar inteligência'",
+                f"model {model} was not validated for the current credential and endpoint by "
+                "'Testar inteligência'",
                 model,
                 self.prices.version,
                 self.prices.verified,
@@ -169,22 +175,14 @@ class IntelligenceSetup:
             mode="manual",
             manual_model=model,
         )
-        limits = BudgetLimits.from_config(cfg)
-        if per_call_cap is not None:
-            assert limits.per_task_limit_minor is not None
-            limits = BudgetLimits(
-                limits.currency,
-                limits.monthly_limit_minor,
-                min(limits.per_task_limit_minor, per_call_cap),
-                limits.warning_percentages,
-            )
+        del cfg  # ceilings are read live inside each reservation, never from this snapshot (A3-19)
         return BudgetedModelClient(
             self.conn,
             self.clock,
             router,
             {"openai": provider},
             self.prices,
-            BudgetManager(self.conn, self.clock, limits),
+            BudgetManager.live(self.conn, self.clock, cap_minor=per_call_cap),
         )
 
     def build_client(self) -> BudgetedModelClient:
@@ -201,6 +199,14 @@ class IntelligenceSetup:
         if self.vault is None:
             raise AtlasError(ErrorCode.UNAUTHORIZED, "credential store (Keychain service) is not available")
         try:
+            # A new key REPLACES the previous one for this endpoint (A3-29): the old reference is revoked
+            # first, so a validation made with the old key can never vouch for the new one.
+            for row in self.conn.execute(
+                "SELECT id FROM credential_refs WHERE purpose = ? AND revoked_at IS NULL", (PURPOSE,)
+            ).fetchall():
+                ref_old = self.vault.get_ref(row[0])
+                if any(fnmatch.fnmatchcase(self.destination, pat) for pat in ref_old.allowed_destinations):
+                    self.vault.revoke(ref_old.id, actor, employee_id)
             ref = self.vault.register(
                 actor=actor,
                 employee_id=employee_id,
@@ -290,7 +296,8 @@ class IntelligenceSetup:
         with transaction(self.conn):
             self.conn.execute(
                 "INSERT INTO intelligence_validations(id, provider, model_id, passed, report_json, cost_minor, currency,"
-                " checked_at, checked_by) VALUES (?,?,?,?,?,?,?,?,?)",
+                " checked_at, checked_by, credential_ref, endpoint, capability_version)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     new_id(),
                     "openai",
@@ -301,6 +308,9 @@ class IntelligenceSetup:
                     report.currency,
                     to_utc_str(self.clock.now()),
                     f"{actor.kind}:{actor.id}",
+                    self._credential_ref(),
+                    self.destination,
+                    CAPABILITY_VERSION,
                 ),
             )
             journal.append(
