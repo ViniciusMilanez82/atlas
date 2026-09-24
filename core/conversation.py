@@ -403,7 +403,19 @@ class ConversationService:
             "RETRYING": "nova tentativa agendada",
             "VERIFYING": "verificando o resultado",
         }
-        lines = [f"• {r[0][:80]} — {labels.get(r[1], r[1])}" + (f" ({r[2]})" if r[2] else "") for r in rows]
+        reasons = {
+            "EXTERNAL_EFFECT_UNKNOWN": "resultado de uma ação incerto",
+            "BUDGET_EXCEEDED": "orçamento esgotado",
+            "PROVIDER_UNAVAILABLE": "serviço de inteligência indisponível",
+            "WORKSPACE_OFFLINE": "ambiente de trabalho indisponível",
+            "HUMAN_INTERVENTION_REQUIRED": "precisa de você",
+            "RETRY_LIMIT": "tentativas esgotadas",
+            "NO_PROGRESS": "sem progresso",
+        }
+        lines = [
+            f"• {r[0][:80]} — {labels.get(r[1], r[1])}" + (f" ({reasons.get(r[2], r[2])})" if r[2] else "")
+            for r in rows
+        ]
         return "Trabalho em andamento:\n" + "\n".join(lines) + f"\nConcluídas: {done}."
 
     def _answer(
