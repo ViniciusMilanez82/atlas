@@ -18,11 +18,11 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 | UX-001 | Instalação gráfica assinada e notarizada, sem toolchain manual | M16 | `packaging/` | GA-16 | NÃO EXECUTADO (D-01, D-07) |
 | UX-002 | Identidade com employee_id estável; estilo não altera permissões | M4 | tabela `employees` | teste de schema M2 | PARCIAL |
 | UX-003 | Diagnóstico de arquitetura, macOS, memória, disco, virtualização | M4 | Supervisor | — | NÃO EXECUTADO (D-01) |
-| UX-004 | Modo de inteligência real; aviso de cobrança da API | M4/M6 | onboarding | — | PLANEJADO |
+| UX-004 | Modo de inteligência real; aviso de cobrança da API | M4/M6 | `core/intelligence.py`; Configurações do app | `tests/integration/test_alpha2.py` (preço não verificado bloqueia; teste no ledger global) | PARCIAL (chamada real: D-03; tela: D-01) |
 | UX-005 | Perfil seguro; compras sem autorização; teto com moeda e período | M3/M6 | config + budget | `test_config_cannot_widen_security`, `test_budget.py` | PARCIAL |
 | UX-006 | Canal do proprietário verificado; pareamento local | M14 | — | GA-13 | PLANEJADO |
 | REQ-3-1 | Oito telas obrigatórias (3.2) | M4 | `apps/macos` | — | NÃO EXECUTADO (D-01) |
-| REQ-3-2 | Tarefa criada antes de afirmar que começou; status gerado de eventos | M5/M10 | journal + TaskEngine | — | OK no núcleo (`core/service.py`, `tests/integration/test_ipc.py`); UI: M4 |
+| REQ-3-2 | Tarefa criada antes de afirmar que começou; status gerado de eventos | M5/M10 | journal + TaskEngine; `core/conversation.py` | `tests/integration/test_ipc.py`, `tests/integration/test_alpha2.py` | OK no núcleo; UI compilada, não validada interativamente (D-01) |
 | REQ-3-3 | Fechar janela, pausar e encerrar são operações distintas | M4/M5 | TaskEngine + Supervisor | parcial em `test_task_engine.py` | PARCIAL |
 
 ## Arquitetura, ciclo de vida e isolamento (cap. 4–5)
@@ -158,3 +158,17 @@ EXTERNAL_DEPENDENCIES) · `DIRETRIZ` regra de processo verificada por revisão.
 | GA-14 | Mac indisponível | M14 | PLANEJADO |
 | GA-15 | Backup e exclusão | M2, M7 | PARCIAL (backup/restore e exclusão de memória OK; artefatos: M8) |
 | GA-16 | Instalação limpa | M16 | NÃO EXECUTADO (D-01, D-07) |
+
+## Alpha 2 — correções da revisão 2a7fd85
+
+| Achado | Requisito | Implementação | Teste | Estado |
+| --- | --- | --- | --- | --- |
+| A1 | Configurações salvas várias vezes, reabertas e em dois clientes | `settings.get`; revisão lida do núcleo | `test_alpha2.py` (três salvamentos, reabrir, concorrência, erro recuperável); `ViewModelTests` | OK no núcleo; Swift: CI macOS |
+| A2 | Conversa bidirecional persistente; sem tarefa por mensagem | `core/conversation.py`; `conversations.current/history` | `test_alpha2.py` (saudação, delegação idempotente, pergunta/resposta, status, correção, memória, paginação) | OK no núcleo; UI: D-01 |
+| A3 | UI sem I/O de socket no MainActor; reconexão após crash | `AtlasConnection`, `IPCClient` com prazo e correlação | `ConnectionTests` (reconexão, prazo, mutação não repetida, sessão expirada, correlação) | CI macOS; interação: D-01 |
+| A4 | Anexos: cópia explícita, validação, prévia segura, salvar com hash | `artifacts.upload/import/read`; `Preview`, `export` | `test_alpha2.py` (dois anexos → tarefa → leitura com hash); `ViewModelTests` | OK no núcleo; UI: D-01 |
+| A5 | Catálogo de ferramentas a partir de manifestos confiáveis; validação antes do broker | `runtime/agent/loop.py` | `test_agent_catalog_resume.py` (indisponível, esquema, escalada, injeção) | OK |
+| A6 | Provedor real | adaptador OpenAI Responses | `test_models.py` opt-in | BLOQUEADO (D-03) |
+| A7 | Retomada a partir do estado operacional; retries e agenda no worker | `_resume_state`, `step_observations`, worker | `test_agent_catalog_resume.py` (pergunta → resposta → retomada sem reler; passo interrompido) | OK |
+| A8 | Validação de modelo separada de preço; teste no ledger global | `core/intelligence.py`; `inference_attempts.purpose` | `test_alpha2.py` (preço não verificado, teto mensal, testes concorrentes) | OK |
+
