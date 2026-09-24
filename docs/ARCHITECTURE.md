@@ -45,9 +45,11 @@ para o navegador pessoal (spec 5.2, 5.4).
 | `runtime/tasks/limits.py`, `scheduler.py` | Limites de tentativa, backoff, circuit breaker, jobs com fuso | Implementado (M5) |
 | `runtime/memory/manager.py` | Memória com proveniência, correção, exclusão, FTS5 reconstruível | Implementado (M7, sem índice semântico) |
 | `runtime/models/` | Contratos de modelo, preços, roteador, cliente com orçamento, ContextBuilder | Implementado sem adaptador real (D-03) |
-| `runtime/{agent,verification}` | Planner, verificadores | M10, M11: não iniciado |
-| `platform/{macos,workspace,execution}` | Swift, VM, Execution Box | Requer Mac, não iniciado |
-| `apps/macos`, `apps/companion-web` | Interfaces | Não iniciado |
+| `runtime/{agent,verification}` | Laço do agente (catálogo de manifestos, validação antes do broker, retomada), verificador objetivo | Implementado com modelo falso; modelo real: D-03 |
+| `core/` | Daemon atlas-core, IPC autenticado, serviço, conversa (`conversation.py`), inteligência | Implementado |
+| `platform/macos/AtlasKit` | Framing, `IPCClient` com prazo e correlação, `AtlasConnection` (assíncrona, reconexão), `AtlasViewModel`, Supervisor, Keychain, app SwiftUI | Compilado e testado no CI macOS 15; interação: D-01 |
+| `platform/{workspace,execution}` | VM, Execution Box | Requer Mac com virtualização, não iniciado |
+| `apps/companion-web` | Interface remota | Não iniciado |
 | `config/atlas.default.yaml` | Configuração de referência (spec 7.5) | Implementado, validado |
 | `scripts/` | `check.py`, `scan_secrets.py` | Implementado |
 | `tests/` | unit, contract, integration, security, recovery | Em uso |

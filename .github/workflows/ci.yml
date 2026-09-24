@@ -47,3 +47,29 @@ jobs:
           name: Atlas-dev-app
           path: ${{ runner.temp }}/dist/Atlas-dev.zip
           retention-days: 14
+  app-evidence:
+    # Clean runner: builds the app and records what a first launch really shows. No test suite runs
+    # before, so any system prompt here comes from the app itself. Evidence only - not interactive use.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build development Atlas.app
+        run: packaging/macos/build_app.sh "$RUNNER_TEMP/dist"
+      - name: Open the built app on the runner and capture the real window (evidence only; not interactive validation)
+        continue-on-error: true
+        run: |
+          open "$RUNNER_TEMP/dist/Atlas.app"
+          sleep 30
+          screencapture -x "$RUNNER_TEMP/atlas-window.png"
+          echo "--- network sockets held by the app's processes (expected: none)"
+          for pid in $(pgrep -f "Atlas.app/Contents"); do ps -o pid=,command= -p "$pid"; lsof -nP -a -i -p "$pid" || true; done
+          osascript -e 'tell application "Atlas" to quit' || true
+          sleep 5
+          pgrep -fl "Atlas.app" || echo "app and services stopped"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Atlas-runner-screenshot
+          path: ${{ runner.temp }}/atlas-window.png
+          if-no-files-found: warn
+          retention-days: 14

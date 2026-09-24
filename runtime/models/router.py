@@ -137,6 +137,15 @@ class ModelRouter:
         return self.consent.cross_provider_fallback and candidate.provider in self.consent.providers_allowed
 
 
+@dataclass(frozen=True)
+class CallScope:
+    """Who a billable call is for: a task, or an employee-level purpose (conversation, check)."""
+
+    task_id: str | None
+    employee_id: str | None
+    purpose: str = "task"
+
+
 class BudgetedModelClient:
     """Reserve, record the attempt, call, then settle by confirmed usage (spec 7.4; finding R-04).
 
@@ -173,16 +182,20 @@ class BudgetedModelClient:
 
     # ---------------------------------------------------------------- attempt bookkeeping
 
-    def _open_attempt(self, task_id: str, entry: CatalogEntry, amount: Money) -> tuple[str, str]:
+    def _open_attempt(self, scope: CallScope, entry: CatalogEntry, amount: Money) -> tuple[str, str]:
         with transaction(self.conn):
-            reservation = self.budget.reserve_in_txn(task_id=task_id, category="inference", amount=amount)
+            reservation = self.budget.reserve_in_txn(
+                task_id=scope.task_id, category="inference", amount=amount
+            )
             attempt_id = new_id()
             self.conn.execute(
-                "INSERT INTO inference_attempts(id, task_id, reservation_id, provider, model_id, status, created_at)"
-                " VALUES (?,?,?,?,?,'IN_FLIGHT',?)",
+                "INSERT INTO inference_attempts(id, task_id, employee_id, purpose, reservation_id, provider, model_id,"
+                " status, created_at) VALUES (?,?,?,?,?,?,?,'IN_FLIGHT',?)",
                 (
                     attempt_id,
-                    task_id,
+                    scope.task_id,
+                    scope.employee_id,
+                    scope.purpose,
                     reservation.id,
                     entry.provider,
                     entry.model_id,
@@ -200,30 +213,45 @@ class BudgetedModelClient:
             (status, diagnostic[:500], request_id, to_utc_str(self.clock.now()), attempt_id),
         )
 
-    def _journal(self, task_id: str, type_: str, summary: str) -> None:
-        emp = self.conn.execute("SELECT employee_id FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    def _journal(self, scope: CallScope, type_: str, summary: str) -> None:
+        employee_id = scope.employee_id
+        if employee_id is None:
+            employee_id = self.conn.execute(
+                "SELECT employee_id FROM tasks WHERE id = ?", (scope.task_id,)
+            ).fetchone()[0]
         journal.append(
             self.conn,
             self.clock,
-            employee_id=emp[0],
-            task_id=task_id,
+            employee_id=employee_id,
+            task_id=scope.task_id,
             type=type_,
             actor=Actor("control_plane", "model-client", "internal"),
             summary=summary,
         )
 
-    def _mark_unknown(self, task_id: str, attempt_id: str, why: str) -> None:
+    def _mark_unknown(self, scope: CallScope, attempt_id: str, why: str) -> None:
         with transaction(self.conn):
             self._close_in_txn(attempt_id, "UNKNOWN", why)
             self._journal(
-                task_id,
+                scope,
                 "inference.billing_unknown",
                 f"attempt {attempt_id}: {why}; reservation held for reconciliation",
             )
 
     # ---------------------------------------------------------------- call
 
-    def call(self, *, task_id: str, req: Requirements, request: ModelRequest) -> ModelResponse:
+    def call(
+        self,
+        *,
+        task_id: str | None,
+        req: Requirements,
+        request: ModelRequest,
+        employee_id: str | None = None,
+        purpose: str = "task",
+    ) -> ModelResponse:
+        if task_id is None and employee_id is None:
+            raise AtlasError(ErrorCode.INVALID_INPUT, "a model call needs a task or an employee scope")
+        scope = CallScope(task_id, employee_id, purpose)
         tried: set[str] = set()
         primary: CatalogEntry | None = None
         last_error: AtlasError | None = None
@@ -256,7 +284,7 @@ class BudgetedModelClient:
             estimate = provider.estimate_usage(call_req)
             reserve_amount = price.max_cost(estimate.input_tokens, call_req.max_output_tokens)
             attempt_id, reservation_id = self._open_attempt(
-                task_id, entry, reserve_amount
+                scope, entry, reserve_amount
             )  # BudgetError propagates
 
             try:
@@ -268,7 +296,7 @@ class BudgetedModelClient:
                         self.budget.release_in_txn(reservation_id)
                         self._close_in_txn(attempt_id, "RELEASED", f"not sent: {exc}")
                 else:
-                    self._mark_unknown(task_id, attempt_id, f"{exc.kind}: {exc} (sent={exc.sent})")
+                    self._mark_unknown(scope, attempt_id, f"{exc.kind}: {exc} (sent={exc.sent})")
                 if exc.kind == ProviderErrorKind.CANCELLED:
                     raise AtlasError(
                         ErrorCode.PROVIDER_UNAVAILABLE,
@@ -278,7 +306,7 @@ class BudgetedModelClient:
                 last_error = AtlasError(ErrorCode.PROVIDER_UNAVAILABLE, str(exc))
                 continue
             except Exception as exc:  # unexpected adapter bug: cannot know if it was sent
-                self._mark_unknown(task_id, attempt_id, f"adapter raised {type(exc).__name__}")
+                self._mark_unknown(scope, attempt_id, f"adapter raised {type(exc).__name__}")
                 raise AtlasError(
                     ErrorCode.PROVIDER_UNAVAILABLE,
                     f"model adapter failed: {type(exc).__name__}",
@@ -302,7 +330,7 @@ class BudgetedModelClient:
                             attempt_id, "UNKNOWN", f"{kind}: billing {billing}", response.request_id
                         )
                         self._journal(
-                            task_id,
+                            scope,
                             "inference.billing_unknown",
                             f"attempt {attempt_id}: {kind}; reservation held for reconciliation",
                         )
@@ -333,7 +361,7 @@ class BudgetedModelClient:
                     status, diag = "SETTLED", "usage reported"
                     if cost.amount_minor > reserve_amount.amount_minor:
                         diag = f"cost {cost.amount_minor} exceeded reservation {reserve_amount.amount_minor}"
-                        self._journal(task_id, "budget.overrun", f"attempt {attempt_id}: {diag}")
+                        self._journal(scope, "budget.overrun", f"attempt {attempt_id}: {diag}")
                 else:
                     usage = estimate
                     cost = reserve_amount
@@ -341,7 +369,7 @@ class BudgetedModelClient:
                 self.budget.settle_in_txn(reservation_id, cost)
                 self._close_in_txn(attempt_id, status, diag, response.request_id)
                 self._record_usage(
-                    task_id,
+                    scope.task_id,
                     entry,
                     response,
                     usage,
@@ -367,10 +395,14 @@ class BudgetedModelClient:
     def recover_attempts(self) -> list[str]:
         """After a restart, IN_FLIGHT attempts cannot be known: mark them UNKNOWN (reservation held)."""
         rows = self.conn.execute(
-            "SELECT id, task_id FROM inference_attempts WHERE status = 'IN_FLIGHT'"
+            "SELECT id, task_id, employee_id, purpose FROM inference_attempts WHERE status = 'IN_FLIGHT'"
         ).fetchall()
         for r in rows:
-            self._mark_unknown(r["task_id"], r["id"], "interrupted before the outcome was committed")
+            self._mark_unknown(
+                CallScope(r["task_id"], r["employee_id"], r["purpose"]),
+                r["id"],
+                "interrupted before the outcome was committed",
+            )
         return [r["id"] for r in rows]
 
     def resolve_attempt(self, attempt_id: str, *, actor: Actor, charged: Money | None, evidence: str) -> str:
@@ -398,7 +430,7 @@ class BudgetedModelClient:
                 )
             self._close_in_txn(attempt_id, "RESOLVED", f"resolved by {actor.kind}: {evidence}")
             self._journal(
-                row["task_id"],
+                CallScope(row["task_id"], row["employee_id"], row["purpose"]),
                 "inference.reconciled",
                 f"attempt {attempt_id} resolved: {'charged' if charged else 'no charge'}",
             )
@@ -410,7 +442,8 @@ class BudgetedModelClient:
         cutoff = self.clock.now() - self.unknown_retention
         expired = []
         for r in self.conn.execute(
-            "SELECT a.id, a.task_id, a.reservation_id, a.created_at, b.amount_minor, b.currency"
+            "SELECT a.id, a.task_id, a.employee_id, a.purpose, a.reservation_id, a.created_at, b.amount_minor,"
+            " b.currency"
             " FROM inference_attempts a JOIN budget_reservations b ON b.id = a.reservation_id"
             " WHERE a.status = 'UNKNOWN'"
         ).fetchall():
@@ -424,7 +457,7 @@ class BudgetedModelClient:
                     f"retention window {self.unknown_retention} elapsed: settled at reserved maximum",
                 )
                 self._journal(
-                    r["task_id"],
+                    CallScope(r["task_id"], r["employee_id"], r["purpose"]),
                     "inference.reconciled",
                     f"attempt {r['id']} settled conservatively after retention window",
                 )
@@ -433,7 +466,7 @@ class BudgetedModelClient:
 
     def _record_usage(
         self,
-        task_id: str,
+        task_id: str | None,
         entry: CatalogEntry,
         resp: ModelResponse,
         usage: Usage,

@@ -90,3 +90,17 @@ Estados: `FEITO` (testes executados e aprovados), `EM CURSO`, `A FAZER`, `BLOQUE
 | E4d | Criptografia de backups (AES-256-GCM) | FEITO; criptografia do banco em uso segue pendente (D-09) |
 | E5a | Daemon atlas-core + worker + métodos do app | FEITO; fluxo Alpha com Keychain real e modelo falso aprovado no CI macOS |
 | E4e | Workspace Linux ARM64 (Virtualization.framework), guest agent, rede mediada | BLOQUEADO (D-01: runner de CI não substitui Mac com virtualização) |
+
+## Revisão Alpha 1 (2a7fd85) — correções Alpha 2 (branch `impl/alpha2`)
+
+| ID | Tarefa | Classificação | Estado |
+| --- | --- | --- | --- |
+| A1 | Segundo salvamento das configurações falhava (revisão fixa em 0) | reproduzido | FEITO: `settings.get`, revisão lida do núcleo, testes de três salvamentos, reabertura e concorrência |
+| A2 | Conversa unidirecional; cada frase virava tarefa | reproduzido | FEITO no núcleo e no app; validação interativa: D-01 |
+| A3 | I/O de socket no MainActor; sem reconexão na mesma janela | reproduzido | FEITO: `AtlasConnection`; testes com servidor falso e com processos reais no CI |
+| A4 | Sem anexos reais no app | reproduzido | FEITO: upload em partes, importação validada, prévia só texto, salvar com hash |
+| A5 | Modelo via só nomes de ferramentas; entrada não validada antes do broker | reproduzido | FEITO |
+| A6 | Nenhuma chamada a modelo real | não aplicável sem D-03 | BLOQUEADO (D-03) |
+| A7 | Retomada recomeçava o plano; retries e agenda fora do worker | reproduzido | FEITO |
+| A8 | "Testar inteligência" fora do ledger global; preço não verificado tratado como teto | reproduzido | FEITO |
+| A9 | Cenário visual de 10 passos no Mac | bloqueado | BLOQUEADO (D-01): sem screenshots de mock |

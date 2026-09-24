@@ -6,7 +6,7 @@ em tudo que não está bloqueado.
 | # | Dependência | Quem provê | Bloqueia | Estado |
 | --- | --- | --- | --- | --- |
 | D-01 | **Mac Apple Silicon de desenvolvimento** com macOS 15+, 16 GB (32 GB preferível), Xcode instalado, acesso remoto ou local para a IA | Proprietário | M1, M4, M13, M16, M17; AT-003, AT-004, AT-009; Vault de produção (Keychain) | **Pendente** — host atual é Windows x86_64 |
-| D-02 | Modelo exato do Mac de testes e versão do macOS | Proprietário | Matriz de suporte, metas de memória (spec 4.1) | Pendente |
+| D-02 | Modelo exato do Mac de testes e versão do macOS | Proprietário | Matriz de suporte, metas de memória (spec 4.1) | Pendente. Até lá, só macOS 15 (runner de CI) é homologado; o pacote declara 15.0 como mínimo |
 | D-03 | Conta de API OpenAI com orçamento autorizado (teto mensal e por tarefa, em moeda definida) | Proprietário | M6 (chamada real), validação dos IDs gpt-6-sol/astra/luna | Pendente |
 | D-04 | Consentimento e conta Anthropic, se o segundo provedor for desejado | Proprietário | Adaptador Anthropic, fallback entre provedores | Opcional, pendente |
 | D-05 | Conta de e-mail operacional dedicada ao Atlas (sob controle do proprietário) | Proprietário | Canal de entrega por e-mail (M14) | Pendente |

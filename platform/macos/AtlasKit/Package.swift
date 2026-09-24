@@ -5,6 +5,7 @@ import PackageDescription
 
 let package = Package(
     name: "AtlasKit",
+    // Compile floor only. Homologated on macOS 15 (CI runner) - the bundle declares 15.0 as minimum.
     platforms: [.macOS(.v13)],
     products: [
         .library(name: "AtlasKit", targets: ["AtlasKit"]),

@@ -1,24 +1,30 @@
-"""Intelligence setup for atlas-core (spec 7.2-7.4, UX-004).
+"""Intelligence setup for atlas-core (spec 7.2-7.4, UX-004; review A8).
 
-The model is usable only when ALL of these hold, and the reason for any gap is reported verbatim to
-the app: a credential exists in the Vault (Keychain on macOS), settings with budget ceilings were
-saved, the configured provider is supported, and the exact model id passed an owner-authorized
-"Testar inteligência". Nothing here falls back to another provider or to a guessed model.
+The model is usable only when ALL of these hold, and the reason for any gap is reported verbatim:
+a credential exists in the Vault (Keychain on macOS); settings with budget ceilings were saved;
+the provider is supported; prices are either verified OR the owner explicitly accepted the reference
+table as an ESTIMATE (never shown as a homologated ceiling); and the exact model id passed an
+owner-authorized "Testar inteligência". Model access and price validity are separate facts.
+
+'Testar inteligência' is billed through the SAME global budget ledger as every other call (monthly
+ceiling included), one check at a time.
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from dataclasses import dataclass
 from typing import Any
 
-from runtime.models.intelligence_check import run_intelligence_check
+from runtime.models.intelligence_check import SCHEMA as CHECK_SCHEMA
+from runtime.models.intelligence_check import IntelligenceReport
 from runtime.models.openai_responses import DEFAULT_BASE_URL, OpenAIResponsesProvider
-from runtime.models.pricing import SPEC_REFERENCE_TABLE
-from runtime.models.router import BudgetedModelClient, CatalogEntry, Consent, ModelRouter
-from runtime.models.types import ModelCapabilities
-from security.budget.budget import BudgetLimits, BudgetManager
+from runtime.models.pricing import SPEC_REFERENCE_TABLE, PriceTable
+from runtime.models.router import BudgetedModelClient, CatalogEntry, Consent, ModelRouter, Requirements
+from runtime.models.types import Message, ModelCapabilities, ModelRequest, ProviderCallError, Role
+from security.budget.budget import BudgetError, BudgetLimits, BudgetManager
 from security.vault.vault import SecretValue, Vault, VaultError
 from shared.actors import Actor
 from shared.clock import Clock, to_utc_str
@@ -28,8 +34,8 @@ from storage import journal
 from storage.db import transaction
 
 PURPOSE = "model_inference"
-BROKER = Actor("control_plane", "model-client", "internal")
 CAPS = ModelCapabilities(structured_output=True)
+_CHECK_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -37,26 +43,42 @@ class IntelligenceStatus:
     configured: bool
     reason: str
     model_id: str | None = None
+    price_table: str = SPEC_REFERENCE_TABLE.version
+    prices_verified: bool = SPEC_REFERENCE_TABLE.verified
 
 
 class IntelligenceSetup:
     def __init__(
-        self, conn: sqlite3.Connection, clock: Clock, vault: Vault | None, base_url: str = DEFAULT_BASE_URL
+        self,
+        conn: sqlite3.Connection,
+        clock: Clock,
+        vault: Vault | None,
+        base_url: str = DEFAULT_BASE_URL,
+        prices: PriceTable = SPEC_REFERENCE_TABLE,
     ) -> None:
         self.conn = conn
         self.clock = clock
         self.vault = vault
         self.base_url = base_url.rstrip("/")
+        self.prices = prices
 
     @property
     def destination(self) -> str:
         return self.base_url + "/responses"
 
-    def latest_config(self) -> dict[str, Any] | None:
-        row = self.conn.execute("SELECT config_json FROM settings ORDER BY revision DESC LIMIT 1").fetchone()
-        return json.loads(row[0]) if row else None
+    # ---------------------------------------------------------------- settings
 
-    def _model(self, cfg: dict[str, Any]) -> tuple[str, str]:
+    def settings(self) -> tuple[int, dict[str, Any] | None]:
+        row = self.conn.execute(
+            "SELECT revision, config_json FROM settings ORDER BY revision DESC LIMIT 1"
+        ).fetchone()
+        return (int(row[0]), json.loads(row[1])) if row else (0, None)
+
+    def latest_config(self) -> dict[str, Any] | None:
+        return self.settings()[1]
+
+    @staticmethod
+    def _model(cfg: dict[str, Any]) -> tuple[str, str]:
         profile = cfg["intelligence"]["profiles"][cfg["intelligence"]["default_profile"]]
         return str(profile["provider"]), str(profile["model_id"])
 
@@ -79,32 +101,91 @@ class IntelligenceSetup:
         ) as secret:
             return SecretValue(secret.reveal())
 
-    def status(self) -> IntelligenceStatus:
+    def _price_gate(self, cfg: dict[str, Any], model: str) -> str | None:
+        try:
+            self.prices.get("openai", model)
+        except KeyError:
+            return f"model {model} has no entry in price table {self.prices.version}; paid calls stay blocked"
+        if not self.prices.verified and not cfg["budget"].get("accept_reference_prices", False):
+            return (
+                f"price table {self.prices.version} is not verified; accept it explicitly as an estimate in "
+                "Configurações before any paid call"
+            )
+        return None
+
+    def _preconditions(self) -> tuple[dict[str, Any], str] | str:
+        """Everything except the model validation. Returns (cfg, model) or the blocking reason."""
         if self.vault is None:
-            return IntelligenceStatus(False, "credential store (Keychain service) is not available")
+            return "credential store (Keychain service) is not available"
         try:
             self._credential_ref()
         except AtlasError:
-            return IntelligenceStatus(False, "no API credential registered")
+            return "no API credential registered"
         cfg = self.latest_config()
         if cfg is None:
-            return IntelligenceStatus(False, "settings with budget ceilings were not saved yet")
+            return "settings with budget ceilings were not saved yet"
         b = cfg["budget"]
         if b["monthly_limit_minor"] is None or b["per_task_limit_minor"] is None:
-            return IntelligenceStatus(False, "budget ceilings are not set (paid calls stay blocked)")
+            return "budget ceilings are not set (paid calls stay blocked)"
         provider, model = self._model(cfg)
         if provider != "openai":
-            return IntelligenceStatus(False, f"provider {provider} has no adapter yet", model)
+            return f"provider {provider} has no adapter yet"
+        gate = self._price_gate(cfg, model)
+        if gate:
+            return gate
+        return cfg, model
+
+    def status(self) -> IntelligenceStatus:
+        pre = self._preconditions()
+        if isinstance(pre, str):
+            cfg = self.latest_config()
+            model = self._model(cfg)[1] if cfg else None
+            return IntelligenceStatus(False, pre, model, self.prices.version, self.prices.verified)
+        _, model = pre
         row = self.conn.execute(
-            "SELECT passed FROM intelligence_validations WHERE provider = ? AND model_id = ?"
-            " ORDER BY checked_at DESC LIMIT 1",
-            (provider, model),
+            "SELECT passed FROM intelligence_validations WHERE provider = 'openai' AND model_id = ?"
+            " ORDER BY checked_at DESC, rowid DESC LIMIT 1",
+            (model,),
         ).fetchone()
         if not row or not row[0]:
             return IntelligenceStatus(
-                False, f"model {model} was not validated by 'Testar inteligência'", model
+                False,
+                f"model {model} was not validated by 'Testar inteligência'",
+                model,
+                self.prices.version,
+                self.prices.verified,
             )
-        return IntelligenceStatus(True, "ready", model)
+        return IntelligenceStatus(True, "ready", model, self.prices.version, self.prices.verified)
+
+    def _client(
+        self, cfg: dict[str, Any], model: str, per_call_cap: int | None = None
+    ) -> BudgetedModelClient:
+        provider = OpenAIResponsesProvider(
+            self.key_provider, capabilities={model: CAPS}, base_url=self.base_url
+        )
+        router = ModelRouter(
+            [CatalogEntry("openai", model, "general", 2, CAPS, validated=True)],
+            Consent({"openai"}),
+            mode="manual",
+            manual_model=model,
+        )
+        limits = BudgetLimits.from_config(cfg)
+        if per_call_cap is not None:
+            assert limits.per_task_limit_minor is not None
+            limits = BudgetLimits(
+                limits.currency,
+                limits.monthly_limit_minor,
+                min(limits.per_task_limit_minor, per_call_cap),
+                limits.warning_percentages,
+            )
+        return BudgetedModelClient(
+            self.conn,
+            self.clock,
+            router,
+            {"openai": provider},
+            self.prices,
+            BudgetManager(self.conn, self.clock, limits),
+        )
 
     def build_client(self) -> BudgetedModelClient:
         st = self.status()
@@ -112,23 +193,7 @@ class IntelligenceSetup:
             raise AtlasError(ErrorCode.MODEL_UNSUPPORTED, st.reason)
         cfg = self.latest_config()
         assert cfg is not None
-        provider = OpenAIResponsesProvider(
-            self.key_provider, capabilities={st.model_id: CAPS}, base_url=self.base_url
-        )
-        router = ModelRouter(
-            [CatalogEntry("openai", st.model_id, "general", 2, CAPS, validated=True)],
-            Consent({"openai"}),
-            mode="manual",
-            manual_model=st.model_id,
-        )
-        return BudgetedModelClient(
-            self.conn,
-            self.clock,
-            router,
-            {"openai": provider},
-            SPEC_REFERENCE_TABLE,
-            BudgetManager(self.conn, self.clock, BudgetLimits.from_config(cfg)),
-        )
+        return self._client(cfg, st.model_id)
 
     # ---------------------------------------------------------------- owner operations
 
@@ -154,13 +219,73 @@ class IntelligenceSetup:
     ) -> dict[str, Any]:
         if actor.kind != "owner" or actor.channel != "local_app":
             raise AtlasError(ErrorCode.UNAUTHORIZED, "only the owner on the local app runs a billable check")
-        self._credential_ref()
-        report = run_intelligence_check(
-            key_provider=self.key_provider,
-            model_id=model_id,
-            max_cost_minor=max_cost_minor,
-            base_url=self.base_url,
+        if not _CHECK_LOCK.acquire(blocking=False):
+            raise AtlasError(ErrorCode.VERSION_CONFLICT, "a check is already running; wait for its result")
+        try:
+            return self._run_check(actor, employee_id, model_id, max_cost_minor)
+        finally:
+            _CHECK_LOCK.release()
+
+    def _run_check(
+        self, actor: Actor, employee_id: str, model_id: str, max_cost_minor: int
+    ) -> dict[str, Any]:
+        pre = self._preconditions()
+        if isinstance(pre, str):
+            raise AtlasError(ErrorCode.MODEL_UNSUPPORTED, pre)
+        cfg, configured_model = pre
+        if model_id != configured_model:
+            raise AtlasError(
+                ErrorCode.INVALID_INPUT, f"save settings with model {model_id} before testing it"
+            )
+        report = IntelligenceReport(
+            "openai", model_id, self.prices.version, self.prices.verified, to_utc_str(self.clock.now())
         )
+        provider = OpenAIResponsesProvider(
+            self.key_provider, capabilities={model_id: CAPS}, base_url=self.base_url
+        )
+        try:
+            report.model_listed = provider.check_model_access(model_id)
+        except (AtlasError, ProviderCallError) as exc:
+            report.errors.append(f"model check failed: {type(exc).__name__}")
+        if report.model_listed:
+            client = self._client(cfg, model_id, per_call_cap=max_cost_minor)
+            request = ModelRequest(
+                model_id,
+                (Message(Role.USER, 'Reply with JSON: {"ok": true, "word": "atlas"}.'),),
+                max_output_tokens=64,
+                json_schema=CHECK_SCHEMA,
+                timeout_s=60,
+            )
+            try:
+                resp = client.call(
+                    task_id=None,
+                    employee_id=employee_id,
+                    purpose="intelligence_check",
+                    req=Requirements(structured_output=True, data_classification="PUBLIC"),
+                    request=request,
+                )
+                report.call_succeeded = True
+                report.request_id = resp.request_id
+                if resp.usage:
+                    report.usage = {
+                        "input_tokens": resp.usage.input_tokens,
+                        "cached_input_tokens": resp.usage.cached_input_tokens,
+                        "output_tokens": resp.usage.output_tokens,
+                    }
+                if resp.estimated_cost:
+                    report.cost_minor = resp.estimated_cost.amount_minor
+                    report.currency = resp.estimated_cost.currency
+                try:
+                    parsed: Any = json.loads(resp.output_text)
+                    report.output_valid = parsed.get("ok") is True and isinstance(parsed.get("word"), str)
+                except (json.JSONDecodeError, AttributeError):
+                    report.errors.append("output was not the requested JSON")
+            except BudgetError as exc:
+                report.errors.append(f"budget: {exc.reason}")
+            except AtlasError as exc:
+                report.errors.append(f"call failed: {exc.code}: {exc.message}")
+        elif report.model_listed is False:
+            report.errors.append("the account does not list this model id")
         data: dict[str, Any] = json.loads(report.to_json())
         with transaction(self.conn):
             self.conn.execute(

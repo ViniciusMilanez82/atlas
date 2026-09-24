@@ -455,3 +455,93 @@ Artefato: Atlas-dev-app (Atlas-dev.zip, ~31 MB)
 - Voz, canal remoto e notarização (D-07).
 
 **Custos incorridos:** zero.
+
+---
+
+## Alpha 2 — correções da revisão 2a7fd85 — 2026-09-24 — branch `impl/alpha2`
+
+**Classificação dos achados.**
+
+| Achado | Classificação | Resultado |
+| --- | --- | --- |
+| A1 configurações | reproduzido (2º salvamento enviava revisão 0) | corrigido com teste |
+| A2 conversa | reproduzido (toda frase virava tarefa; sem respostas) | corrigido com teste |
+| A3 UI bloqueante e reconexão | reproduzido | corrigido com teste (servidor falso e processos reais) |
+| A4 anexos | reproduzido | corrigido com teste |
+| A5 catálogo e validação | reproduzido | corrigido com teste |
+| A6 modelo real | não aplicável sem credencial | BLOQUEADO (D-03) |
+| A7 retomada, retries e agenda | reproduzido | corrigido com teste |
+| A8 preço e ledger do teste | reproduzido | corrigido com teste |
+| Cenário visual de 10 passos | bloqueado | BLOQUEADO (D-01); nenhum screenshot de mock foi produzido |
+
+**Implementado.**
+- **Conversa (`core/conversation.py`):** mensagens do dono e do funcionário persistidas e tipadas.
+  O roteamento é determinístico onde possível: "pare", resposta a pergunta pendente, pedido de
+  memória com confirmação, status gerado do banco, correção ligada à tarefa aberta e delegação
+  explícita. O resto vai ao modelo só se a inteligência estiver configurada; sem ela, a resposta
+  diz o motivo e oferece «Delegar como tarefa». Nenhuma saudação cria tarefa.
+- **IPC novo:** `settings.get`, `conversations.current`, `conversations.history` (paginado),
+  `memories.confirm`, `artifacts.upload` (em partes, reenvio idempotente), `artifacts.import`
+  e `artifacts.read` (com hash por trecho). `tasks.create` aceita `client_request_id`.
+- **Inteligência:** validação do modelo separada da validação de preço. Tabela não verificada
+  bloqueia chamadas pagas até o dono aceitá-la como estimativa. O "Testar inteligência" passa
+  pelo mesmo ledger e teto mensal, um de cada vez.
+- **Agente:** catálogo vindo dos manifestos habilitados. Toda decisão é validada, inclusive a
+  entrada contra o esquema da ferramenta, antes do broker. A retomada usa o último plano, as
+  observações persistidas e as respostas do dono. Perguntas e resultados chegam à conversa.
+- **Worker:** promove retentativas vencidas e executa a agenda.
+- **Correção encontrada pelos testes:** o adaptador OpenAI não normalizava queda de conexão sem
+  resposta, que virava "internal error".
+- **App (Swift):**
+  - cliente com prazo e correlação de respostas;
+  - `AtlasConnection` faz todo I/O fora do MainActor, relê a sessão após reinício e nunca
+    repete mutações;
+  - `AtlasViewModel` é testável sem interface;
+  - a interface tem balões, anexos por seletor e arrastar, prévia só em texto, salvar como com
+    hash, dinheiro legível, aceite de preços e saúde com "Reiniciar serviços".
+- **Versão mínima:** o pacote agora declara macOS 15.0, a única versão homologada.
+
+**Evidência (CI, commit b81aa32).**
+
+```text
+Windows (local): ruff, segredos e mypy PASS; pytest 446 passed, 7 skipped
+core-linux:      449 passed, 4 skipped
+core-macos:      pytest 452 passed, 1 skipped (chamada real opt-in, D-03)
+swift test:      24 tests, 0 failures
+  ConnectionTests (servidor Unix FALSO): reconexão com sessão nova, prazo, mutação não repetida,
+    sessão expirada, resposta não correlacionada, I/O fora da thread principal
+  ViewModelTests (transporte FALSO): três salvamentos e reabertura, conflito recuperável,
+    conversa sem tarefa implícita, reenvio com o mesmo id, um único teste pago por vez,
+    HTML mostrado como texto, exportação só com hash conferido, dinheiro legível
+  SupervisorTests (processos REAIS): a mesma conexão sobrevive a SIGKILL do núcleo com histórico
+    preservado, limite de reinícios informado e "Reiniciar serviços" recupera, falha do serviço
+    de Keychain é reportada
+atlas-bundle-check: pacote sem Python do sistema respondeu "Oi" com o motivo real
+  ("no API credential registered") e ofereceu delegar
+```
+
+**Estados, separados.**
+
+| Estado | Situação |
+| --- | --- |
+| Implementado | A1–A5, A7, A8 no núcleo e no app |
+| Compilado | Sim, macOS 15 (CI) |
+| Testado em integração | Sim: IPC real, servidor de modelo FALSO local, processos reais do Supervisor |
+| Testado com modelo real | **Não** (D-03) |
+| Validado interativamente | **Não** (D-01): nenhum uso do app por uma pessoa num Mac |
+| Pronto para distribuição | **Não**: assinatura ad-hoc, sem notarização (D-07), sem SMAppService validado |
+
+**Custos incorridos:** zero. Nenhuma credencial foi solicitada ou usada.
+
+**Primeira abertura real no runner (job `app-evidence`, macOS 15 limpo).**
+[docs/evidence/alpha2-first-launch-ci-runner.png](evidence/alpha2-first-launch-ci-runner.png) é uma
+captura de tela real, não um mock. O `Atlas.app` foi aberto com `open`. Supervisor, Keychain e núcleo
+subiram, e a janela mostra "Conectado". A inteligência aparece como "Não configurada" com o motivo
+real. Nenhum processo do app tinha socket de rede aberto. Ao sair, app e serviços terminaram.
+
+Achado investigado: numa execução anterior apareceu o aviso "Allow Python to find devices on local
+networks?". A bisseção num runner limpo mostrou que ele não vem do app, nem do Python embutido, nem
+do núcleo. Ele vinha da suíte de testes, que roda antes no mesmo job.
+
+**Isso não prova:** que uma pessoa usou o app, os passos 2 a 10 do cenário visual e o comportamento
+no Mac do proprietário (D-01).

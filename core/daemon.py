@@ -20,6 +20,7 @@ import threading
 from pathlib import Path
 from types import FrameType
 
+from core.conversation import ConversationService
 from core.intelligence import IntelligenceSetup
 from core.ipc.server import UnixSocketServer
 from core.ipc.sessions import SessionRegistry
@@ -29,6 +30,8 @@ from runtime.artifacts.manager import ArtifactManager
 from runtime.memory.manager import MemoryManager
 from runtime.models.openai_responses import DEFAULT_BASE_URL
 from runtime.tasks.engine import TaskEngine
+from runtime.tasks.limits import ProgressGuard
+from runtime.tasks.scheduler import Scheduler
 from runtime.tools.builtin import BUILTIN_MANIFESTS, BuiltinTools
 from runtime.tools.registry import ToolRegistry
 from runtime.verification.verifier import DeliverableSpec, Verifier
@@ -129,9 +132,14 @@ class Core:
         memory = MemoryManager(broker.conn, self.clock)
         verifier = Verifier(broker.conn, self.clock, artifacts)
         tools = [m.tool_id for m in BUILTIN_MANIFESTS]
+        conversation = ConversationService(broker.conn, self.clock, broker, intel)
+        guard = ProgressGuard(broker.tasks)
+        scheduler = Scheduler(broker.tasks)
         recovered = False
         while not self.stop.is_set():
             broker.collect_late_results()
+            guard.promote_due_retries()  # RETRYING -> READY after backoff (review A7)
+            scheduler.run_due()  # scheduled jobs create their tasks even while intelligence is off
             try:
                 client = intel.build_client()
             except AtlasError:
@@ -162,6 +170,7 @@ class Core:
                 verifier=verifier,
                 tools=tools,
                 worker_id=f"worker-{os.getpid()}",
+                notify=conversation.notify,
             )
             try:
                 runner.run(row[0], spec)

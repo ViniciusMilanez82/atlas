@@ -2,7 +2,8 @@ import AtlasKit
 import Foundation
 
 // Headless verification of a built Atlas.app: starts the Supervisor with the bundle's embedded Python,
-// core sources and Keychain service (no system Python), talks to atlas-core, then stops the services.
+// core sources and Keychain service (no system Python), talks to atlas-core through the same async
+// connection the app uses, sends a conversation message, then stops the services.
 // usage: atlas-bundle-check <path/to/Atlas.app>
 
 let args = CommandLine.arguments
@@ -23,20 +24,24 @@ let config = SupervisorConfig(
     keychainService: "com.atlas.bundlecheck.\(UUID().uuidString)",
     openAIBaseURL: "http://127.0.0.1:9/v1")
 let supervisor = Supervisor(config: config)
-defer {
+
+func finish(_ code: Int32) -> Never {
     supervisor.stop()
     try? FileManager.default.removeItem(at: base)
+    exit(code)
 }
+
 do {
     try supervisor.start()
-    let api = try AtlasAPI(session: try supervisor.session())
-    let identity = try api.identity()
-    let health = try api.health()
-    let created = try api.delegate(objective: "Verificação do pacote")
-    let out: [String: Any] = ["identity": identity, "health": health, "created": created]
+    let api = AtlasAPI(transport: AtlasConnection(timeout: 20) { try supervisor.session() })
+    let identity = try await api.identity()
+    let health = try await api.health()
+    let conversation = try await api.currentConversation()
+    let sent = try await api.send(conversationId: conversation, text: "Oi", clientMessageId: UUID().uuidString.lowercased())
+    let out: [String: Any] = ["identity": identity, "health": health, "conversation_reply": sent["reply"] ?? NSNull()]
     FileHandle.standardOutput.write(try JSONSerialization.data(withJSONObject: out, options: [.sortedKeys]))
+    finish(0)
 } catch {
     FileHandle.standardError.write(Data("bundle check failed: \(error)\n".utf8))
-    supervisor.stop()
-    exit(1)
+    finish(1)
 }

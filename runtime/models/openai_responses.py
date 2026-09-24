@@ -27,7 +27,7 @@ import threading
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Iterator
-from http.client import HTTPResponse
+from http.client import HTTPException, HTTPResponse
 from typing import Any
 
 from runtime.models.types import (
@@ -247,6 +247,9 @@ class OpenAIResponsesProvider:
             raise ProviderCallError(f"transport error ({type(reason).__name__})", sent=None) from None
         except TimeoutError as exc:
             raise ProviderCallError("timed out waiting for the provider", sent=None) from exc
+        except (HTTPException, OSError) as exc:
+            # e.g. the server closed the connection without a response: it may have been processed.
+            raise ProviderCallError(f"transport error ({type(exc).__name__})", sent=None) from None
 
     def _error_response(self, request: ModelRequest, failure: _HTTPFailure) -> ModelResponse:
         kind = _STATUS_KIND.get(failure.status, ProviderErrorKind.UNAVAILABLE)

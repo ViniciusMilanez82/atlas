@@ -203,8 +203,11 @@ def test_conversation_persists_dedups_and_stop_changes_state(connect: Any, world
     )["result"]
     assert stop["control"] == "stopped" and stop["paused_tasks"] == [tid]
     assert engine.get(tid)["state"] == "PAUSED"
-    n = world.conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
-    assert n == 2
+    roles = [r[0] for r in world.conn.execute("SELECT role FROM messages ORDER BY rowid")]
+    assert roles == ["owner", "employee", "owner", "employee"]  # each owner message answered exactly once
+    assert first["intent"] == "status" and "tarefa longa" in first["reply"]["content"]
+    assert again["reply"]["message_id"] == first["reply"]["message_id"]  # resend repeats nothing
+    assert "pausada" in stop["reply"]["content"]
 
 
 def test_paired_device_can_talk_but_not_cancel(connect: Any, world: World) -> None:

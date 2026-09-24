@@ -39,7 +39,6 @@
         "memories.correct",
         "memories.delete",
         "artifacts.import",
-        "artifacts.export",
         "workspace.observe",
         "workspace.takeover",
         "workspace.release",
@@ -50,7 +49,13 @@
         "credentials.register",
         "intelligence.check",
         "artifacts.list",
-        "approvals.list"
+        "approvals.list",
+        "settings.get",
+        "conversations.current",
+        "conversations.history",
+        "memories.confirm",
+        "artifacts.upload",
+        "artifacts.read"
       ]
     },
     "params": {
@@ -274,22 +279,6 @@
       "if": {
         "properties": {
           "method": {
-            "const": "artifacts.export"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "params": {
-            "$ref": "#/$defs/p_artifacts_export"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "method": {
             "enum": [
               "workspace.observe",
               "workspace.takeover",
@@ -420,6 +409,102 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "settings.get"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_base"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "conversations.current"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_base"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "conversations.history"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_conv_history"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "memories.confirm"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_memory_ref"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "artifacts.upload"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_upload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "artifacts.read"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_read"
+          }
+        }
+      }
     }
   ],
   "$defs": {
@@ -480,6 +565,16 @@
           "items": {
             "$ref": "#/$defs/uuid"
           }
+        },
+        "intent": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "delegate"
+          ]
+        },
+        "reply_to_message_id": {
+          "$ref": "common.schema.json#/$defs/uuid"
         }
       }
     },
@@ -527,6 +622,12 @@
         },
         "budget_limit": {
           "$ref": "common.schema.json#/$defs/money"
+        },
+        "client_request_id": {
+          "$ref": "common.schema.json#/$defs/uuid"
+        },
+        "conversation_id": {
+          "$ref": "common.schema.json#/$defs/uuid"
         }
       }
     },
@@ -830,30 +931,6 @@
         }
       }
     },
-    "p_artifacts_export": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "schema_version",
-        "correlation_id",
-        "artifact_id",
-        "expected_sha256"
-      ],
-      "properties": {
-        "schema_version": {
-          "$ref": "common.schema.json#/$defs/schema_version"
-        },
-        "correlation_id": {
-          "$ref": "common.schema.json#/$defs/correlation_id"
-        },
-        "artifact_id": {
-          "$ref": "#/$defs/uuid"
-        },
-        "expected_sha256": {
-          "$ref": "common.schema.json#/$defs/sha256"
-        }
-      }
-    },
     "p_workspace": {
       "type": "object",
       "additionalProperties": false,
@@ -983,6 +1060,96 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 500
+        }
+      }
+    },
+    "p_conv_history": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id",
+        "conversation_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "conversation_id": {
+          "$ref": "common.schema.json#/$defs/uuid"
+        },
+        "before_message_id": {
+          "$ref": "common.schema.json#/$defs/uuid"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        }
+      }
+    },
+    "p_upload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id",
+        "upload_ref",
+        "offset",
+        "data_b64"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "upload_ref": {
+          "$ref": "common.schema.json#/$defs/uuid"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "data_b64": {
+          "type": "string",
+          "maxLength": 700000,
+          "pattern": "^[A-Za-z0-9+/=]*$"
+        }
+      }
+    },
+    "p_read": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id",
+        "artifact_id",
+        "offset",
+        "length"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "artifact_id": {
+          "$ref": "common.schema.json#/$defs/uuid"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "length": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 524288
         }
       }
     }

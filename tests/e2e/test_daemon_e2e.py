@@ -234,6 +234,7 @@ def test_alpha_flow_with_real_keychain_and_fake_model(dirs: tuple[Path, Path]) -
         cfg = yaml.safe_load((ROOT / "config" / "atlas.default.yaml").read_text(encoding="utf-8"))
         cfg["budget"]["monthly_limit_minor"] = 500
         cfg["budget"]["per_task_limit_minor"] = 200
+        cfg["budget"]["accept_reference_prices"] = True  # owner accepts the unverified table as an estimate
         assert d.call("settings.update", expected_revision=0, settings=cfg)["result"]["revision"] == 1
         report = d.call("intelligence.check", model_id="gpt-6-sol", max_cost_minor=5)["result"]["report"]
         assert report["passed"] is True, report

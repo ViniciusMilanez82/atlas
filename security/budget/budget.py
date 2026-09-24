@@ -85,7 +85,7 @@ class BudgetManager:
     def reserve_in_txn(
         self,
         *,
-        task_id: str,
+        task_id: str | None,
         category: str,
         amount: Money,
         purchase_ceiling: Money | None = None,
@@ -119,7 +119,7 @@ class BudgetManager:
             task_limit = lim.per_task_limit_minor
             if task and task["budget_currency"] == lim.currency:
                 task_limit = min(task_limit, task["budget_amount_minor"])
-            task_used = self._committed("task", task_id)
+            task_used = self._committed("task", task_id) if task_id is not None else 0
             period = period_key(self.clock)
             period_used = self._committed("period", period)
             if task_used + amount.amount_minor > task_limit:

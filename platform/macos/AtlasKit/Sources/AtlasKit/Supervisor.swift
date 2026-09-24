@@ -148,6 +148,21 @@ public final class Supervisor {
         try? launchCore(kcSocket: kcSocket, tokenFile: tokenFile)
     }
 
+    /// "Reiniciar serviços": a real stop followed by a fresh start (restart budget reset).
+    public func restart() throws {
+        stop()
+        lock.lock()
+        restarts = 0
+        lock.unlock()
+        try start()
+    }
+
+    public var restartCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return restarts
+    }
+
     public var isRunning: Bool { core?.isRunning ?? false }
     public var coreProcessId: Int32? { core?.processIdentifier }
 

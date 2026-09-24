@@ -89,8 +89,14 @@ class TaskEngine:
         budget_limit: Money | None = None,
         deadline: str | None = None,
         parent_task_id: str | None = None,
+        conversation_id: str | None = None,
+        client_request_id: str | None = None,
     ) -> str:
-        """Persist a task before anything claims work has started (spec 3.3)."""
+        """Persist a task before anything claims work has started (spec 3.3).
+
+        ``client_request_id`` makes creation idempotent: resending the same request (after a lost reply or
+        a reconnect) returns the task that already exists instead of creating a duplicate.
+        """
         if actor.kind == "owner":
             owner_id = actor.id
         elif actor.kind == "runtime" and parent_task_id:
@@ -103,13 +109,20 @@ class TaskEngine:
         emp = self.conn.execute("SELECT owner_id FROM employees WHERE id = ?", (employee_id,)).fetchone()
         if emp is None or emp["owner_id"] != owner_id:
             raise _err(ErrorCode.UNAUTHORIZED, "employee does not belong to this owner")
+        if client_request_id is not None:
+            existing = self.conn.execute(
+                "SELECT id FROM tasks WHERE employee_id = ? AND client_request_id = ?",
+                (employee_id, client_request_id),
+            ).fetchone()
+            if existing:
+                return str(existing[0])
         task_id = new_id()
         now = to_utc_str(self.clock.now())
         with transaction(self.conn):
             self.conn.execute(
                 "INSERT INTO tasks(id, owner_id, employee_id, objective, constraints_json, priority, data_policy,"
-                " budget_amount_minor, budget_currency, state, parent_task_id, deadline, created_at, updated_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " budget_amount_minor, budget_currency, state, parent_task_id, deadline, created_at, updated_at,"
+                " conversation_id, client_request_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     task_id,
                     owner_id,
@@ -125,6 +138,8 @@ class TaskEngine:
                     deadline,
                     now,
                     now,
+                    conversation_id,
+                    client_request_id,
                 ),
             )
             for text, required in criteria or []:
