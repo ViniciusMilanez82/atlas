@@ -91,6 +91,7 @@ public final class AtlasViewModel: ObservableObject {
     @Published public private(set) var isSavingSettings = false
     @Published public private(set) var isChecking = false
     @Published public private(set) var isAttaching = false
+    @Published public private(set) var isStopping = false
     @Published public private(set) var eventCursor = 0
     /// Text + client id kept after a failed send, so "Tentar de novo" reuses the SAME id (no duplicate).
     @Published public private(set) var failedDraft: (text: String, clientId: String, delegate: Bool)?
@@ -247,7 +248,32 @@ public final class AtlasViewModel: ObservableObject {
         }
     }
 
-    public func stopAll() async { await send("pare tudo") }
+    /// A3-04: never gated by `isSending`/`isAttaching` and never routed through the conversation. The
+    /// order goes through the control lane; the reply says what stopped and what was already sent.
+    public func stopAll() async {
+        isStopping = true
+        defer { isStopping = false }
+        do {
+            let r = try await api.stopAll()
+            notice = Self.stopText(r)
+            lastError = nil
+        } catch {
+            lastError = "A parada NÃO foi confirmada: \(Self.friendly(error)). Tente de novo."
+        }
+        Task { await self.refresh() }  // the main lane may still be busy; do not wait for it here
+    }
+
+    public nonisolated static func stopText(_ r: [String: Any]) -> String {
+        let paused = (r["paused_tasks"] as? [Any])?.count ?? 0
+        let inFlight = (r["in_flight_actions"] as? [Any])?.count ?? 0
+        let unknown = (r["unknown_actions"] as? [Any])?.count ?? 0
+        var parts = ["Parei: \(paused) tarefa(s) pausada(s); nenhum passo novo será iniciado."]
+        if inFlight > 0 {
+            parts.append("\(inFlight) ação(ões) já tinham sido enviadas; pedi a interrupção, mas o que foi enviado não é desfeito.")
+        }
+        if unknown > 0 { parts.append("\(unknown) ação(ões) com resultado incerto serão conferidas antes de qualquer repetição.") }
+        return parts.joined(separator: " ")
+    }
 
     public func confirmMemory(_ message: ChatMessage) async {
         guard let id = message.memoryId else { return }

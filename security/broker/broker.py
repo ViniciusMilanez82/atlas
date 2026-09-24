@@ -190,7 +190,7 @@ class Broker:
                     return early
                 action_id, idem_key, warnings = early
         except AtlasError as exc:
-            if exc.code == ErrorCode.UNAUTHORIZED:
+            if exc.code in (ErrorCode.UNAUTHORIZED, ErrorCode.VERSION_CONFLICT):
                 self._journal_rejection(lease, str(exc))
             raise
 
@@ -388,6 +388,16 @@ class Broker:
     ) -> DispatchResult | tuple[str, str | None, list[str]]:
         employee_id = task["employee_id"]
         worker = Actor("worker", lease.worker_id, "internal")
+        if proposal["instruction_revision"] != task["instruction_revision"]:
+            # Linearization point for corrections (A3-03): a proposal decided under older instructions
+            # is refused inside the dispatch transaction, before anything is authorized or sent.
+            raise AtlasError(
+                ErrorCode.VERSION_CONFLICT,
+                f"instructions changed (revision {proposal['instruction_revision']} -> "
+                f"{task['instruction_revision']}); proposal discarded before dispatch",
+                persisted="nothing dispatched",
+                recommended_action="re-plan with the current instructions",
+            )
         existing = self.ledger.find_open_in_txn(task["id"], input_hash)
         mandate = self.mandates.find_applicable_in_txn(
             employee_id=employee_id, tool_id=manifest.tool_id, destination=destination, cost=cost
@@ -418,6 +428,7 @@ class Broker:
                 input_hash=input_hash,
                 destination=destination,
                 worker_id=lease.worker_id,
+                instruction_revision=int(task["instruction_revision"]),
             )
         self.ledger.annotate_policy_in_txn(
             action_id, decision.outcome, decision.reason_code, decision.policy_version

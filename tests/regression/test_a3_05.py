@@ -66,6 +66,7 @@ def test_stale_worker_cannot_dispatch_and_task_is_not_left_running(world: World,
         "input": {"query": "x"},
         "expected_outcome": "late",
         "verification": {"kind": "deterministic_check", "required": True},
+        "instruction_revision": 1,
     }
     import pytest
 

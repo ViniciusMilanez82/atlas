@@ -5,70 +5,184 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema_version", "task_id", "owner_id", "employee_id", "objective", "constraints",
-    "priority", "data_policy", "budget_limit", "completion_criteria", "state",
-    "blocked_reason", "version", "parent_task_id", "created_at", "updated_at"
+    "schema_version",
+    "task_id",
+    "owner_id",
+    "employee_id",
+    "objective",
+    "constraints",
+    "priority",
+    "data_policy",
+    "budget_limit",
+    "completion_criteria",
+    "state",
+    "blocked_reason",
+    "version",
+    "parent_task_id",
+    "created_at",
+    "updated_at"
   ],
   "properties": {
-    "schema_version": { "$ref": "common.schema.json#/$defs/schema_version" },
-    "task_id": { "$ref": "common.schema.json#/$defs/uuid" },
-    "owner_id": { "$ref": "common.schema.json#/$defs/uuid" },
-    "employee_id": { "$ref": "common.schema.json#/$defs/uuid" },
-    "objective": { "type": "string", "minLength": 1, "maxLength": 4000 },
-    "constraints": { "$ref": "#/$defs/constraints" },
-    "priority": { "$ref": "common.schema.json#/$defs/priority" },
-    "data_policy": { "$ref": "common.schema.json#/$defs/data_classification" },
+    "schema_version": {
+      "$ref": "common.schema.json#/$defs/schema_version"
+    },
+    "task_id": {
+      "$ref": "common.schema.json#/$defs/uuid"
+    },
+    "owner_id": {
+      "$ref": "common.schema.json#/$defs/uuid"
+    },
+    "employee_id": {
+      "$ref": "common.schema.json#/$defs/uuid"
+    },
+    "objective": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "constraints": {
+      "$ref": "#/$defs/constraints"
+    },
+    "priority": {
+      "$ref": "common.schema.json#/$defs/priority"
+    },
+    "data_policy": {
+      "$ref": "common.schema.json#/$defs/data_classification"
+    },
     "budget_limit": {
       "description": "null means 'not configured' (paid calls blocked), never 'unlimited'.",
-      "oneOf": [{ "type": "null" }, { "$ref": "common.schema.json#/$defs/money" }]
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "common.schema.json#/$defs/money"
+        }
+      ]
     },
     "completion_criteria": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["criterion_id", "description", "required"],
+        "required": [
+          "criterion_id",
+          "description",
+          "required"
+        ],
         "properties": {
-          "criterion_id": { "$ref": "common.schema.json#/$defs/uuid" },
-          "description": { "type": "string", "minLength": 1, "maxLength": 1000 },
-          "required": { "type": "boolean" }
+          "criterion_id": {
+            "$ref": "common.schema.json#/$defs/uuid"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "required": {
+            "type": "boolean"
+          }
         }
       }
     },
-    "state": { "$ref": "common.schema.json#/$defs/task_state" },
+    "state": {
+      "$ref": "common.schema.json#/$defs/task_state"
+    },
     "blocked_reason": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "enum": [
-        null, "EXTERNAL_EFFECT_UNKNOWN", "BUDGET_EXCEEDED", "PROVIDER_UNAVAILABLE",
-        "WORKSPACE_OFFLINE", "HUMAN_INTERVENTION_REQUIRED", "RETRY_LIMIT", "NO_PROGRESS"
+        null,
+        "EXTERNAL_EFFECT_UNKNOWN",
+        "BUDGET_EXCEEDED",
+        "PROVIDER_UNAVAILABLE",
+        "WORKSPACE_OFFLINE",
+        "HUMAN_INTERVENTION_REQUIRED",
+        "RETRY_LIMIT",
+        "NO_PROGRESS"
       ]
     },
-    "version": { "type": "integer", "minimum": 1 },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
     "parent_task_id": {
-      "oneOf": [{ "type": "null" }, { "$ref": "common.schema.json#/$defs/uuid" }]
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "common.schema.json#/$defs/uuid"
+        }
+      ]
     },
     "deadline": {
-      "oneOf": [{ "type": "null" }, { "$ref": "common.schema.json#/$defs/utc_timestamp" }]
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "common.schema.json#/$defs/utc_timestamp"
+        }
+      ]
     },
-    "created_at": { "$ref": "common.schema.json#/$defs/utc_timestamp" },
-    "updated_at": { "$ref": "common.schema.json#/$defs/utc_timestamp" }
+    "created_at": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "updated_at": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "instruction_revision": {
+      "type": "integer",
+      "minimum": 1
+    }
   },
   "$defs": {
     "constraints": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["external_writes", "purchases"],
+      "required": [
+        "external_writes",
+        "purchases"
+      ],
       "properties": {
-        "external_writes": { "type": "boolean" },
-        "purchases": { "type": "boolean" }
+        "external_writes": {
+          "type": "boolean"
+        },
+        "purchases": {
+          "type": "boolean"
+        }
       }
     }
   },
   "allOf": [
     {
-      "if": { "properties": { "state": { "const": "BLOCKED" } }, "required": ["state"] },
-      "then": { "properties": { "blocked_reason": { "type": "string" } } },
-      "else": { "properties": { "blocked_reason": { "type": "null" } } }
+      "if": {
+        "properties": {
+          "state": {
+            "const": "BLOCKED"
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "blocked_reason": {
+            "type": "string"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "blocked_reason": {
+            "type": "null"
+          }
+        }
+      }
     }
   ]
 }

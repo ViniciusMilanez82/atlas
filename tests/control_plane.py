@@ -62,6 +62,7 @@ class ControlPlane:
             "input": tool_input,
             "expected_outcome": "efeito sintetico",
             "verification": {"kind": "provider_receipt", "required": True},
+            "instruction_revision": 1,
         }
 
 

@@ -43,6 +43,7 @@ class StopReport:
     in_flight_actions: list[str] = field(default_factory=list)
     unknown_actions: list[str] = field(default_factory=list)
     elapsed_ms: float = 0.0
+    control_epoch: int = 0
 
 
 @dataclass
@@ -91,8 +92,13 @@ class TaskEngine:
         parent_task_id: str | None = None,
         conversation_id: str | None = None,
         client_request_id: str | None = None,
+        original_request: str | None = None,
+        source_message_id: str | None = None,
     ) -> str:
         """Persist a task before anything claims work has started (spec 3.3).
+
+        ``original_request`` is the owner's full text (the objective may be a shorter statement); it is
+        stored verbatim as instruction revision 1 so later summaries never replace it (spec 13.1).
 
         ``client_request_id`` makes creation idempotent: resending the same request (after a lost reply or
         a reconnect) returns the task that already exists instead of creating a duplicate.
@@ -147,6 +153,11 @@ class TaskEngine:
                     "INSERT INTO task_criteria(id, task_id, description, required) VALUES (?,?,?,?)",
                     (new_id(), task_id, text, int(required)),
                 )
+            self.conn.execute(
+                "INSERT INTO task_instruction_versions(task_id, revision, kind, instruction, material, author,"
+                " source_message_id, created_at) VALUES (?,1,'ORIGINAL',?,1,?,?,?)",
+                (task_id, (original_request or objective)[:32000], f"{actor.kind}:{actor.id}", source_message_id, now),
+            )
             journal.append(
                 self.conn,
                 self.clock,
@@ -191,6 +202,7 @@ class TaskEngine:
             "state": r["state"],
             "blocked_reason": r["blocked_reason"],
             "version": r["version"],
+            "instruction_revision": r["instruction_revision"],
             "parent_task_id": r["parent_task_id"],
             "deadline": r["deadline"],
             "created_at": r["created_at"],
@@ -432,7 +444,87 @@ class TaskEngine:
             )
         return report
 
-    def stop_all(self, *, actor: Actor, employee_id: str) -> StopReport:
+    def instructions(self, task_id: str) -> list[dict[str, Any]]:
+        """Every instruction revision, oldest first (the last one is in force)."""
+        return [
+            {"revision": r["revision"], "kind": r["kind"], "instruction": r["instruction"], "material": bool(r["material"])}
+            for r in self.conn.execute(
+                "SELECT revision, kind, instruction, material FROM task_instruction_versions WHERE task_id = ?"
+                " ORDER BY revision",
+                (task_id,),
+            )
+        ]
+
+    def update_instruction(
+        self,
+        task_id: str,
+        *,
+        actor: Actor,
+        text: str,
+        kind: str = "CORRECTION",
+        material: bool = True,
+        source_message_id: str | None = None,
+    ) -> int:
+        """Record a new instruction revision durably (A3-03, spec 6.3). Returns the new revision.
+
+        A material change cancels proposals not yet dispatched and revokes approvals given for the old
+        instructions; the broker refuses any proposal decided under an older revision. Effects already
+        dispatched are kept and reported, never undone. A correction grants no capability or budget.
+        """
+        if kind not in ("CORRECTION", "ANSWER", "ATTACHMENT"):
+            raise _err(ErrorCode.INVALID_INPUT, f"unknown instruction kind {kind}")
+        if not text.strip():
+            raise _err(ErrorCode.INVALID_INPUT, "empty instruction")
+        now = to_utc_str(self.clock.now())
+        with transaction(self.conn):
+            row = self._row(task_id)
+            self._owner_check(actor, row)
+            if row["state"] in TERMINAL:
+                raise _err(ErrorCode.INVALID_INPUT, f"task is {row['state']}; start a new task instead")
+            rev = int(row["instruction_revision"]) + 1
+            self.conn.execute(
+                "INSERT INTO task_instruction_versions(task_id, revision, kind, instruction, material, author,"
+                " source_message_id, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                (task_id, rev, kind, text[:32000], int(material), f"{actor.kind}:{actor.id}", source_message_id, now),
+            )
+            self.conn.execute(
+                "UPDATE tasks SET instruction_revision = ?, version = version + 1, updated_at = ? WHERE id = ?",
+                (rev, now, task_id),
+            )
+            cancelled = revoked = 0
+            if material:
+                for a in self.conn.execute(
+                    "SELECT id FROM actions WHERE task_id = ? AND status IN ('PROPOSED','AUTHORIZED')", (task_id,)
+                ).fetchall():
+                    self.conn.execute(
+                        "UPDATE actions SET status = 'CANCELLED_BEFORE_DISPATCH', status_reason = 'INSTRUCTION_CHANGED',"
+                        " updated_at = ? WHERE id = ?",
+                        (now, a["id"]),
+                    )
+                    cancelled += 1
+                for ap in self.conn.execute(
+                    "SELECT id FROM approvals WHERE task_id = ? AND status IN ('PENDING','APPROVED')", (task_id,)
+                ).fetchall():
+                    self.conn.execute(
+                        "UPDATE approvals SET status = 'REVOKED', decided_at = ? WHERE id = ?", (now, ap["id"])
+                    )
+                    revoked += 1
+                fresh = self._row(task_id)
+                if fresh["state"] == TaskState.WAITING_APPROVAL and revoked:
+                    self.transition_in_txn(fresh, TaskState.READY, actor, "approval revoked by a correction")
+            journal.append(
+                self.conn,
+                self.clock,
+                employee_id=row["employee_id"],
+                task_id=task_id,
+                type="task.instruction_updated",
+                actor=actor,
+                summary=f"instruction revision {rev} ({kind}{', material' if material else ''}); "
+                f"{cancelled} proposal(s) cancelled, {revoked} approval(s) revoked",
+            )
+        return rev
+
+    def stop_all(self, *, actor: Actor, employee_id: str, origin: str = "local_app") -> StopReport:
         """Authenticated "stop everything": revoke every lease and pause all active tasks (spec 12.3)."""
         started = time.perf_counter()
         report = StopReport()
@@ -458,13 +550,38 @@ class TaskEngine:
                 (report.in_flight_actions if a["status"] == "DISPATCHING" else report.unknown_actions).append(
                     a["id"]
                 )
+            self.conn.execute(
+                "UPDATE employees SET control_epoch = control_epoch + 1 WHERE id = ?", (employee_id,)
+            )
+            report.control_epoch = int(
+                self.conn.execute("SELECT control_epoch FROM employees WHERE id = ?", (employee_id,)).fetchone()[0]
+            )
+            self.conn.execute(
+                "INSERT INTO control_orders(id, employee_id, kind, control_epoch, origin, requested_at, applied_at,"
+                " report_json) VALUES (?,?,'STOP_ALL',?,?,?,?,?)",
+                (
+                    new_id(),
+                    employee_id,
+                    report.control_epoch,
+                    origin,
+                    to_utc_str(self.clock.now()),
+                    to_utc_str(self.clock.now()),
+                    json.dumps(
+                        {
+                            "paused": report.paused_tasks,
+                            "in_flight": report.in_flight_actions,
+                            "unknown": report.unknown_actions,
+                        }
+                    ),
+                ),
+            )
             journal.append(
                 self.conn,
                 self.clock,
                 employee_id=employee_id,
                 type="employee.stopped",
                 actor=actor,
-                summary=f"stop-all: {len(report.paused_tasks)} task(s) paused, "
+                summary=f"stop-all (epoch {report.control_epoch}): {len(report.paused_tasks)} task(s) paused, "
                 f"{len(report.in_flight_actions)} action(s) already in flight",
             )
         report.elapsed_ms = (time.perf_counter() - started) * 1000

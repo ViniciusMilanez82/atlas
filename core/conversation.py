@@ -33,7 +33,6 @@ from shared.actors import Actor
 from shared.clock import Clock, to_utc_str
 from shared.errors import AtlasError, ErrorCode
 from shared.ids import new_id
-from storage import journal
 from storage.db import transaction
 
 STOP_WORDS = {"pare", "pare tudo", "parar", "stop", "stop all", "pausa tudo", "pause tudo"}
@@ -326,36 +325,10 @@ class ConversationService:
                 None,
             )
 
-        if intent != "delegate" and _CORRECTION.match(norm):
-            open_task = self.conn.execute(
-                "SELECT id, objective FROM tasks WHERE conversation_id = ? AND state NOT IN"
-                " ('COMPLETED','FAILED','CANCELLED') ORDER BY created_at DESC LIMIT 1",
-                (cid,),
-            ).fetchone()
-            if open_task:
-                with transaction(self.conn):
-                    self.conn.execute(
-                        "UPDATE messages SET kind = 'correction', task_id = ? WHERE id = ?",
-                        (open_task[0], mid),
-                    )
-                    journal.append(
-                        self.conn,
-                        self.clock,
-                        employee_id=employee_id,
-                        task_id=open_task[0],
-                        type="task.corrected",
-                        actor=actor,
-                        summary="owner correction attached",
-                    )
-                reply = self.say(
-                    cid,
-                    "ack",
-                    f"Anotei a correção na tarefa «{open_task[1][:120]}». Ela será "
-                    "considerada no próximo passo.",
-                    task_id=open_task[0],
-                    reply_marker=marker,
-                )
-                return self._result(mid, reply, "correction", open_task[0])
+        if intent != "delegate" and (p.get("task_id") or _CORRECTION.match(norm)):
+            handled = self._correct(actor, employee_id, cid, mid, text, p.get("task_id"), marker)
+            if handled is not None:
+                return handled
 
         if intent == "delegate":
             return self._delegate(
@@ -364,6 +337,80 @@ class ConversationService:
         return self._chat(actor, employee_id, cid, mid, text, p.get("artifact_ids", []), marker)
 
     # ------------------------------------------------------------------ intents
+
+    def _correct(
+        self,
+        actor: Actor,
+        employee_id: str,
+        cid: str,
+        mid: str,
+        text: str,
+        target: str | None,
+        marker: str,
+    ) -> dict[str, Any] | None:
+        """CORRECT_TASK (A3-03, spec 6.3/7.2): explicit target first; infer only when unambiguous."""
+        if target:
+            row = self.conn.execute(
+                "SELECT id, objective, employee_id, state FROM tasks WHERE id = ?", (target,)
+            ).fetchone()
+            if row is None or row["employee_id"] != employee_id:
+                raise AtlasError(ErrorCode.INVALID_INPUT, "task not found for this employee")
+            candidates = [row] if row["state"] not in ("COMPLETED", "FAILED", "CANCELLED") else []
+            if not candidates:
+                reply = self.say(
+                    cid,
+                    "error",
+                    f"A tarefa «{row['objective'][:120]}» já terminou ({row['state']}); a correção não foi "
+                    "aplicada. Se quiser, delegue um novo pedido com a mudança.",
+                    reply_marker=marker,
+                )
+                self._set_kind(mid, "correction", row["id"])
+                return self._result(mid, reply, "correction_rejected", row["id"])
+        else:
+            candidates = self.conn.execute(
+                "SELECT id, objective FROM tasks WHERE conversation_id = ? AND state NOT IN"
+                " ('COMPLETED','FAILED','CANCELLED') ORDER BY created_at DESC",
+                (cid,),
+            ).fetchall()
+            if not candidates:
+                return None  # nothing to correct: treat as ordinary conversation
+        if len(candidates) > 1:
+            self._set_kind(mid, "correction")
+            titles = "\n".join(f"• {c['objective'][:80]}" for c in candidates[:5])
+            reply = self.say(
+                cid,
+                "question",
+                "Essa mudança vale para qual trabalho? Não alterei nenhum ainda.\n"
+                + titles
+                + "\nUse «Responder nesta tarefa» no trabalho certo e reenvie a correção.",
+                reply_marker=marker,
+            )
+            return self._result(mid, reply, "correction_ambiguous", None)
+        task_id = str(candidates[0]["id"])
+        rev = self.tasks.update_instruction(
+            task_id, actor=actor, text=text, kind="CORRECTION", source_message_id=mid
+        )  # durable before any acknowledgement
+        self._set_kind(mid, "correction", task_id)
+        done = self.conn.execute(
+            "SELECT COUNT(*) FROM actions WHERE task_id = ? AND status = 'CONFIRMED'"
+            " AND effect_class IN ('EXTERNAL_WRITE','IRREVERSIBLE')",
+            (task_id,),
+        ).fetchone()[0]
+        note = (
+            f" Antes da correção já tinham ocorrido {done} ação(ões) externa(s); elas não são desfeitas."
+            if done
+            else ""
+        )
+        reply = self.say(
+            cid,
+            "ack",
+            f"Registrei a correção na tarefa «{candidates[0]['objective'][:120]}» (revisão {rev} das "
+            "instruções). O próximo passo já segue essa instrução e propostas anteriores ainda não "
+            "executadas foram descartadas." + note,
+            task_id=task_id,
+            reply_marker=marker,
+        )
+        return self._result(mid, reply, "correction", task_id, instruction_revision=rev)
 
     def _result(
         self, mid: str, reply: dict[str, Any] | None, intent: str, task_id: str | None, **extra: Any
@@ -503,6 +550,8 @@ class ConversationService:
             criteria=[("Resultado entregue e verificado", True)],
             conversation_id=cid,
             client_request_id=mid,
+            original_request=objective,
+            source_message_id=mid,
         )
         with transaction(self.conn):
             for aid in artifact_ids:

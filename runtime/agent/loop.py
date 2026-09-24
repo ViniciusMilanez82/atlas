@@ -230,7 +230,7 @@ class AgentRunner:
         try:
             rows = self.conn.execute(
                 "SELECT id, role, kind, content FROM messages WHERE task_id = ? AND kind IN"
-                " ('question','answer','correction') ORDER BY rowid",
+                " ('question','answer') ORDER BY rowid",
                 (task_id,),
             ).fetchall()
         except sqlite3.OperationalError:
@@ -238,8 +238,7 @@ class AgentRunner:
         out: list[tuple[str, str, Authority]] = []
         for r in rows:
             if r[1] == "owner":
-                label = "Owner answer" if r[2] == "answer" else "Owner correction"
-                out.append((f"{label}: {r[3]}", f"message:{r[0]}", Authority.OWNER_INSTRUCTION))
+                out.append((f"Owner answer: {r[3]}", f"message:{r[0]}", Authority.OWNER_INSTRUCTION))
             else:
                 out.append((f"You asked the owner: {r[3]}", f"message:{r[0]}", Authority.VERIFIED_FACT))
         return out
@@ -346,9 +345,18 @@ class AgentRunner:
     def _context(
         self, task: dict[str, Any], observations: list[tuple[str, str, Authority]]
     ) -> list[ContextItem]:
-        items = [
-            ContextItem(Authority.POLICY, POLICY_SUMMARY, "policy"),
-            ContextItem(Authority.OWNER_INSTRUCTION, task["objective"], f"task:{task['task_id']}"),
+        items = [ContextItem(Authority.POLICY, POLICY_SUMMARY, "policy")]
+        versions = self.tasks.instructions(task["task_id"])
+        for v in versions:  # the owner's words, oldest first; the last revision prevails (A3-03)
+            label = "CURRENT (prevails over earlier instructions)" if v is versions[-1] else "superseded context"
+            items.append(
+                ContextItem(
+                    Authority.OWNER_INSTRUCTION,
+                    f"[revision {v['revision']} {v['kind']} - {label}]\n{v['instruction']}",
+                    f"task:{task['task_id']}:rev{v['revision']}",
+                )
+            )
+        items += [
             ContextItem(
                 Authority.TASK_OBJECTIVE,
                 "Deliverable criteria: "
@@ -407,6 +415,7 @@ class AgentRunner:
 
     def _run_leased(self, task_id: str, spec: DeliverableSpec, lease: Lease) -> RunOutcome:
         plan_id, observations = self._resume_state(task_id)
+        seen_revision = int(self.tasks.get(task_id)["instruction_revision"])
         steps = 0
         gaps: list[str] = []
         while steps < self.max_steps:
@@ -416,6 +425,17 @@ class AgentRunner:
             except AtlasError:
                 return self._outcome(task_id, "lease revoked (paused, stopped or cancelled)", steps)
             task = self.tasks.get(task_id)
+            if task["instruction_revision"] != seen_revision:  # checked before every inference (A3-03)
+                seen_revision = int(task["instruction_revision"])
+                plan_id = self._new_plan(task_id, f"re-plan after owner instruction revision {seen_revision}")
+                observations.append(
+                    (
+                        f"The owner changed the instructions (now revision {seen_revision}, shown as CURRENT). "
+                        "Re-plan the remaining work; keep results already obtained, do not repeat them.",
+                        "system",
+                        Authority.VERIFIED_FACT,
+                    )
+                )
             try:
                 decision = self._decide(task, observations)
             except (AtlasError, ValueError) as exc:
@@ -489,7 +509,9 @@ class AgentRunner:
                 continue
             # decision == tool, already validated against the catalog
             assert not isinstance(verdict, str)
-            outcome = self._run_tool(task_id, plan_id, lease, decision, verdict, observations)
+            outcome = self._run_tool(
+                task_id, plan_id, lease, decision, verdict, observations, int(task["instruction_revision"])
+            )
             if outcome is not None:
                 if outcome in ("waiting for owner approval", "external effect unknown", "budget exhausted"):
                     self._tell_owner(task_id, "status", STATUS_TEXT[outcome])
@@ -506,6 +528,7 @@ class AgentRunner:
         decision: dict[str, Any],
         validated: tuple[ToolManifest, dict[str, Any]],
         observations: list[tuple[str, str, Authority]],
+        instruction_revision: int,
     ) -> str | None:
         manifest, tool_input = validated
         tool_id = manifest.tool_id
@@ -519,6 +542,7 @@ class AgentRunner:
             "input": tool_input,
             "expected_outcome": decision.get("summary") or tool_id,
             "verification": {"kind": "deterministic_check", "required": True},
+            "instruction_revision": instruction_revision,
         }
         try:
             res: DispatchResult = self.broker.submit(proposal, lease)
@@ -526,6 +550,9 @@ class AgentRunner:
             self._finish_step(step_id, "FAILED")
             if exc.code == ErrorCode.UNAUTHORIZED:
                 return "lease revoked (paused, stopped or cancelled)"
+            if exc.code == ErrorCode.VERSION_CONFLICT:  # a correction arrived: not a lack of progress
+                observations.append((f"Proposal discarded: {exc.message}", "broker", Authority.VERIFIED_FACT))
+                return None
             observations.append((f"Proposal refused: {exc.message}", "broker", Authority.VERIFIED_FACT))
             state = self.guard.record(lease, StepOutcome.NO_NEW_RESULT)
             return None if state == TaskState.RUNNING else "no progress"

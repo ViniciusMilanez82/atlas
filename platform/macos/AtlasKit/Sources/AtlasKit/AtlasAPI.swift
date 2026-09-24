@@ -4,13 +4,17 @@ import Foundation
 /// `AtlasAPIError`; retry safety is declared per method, next to the call.
 public final class AtlasAPI {
     public let transport: AtlasTransport
+    /// Priority control lane (A3-04, spec 6.2): its own connection and serial queue, so "stop" is never
+    /// queued behind a send, an upload, a reconnect or a slow model call on `transport`.
+    public let control: AtlasTransport
     /// Upload chunk: 512 KiB -> ~699 KB of base64, under the core's 700 000 character limit.
     public static let uploadChunk = 512 * 1024
     public static let readChunk = 512 * 1024
     public static let maxAttachmentBytes = 50 * 1024 * 1024
 
-    public init(transport: AtlasTransport) {
+    public init(transport: AtlasTransport, control: AtlasTransport? = nil) {
         self.transport = transport
+        self.control = control ?? transport
     }
 
     private var employeeId: String { transport.employeeId ?? "" }
@@ -66,6 +70,11 @@ public final class AtlasAPI {
         if !artifactIds.isEmpty { p["artifact_ids"] = artifactIds }
         if let replyTo { p["reply_to_message_id"] = replyTo }
         return try await transport.call("conversations.send", p, retrySafe: true)
+    }
+
+    /// "Pare tudo" through the control lane. Repeating it is harmless (nothing more to pause).
+    public func stopAll() async throws -> [String: Any] {
+        try await control.call("control.stop", ["employee_id": control.employeeId ?? employeeId], retrySafe: true)
     }
 
     public func confirmMemory(_ memoryId: String) async throws {

@@ -35,7 +35,12 @@ final class AppController: ObservableObject {
             guard let sup else { throw SupervisorError.notRunning }
             return try sup.session()
         }
-        model = AtlasViewModel(api: AtlasAPI(transport: connection))
+        // A3-04: "Pare tudo" has its own socket and queue; it never waits behind the conversation.
+        let controlLane = AtlasConnection(timeout: 10) {
+            guard let sup else { throw SupervisorError.notRunning }
+            return try sup.session()
+        }
+        model = AtlasViewModel(api: AtlasAPI(transport: connection, control: controlLane))
         connection.onStateChange = { [weak model] state in
             Task { @MainActor in model?.setConnectionState(state) }
         }
@@ -43,6 +48,7 @@ final class AppController: ObservableObject {
             guard let sup else { throw SupervisorError.notRunning }
             try await Task.detached { try sup.restart() }.value
             connection.reset()
+            controlLane.reset()
         }
         model.serviceStatus = { [sup] in
             guard let sup else { return "Supervisor indisponível" }
@@ -210,6 +216,11 @@ struct ConversationView: View {
                 TextField("Converse com o Atlas… (\"pare\" interrompe o trabalho)", text: $text, axis: .vertical)
                     .textFieldStyle(.roundedBorder).lineLimit(1...5)
                     .onSubmit(send)
+                Button(role: .destructive) { Task { await model.stopAll() } } label: {
+                    Label(model.isStopping ? "Parando…" : "Parar tudo", systemImage: "stop.circle")
+                }
+                .help("Interrompe o trabalho agora (⌘.). Funciona mesmo durante um envio.")
+                .accessibilityLabel("Parar todo o trabalho")
                 Toggle("Como tarefa", isOn: $asTask).toggleStyle(.checkbox)
                     .help("Envia direto como tarefa, sem interpretação")
                 Button(model.isSending ? "Enviando…" : "Enviar", action: send)

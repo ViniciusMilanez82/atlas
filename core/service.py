@@ -51,7 +51,7 @@ OWNER_ONLY = {
     "artifacts.upload",
     "artifacts.import",
 }
-OWNER_OR_DEVICE = {"conversations.send", "tasks.create"}
+OWNER_OR_DEVICE = {"conversations.send", "tasks.create", "control.stop", "tasks.update_instruction"}
 
 
 class CoreService:
@@ -108,6 +108,8 @@ class CoreService:
             "artifacts.upload": self._upload,
             "artifacts.import": self._import,
             "artifacts.read": self._read,
+            "control.stop": self._control_stop,
+            "tasks.update_instruction": self._update_instruction,
         }
 
     # ------------------------------------------------------------------ dispatch
@@ -256,6 +258,45 @@ class CoreService:
                     (aid, tid),
                 )
         return {"task": self.tasks.get(tid)}  # the task exists before anyone says "started"
+
+    def _control_stop(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
+        """Priority control lane (A3-04, spec 6.2): no model, no conversation routing, no upload queue.
+
+        Persists the order and the new control epoch, revokes every lease (fencing) and asks in-flight
+        operations to stop. What was already sent is reported as happened/uncertain, never as undone.
+        """
+        actor = self._owner_actor(s)
+        origin = "local_app" if s.actor.channel == "local_app" else "paired_device"
+        rep = self.tasks.stop_all(actor=actor, employee_id=s.employee_id, origin=origin)
+        cancel_requested: list[str] = []
+        for tid in rep.paused_tasks:
+            cancel_requested += self.broker.request_cancel(tid)
+        return {
+            "stopped": True,
+            "control_epoch": rep.control_epoch,
+            "paused_tasks": rep.paused_tasks,
+            "in_flight_actions": rep.in_flight_actions,
+            "cancel_requested": cancel_requested,
+            "unknown_actions": rep.unknown_actions,
+            "elapsed_ms": round(rep.elapsed_ms, 2),
+        }
+
+    def _update_instruction(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
+        """Explicit correction of one task (A3-03): same path as a correction typed in the conversation."""
+        task = self._check_task(s, p["task_id"])
+        conv = self.conn.execute("SELECT conversation_id FROM tasks WHERE id = ?", (p["task_id"],)).fetchone()[0]
+        cid = conv or self.conversation.current(s.employee_id)
+        out = self.conversation.handle(
+            self._owner_actor(s),
+            s.employee_id,
+            {
+                "conversation_id": cid,
+                "client_message_id": p["client_message_id"],
+                "text": p["text"],
+                "task_id": task["task_id"],
+            },
+        )
+        return {**out, "message_id": out["message"]["message_id"]}
 
     def _task_get(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
         return {"task": self._check_task(s, p["task_id"])}
