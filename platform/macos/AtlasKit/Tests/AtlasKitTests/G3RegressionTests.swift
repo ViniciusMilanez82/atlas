@@ -222,5 +222,38 @@ final class G3RegressionTests: XCTestCase {
         let profiles = try XCTUnwrap(intel["profiles"] as? [String: Any])
         XCTAssertEqual(Set(profiles.keys), ["light", "general", "deep"])
     }
+
+    /// N06/N12: the Memory screen lists, corrects without a source id and forgets with the chosen scope.
+    func testMemoryScreenActions() async throws {
+        final class MemCore: AtlasTransport {
+            var employeeId: String? = "emp-1"
+            var calls: [(String, [String: Any])] = []
+            func call(_ m: String, _ p: [String: Any], retrySafe: Bool) async throws -> [String: Any] {
+                calls.append((m, p))
+                switch m {
+                case "memories.list":
+                    return ["memories": [["memory_id": "mem-1", "type": "PREFERENCE", "status": "proposed",
+                                          "sensitivity": "INTERNAL", "version": 1, "content": "relatórios curtos",
+                                          "source_kind": "owner_message"]]]
+                case "memories.forget_preview":
+                    return ["memory_versions": 1, "messages": 2, "observations": 0, "outside_atlas": "cópias externas não"]
+                default: return [:]
+                }
+            }
+        }
+        let core = MemCore()
+        let vm = AtlasViewModel(api: AtlasAPI(transport: core))
+        await vm.loadMemories()
+        let item = try XCTUnwrap(vm.memories.first)
+        XCTAssertEqual(item.typeText, "Preferência")
+        let preview = await vm.forgetPreviewText(item)
+        XCTAssertTrue(preview.contains("2 mensagem(ns)"))
+        await vm.correctMemory(item, newContent: "relatórios bem curtos")
+        let correct = try XCTUnwrap(core.calls.first { $0.0 == "memories.correct" })
+        XCTAssertNil(correct.1["source_id"])
+        XCTAssertEqual(correct.1["expected_version"] as? Int, 1)
+        await vm.forget(item, scope: "stop_using")
+        XCTAssertEqual(core.calls.first { $0.0 == "memories.delete" }?.1["scope"] as? String, "stop_using")
+    }
 }
 

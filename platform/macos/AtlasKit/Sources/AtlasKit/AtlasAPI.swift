@@ -82,6 +82,30 @@ public final class AtlasAPI {
         try await control.call("control.stop", ["employee_id": control.employeeId ?? employeeId], retrySafe: true)
     }
 
+    // MARK: memory and files screens (N06/N12)
+
+    public func memories(statuses: [String] = ["proposed", "confirmed", "disputed"]) async throws -> [[String: Any]] {
+        try await read("memories.list", ["statuses": statuses, "limit": 300])["memories"] as? [[String: Any]] ?? []
+    }
+
+    public func forgetPreview(_ memoryId: String) async throws -> [String: Any] {
+        try await read("memories.forget_preview", ["memory_id": memoryId])
+    }
+
+    public func forget(_ memoryId: String, scope: String) async throws -> [String: Any] {
+        try await write("memories.delete", ["memory_id": memoryId, "scope": scope])
+    }
+
+    public func correctMemory(_ memoryId: String, version: Int, content: String) async throws {
+        try await write("memories.correct", ["memory_id": memoryId, "expected_version": version, "content": content])
+    }
+
+    public func exportMemories() async throws -> [String: Any] { try await read("memories.export") }
+
+    public func files() async throws -> [[String: Any]] {
+        try await read("artifacts.all", ["limit": 300])["artifacts"] as? [[String: Any]] ?? []
+    }
+
     public func confirmMemory(_ memoryId: String) async throws {
         try await write("memories.confirm", ["memory_id": memoryId])
     }

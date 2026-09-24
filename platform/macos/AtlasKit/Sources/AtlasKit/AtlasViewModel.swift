@@ -70,6 +70,64 @@ public struct Attachment: Identifiable, Equatable {
     public let sha256: String
 }
 
+public struct MemoryItem: Identifiable, Equatable {
+    public let id: String
+    public let type: String
+    public let status: String
+    public let sensitivity: String
+    public let version: Int
+    public let content: String
+    public let validFrom: String?
+    public let validUntil: String?
+    public let sourceKind: String
+
+    init(_ d: [String: Any]) {
+        id = d["memory_id"] as? String ?? ""
+        type = d["type"] as? String ?? ""
+        status = d["status"] as? String ?? ""
+        sensitivity = d["sensitivity"] as? String ?? ""
+        version = d["version"] as? Int ?? 1
+        content = d["content"] as? String ?? ""
+        validFrom = d["valid_from"] as? String
+        validUntil = d["valid_until"] as? String
+        sourceKind = d["source_kind"] as? String ?? ""
+    }
+
+    public var typeText: String {
+        ["IDENTITY": "Identidade", "PREFERENCE": "Preferência", "FACT": "Fato", "EPISODE": "Episódio",
+         "PROCEDURE": "Procedimento"][type] ?? type
+    }
+
+    public var statusText: String {
+        ["proposed": "aguardando confirmação", "confirmed": "confirmada", "disputed": "contestada",
+         "deleted": "não usada"][status] ?? status
+    }
+}
+
+public struct FileItem: Identifiable, Equatable {
+    public let id: String
+    public let name: String
+    public let version: Int
+    public let sizeBytes: Int
+    public let relation: String?
+    public let analysisState: String?
+
+    init(_ d: [String: Any]) {
+        id = d["id"] as? String ?? ""
+        name = d["name"] as? String ?? ""
+        version = d["version"] as? Int ?? 1
+        sizeBytes = d["size_bytes"] as? Int ?? 0
+        relation = d["relation"] as? String
+        analysisState = d["analysis_state"] as? String
+    }
+
+    public var analysisText: String {
+        ["READY_FOR_ANALYSIS": "compreendido", "PARTIAL": "compreendido em parte",
+         "UNSUPPORTED": "armazenado, ainda não analisável", "FAILED": "não foi possível ler"][analysisState ?? ""]
+            ?? "—"
+    }
+}
+
 /// Result of one file of an import queue (A3-21): every file ends imported or with an explicit error.
 public struct ImportResult: Identifiable, Equatable {
     public let id = UUID()
@@ -137,6 +195,8 @@ public final class AtlasViewModel: ObservableObject {
     /// True while the outcome of a send is unknown (reply lost): "confirmando recebimento".
     @Published public private(set) var confirmingReceipt = false
     /// Explicit targets chosen by the owner (A3-14, A3-15): answer THIS question / talk about THIS task.
+    @Published public private(set) var memories: [MemoryItem] = []
+    @Published public private(set) var files: [FileItem] = []
     @Published public private(set) var replyTarget: ChatMessage?
     @Published public private(set) var taskTarget: TaskItem?
 
@@ -377,6 +437,71 @@ public final class AtlasViewModel: ObservableObject {
         }
         if unknown > 0 { parts.append("\(unknown) ação(ões) com resultado incerto serão conferidas antes de qualquer repetição.") }
         return parts.joined(separator: " ")
+    }
+
+    // MARK: Memory and Files screens (N06/N12)
+
+    public func loadMemories() async {
+        await attempt { memories = try await api.memories().map(MemoryItem.init) }
+    }
+
+    public func confirmMemory(id: String) async {
+        await attempt {
+            try await api.confirmMemory(id)
+            notice = "Memória confirmada."
+        }
+        await loadMemories()
+    }
+
+    /// Plain-language scope of a deletion, shown BEFORE the owner confirms it (spec 8.4).
+    public func forgetPreviewText(_ item: MemoryItem) async -> String {
+        do {
+            let r = try await api.forgetPreview(item.id)
+            return "Serão apagados: esta memória (\(r["memory_versions"] as? Int ?? 0) versão(ões)), "
+                + "\(r["messages"] as? Int ?? 0) mensagem(ns) da conversa e "
+                + "\(r["observations"] as? Int ?? 0) registro(s) de trabalho que a contêm. "
+                + (r["outside_atlas"] as? String ?? "")
+        } catch {
+            return Self.friendly(error)
+        }
+    }
+
+    /// scope: "stop_using" (keep history visible, never use again) or "erase" (remove the content).
+    public func forget(_ item: MemoryItem, scope: String) async {
+        await attempt {
+            _ = try await api.forget(item.id, scope: scope)
+            notice = scope == "erase" ? "Conteúdo apagado do Atlas." : "O Atlas não vai mais usar esta memória."
+        }
+        await loadMemories()
+    }
+
+    public func correctMemory(_ item: MemoryItem, newContent: String) async {
+        let text = newContent.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        await attempt {
+            try await api.correctMemory(item.id, version: item.version, content: text)
+            notice = "Memória corrigida (nova versão; a anterior fica no histórico)."
+        }
+        await loadMemories()
+    }
+
+    /// Writes the export (manifest + memories) to the file the owner chose.
+    @discardableResult
+    public func exportMemories(to destination: URL) async -> Bool {
+        do {
+            let doc = try await api.exportMemories()
+            let data = try JSONSerialization.data(withJSONObject: doc, options: [.prettyPrinted, .sortedKeys])
+            try await Task.detached(priority: .userInitiated) { try data.write(to: destination, options: .atomic) }.value
+            notice = "Memórias exportadas para \(destination.lastPathComponent)."
+            return true
+        } catch {
+            lastError = Self.friendly(error)
+            return false
+        }
+    }
+
+    public func loadFiles() async {
+        await attempt { files = try await api.files().map(FileItem.init) }
     }
 
     public func confirmMemory(_ message: ChatMessage) async {

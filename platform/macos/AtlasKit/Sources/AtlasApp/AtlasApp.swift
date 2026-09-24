@@ -164,6 +164,8 @@ struct RootView: View {
             TabView {
                 ConversationView().tabItem { Text("Conversa") }
                 WorkView().tabItem { Text("Trabalho") }
+                MemoryView().tabItem { Text("Memória") }
+                FilesView().tabItem { Text("Arquivos") }
                 ApprovalsView().tabItem { Text("Aprovações") }
                 SettingsView().tabItem { Text("Configurações") }
                 HealthView().tabItem { Text("Saúde") }
@@ -453,6 +455,100 @@ struct ApprovalsView: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Memory and files (N06/N12)
+
+struct MemoryView: View {
+    @EnvironmentObject var model: AtlasViewModel
+    @State private var editing: MemoryItem?
+    @State private var draft = ""
+    @State private var forgetting: MemoryItem?
+    @State private var forgetText = ""
+
+    var body: some View {
+        VStack(alignment: .leading) {
+            HStack {
+                Text("O que o \(model.name) sabe").font(.headline)
+                Spacer()
+                Button("Exportar…") { exportAll() }
+            }
+            List(model.memories) { m in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(m.content).textSelection(.enabled)
+                    Text("\(m.typeText) · \(m.statusText) · fonte: \(m.sourceKind == "owner_message" ? "você" : m.sourceKind)"
+                         + (m.sensitivity == "SENSITIVE" ? " · sensível" : "")
+                         + (m.validFrom != nil || m.validUntil != nil
+                            ? " · vale de \(m.validFrom ?? "…") até \(m.validUntil ?? "…")" : ""))
+                        .font(.caption).foregroundStyle(.secondary)
+                    HStack {
+                        if m.status == "proposed" {
+                            Button("Confirmar") { Task { await model.confirmMemory(id: m.id) } }
+                        }
+                        Button("Corrigir") { editing = m; draft = m.content }
+                        Button("Esquecer…", role: .destructive) {
+                            forgetting = m
+                            Task { forgetText = await model.forgetPreviewText(m) }
+                        }
+                    }.buttonStyle(.link).font(.caption)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+        .task { await model.loadMemories() }
+        .sheet(item: $editing) { m in
+            VStack(alignment: .leading) {
+                Text("Corrigir memória (a versão anterior fica no histórico; a validade não muda)").font(.caption)
+                TextField("Conteúdo", text: $draft, axis: .vertical).lineLimit(2...6)
+                HStack {
+                    Spacer()
+                    Button("Cancelar") { editing = nil }
+                    Button("Salvar") { Task { await model.correctMemory(m, newContent: draft); editing = nil } }
+                        .keyboardShortcut(.defaultAction)
+                }
+            }.padding().frame(minWidth: 480)
+        }
+        .sheet(item: $forgetting) { m in
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Esquecer: «\(m.content.prefix(120))»").font(.headline)
+                Text(forgetText.isEmpty ? "Calculando o alcance…" : forgetText).font(.callout)
+                HStack {
+                    Spacer()
+                    Button("Cancelar") { forgetting = nil }
+                    Button("Não usar mais") { Task { await model.forget(m, scope: "stop_using"); forgetting = nil } }
+                    Button("Apagar o conteúdo", role: .destructive) {
+                        Task { await model.forget(m, scope: "erase"); forgetting = nil }
+                    }
+                }
+            }.padding().frame(minWidth: 520)
+        }
+    }
+
+    private func exportAll() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "memorias-atlas.json"
+        panel.allowedContentTypes = [.json]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task { await model.exportMemories(to: url) }
+    }
+}
+
+struct FilesView: View {
+    @EnvironmentObject var model: AtlasViewModel
+
+    var body: some View {
+        List(model.files) { f in
+            HStack {
+                VStack(alignment: .leading) {
+                    Text("\(f.name) v\(f.version)")
+                    Text("\(f.relation == "output" ? "Entrega" : "Entrada") · \(f.analysisText) · "
+                         + ByteCountFormatter.string(fromByteCount: Int64(f.sizeBytes), countStyle: .file))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .task { await model.loadFiles() }
     }
 }
 

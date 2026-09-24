@@ -567,6 +567,76 @@ class MemoryManager:
         hits = [h for h in (self._hit(r, when) for r in rows) if h is not None]
         return hits[:limit]
 
+    def list_for_owner(self, employee_id: str, statuses: tuple[str, ...], limit: int) -> list[dict[str, Any]]:
+        """The Memory screen (spec 8.4, 21.2): content, source, validity, confirmation and version."""
+        rows = self.conn.execute(
+            "SELECT m.id, m.type, m.status, m.sensitivity, m.current_version, m.updated_at, v.content,"  # noqa: S608
+            " v.valid_from, v.valid_until, s.kind AS source_kind, s.trust AS source_trust"
+            " FROM memories m JOIN memory_versions v ON v.memory_id = m.id AND v.version = m.current_version"
+            " JOIN sources s ON s.id = v.source_id WHERE m.employee_id = ?"
+            f" AND m.status IN ({','.join('?' * len(statuses))}) ORDER BY m.updated_at DESC LIMIT ?",
+            (employee_id, *statuses, limit),
+        ).fetchall()
+        return [
+            {
+                "memory_id": r["id"],
+                "type": r["type"],
+                "status": r["status"],
+                "sensitivity": r["sensitivity"],
+                "version": r["current_version"],
+                "content": r["content"],
+                "valid_from": r["valid_from"],
+                "valid_until": r["valid_until"],
+                "source_kind": r["source_kind"],
+                "source_trust": r["source_trust"],
+                "updated_at": r["updated_at"],
+            }
+            for r in rows
+        ]
+
+    def export_for_owner(self, employee_id: str) -> dict[str, Any]:
+        """Export with manifest (spec 9.3): every memory with all versions and sources; forgotten content
+        is not exported (its tombstone ids are, without content)."""
+        memories = []
+        for m in self.conn.execute(
+            "SELECT id, type, status, sensitivity, created_at FROM memories WHERE employee_id = ? ORDER BY created_at",
+            (employee_id,),
+        ).fetchall():
+            versions = [
+                {
+                    "version": v["version"],
+                    "content": v["content"],
+                    "valid_from": v["valid_from"],
+                    "valid_until": v["valid_until"],
+                    "recorded_at": v["recorded_at"],
+                    "source": {"kind": v["kind"], "trust": v["trust"], "ref": v["ref"]},
+                }
+                for v in self.conn.execute(
+                    "SELECT v.*, s.kind, s.trust, s.ref FROM memory_versions v JOIN sources s ON s.id = v.source_id"
+                    " WHERE v.memory_id = ? ORDER BY v.version",
+                    (m["id"],),
+                )
+                if v["content"]
+            ]
+            memories.append({**dict(m), "versions": versions})
+        tombstones = [
+            {"memory_id": t[0], "scope": t[1], "created_at": t[2]}
+            for t in self.conn.execute(
+                "SELECT memory_id, scope, created_at FROM forget_tombstones WHERE employee_id = ?", (employee_id,)
+            )
+        ]
+        return {
+            "manifest": {
+                "schema": "atlas.memories.export/1",
+                "employee_id": employee_id,
+                "exported_at": to_utc_str(self.clock.now()),
+                "memories": len(memories),
+                "note": "conteúdo esquecido não é exportado; os tombstones registram apenas o fato",
+            },
+            "memories": memories,
+            "forgotten": tombstones,
+        }
+
     def history(self, memory_id: str) -> list[tuple[int, str, str]]:
         """(version, content, source_id) oldest first. Superseded versions remain traceable."""
         return [

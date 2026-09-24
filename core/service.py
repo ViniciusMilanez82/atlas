@@ -49,6 +49,7 @@ OWNER_ONLY = {
     "credentials.register",
     "intelligence.check",
     "memories.confirm",
+    "memories.export",
     "artifacts.upload",
     "artifacts.import",
 }
@@ -111,6 +112,9 @@ class CoreService:
             "control.stop": self._control_stop,
             "tasks.reevaluate": self._task_reevaluate,
             "memories.forget_preview": self._mem_forget_preview,
+            "memories.list": self._mem_list,
+            "memories.export": self._mem_export,
+            "artifacts.all": self._artifacts_all,
             "tasks.update_instruction": self._update_instruction,
         }
 
@@ -378,12 +382,15 @@ class CoreService:
         return {"memory_id": mid}
 
     def _mem_correct(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
+        source_id = p.get("source_id") or self.memory.add_source(  # the owner correcting on the Memory screen
+            actor=s.actor, kind="owner_message", ref="app:memory-screen", employee_id=s.employee_id
+        )
         v = self.memory.correct(
             p["memory_id"],
             actor=s.actor,
             expected_version=p["expected_version"],
             content=p["content"],
-            source_id=p["source_id"],
+            source_id=source_id,
             employee_id=s.employee_id,  # session -> employee -> memory (A3-26)
             change_validity=bool(p.get("change_validity", False)),  # A3-16: window kept unless asked
             **{k: p[k] for k in ("valid_from", "valid_until") if k in p},
@@ -394,6 +401,26 @@ class CoreService:
         self.memory.require_owned(p["memory_id"], s.employee_id)
         reach = self.memory.delete(p["memory_id"], actor=s.actor, scope=p.get("scope", "erase"))
         return {"memory_id": p["memory_id"], "deleted": True, **reach}
+
+    def _mem_list(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
+        statuses = tuple(p.get("statuses") or ("proposed", "confirmed", "disputed"))
+        return {"memories": self.memory.list_for_owner(s.employee_id, statuses, int(p.get("limit", 200)))}
+
+    def _mem_export(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
+        if s.actor.kind != "owner":
+            raise AtlasError(ErrorCode.UNAUTHORIZED, "only the owner exports memories")
+        return self.memory.export_for_owner(s.employee_id)
+
+    def _artifacts_all(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
+        """The Files screen (spec 21.2): inputs and outputs, versions, and what was understood of each."""
+        rows = self.conn.execute(
+            "SELECT a.id, a.name, a.version, a.mime_type, a.size_bytes, a.sha256, a.task_id, a.classification,"
+            " a.created_at, (SELECT relation FROM artifact_links l WHERE l.artifact_id = a.id LIMIT 1) AS relation,"
+            " (SELECT state FROM document_extractions e WHERE e.artifact_id = a.id) AS analysis_state"
+            " FROM artifacts a WHERE a.employee_id = ? ORDER BY a.created_at DESC LIMIT ?",
+            (s.employee_id, int(p.get("limit", 200))),
+        ).fetchall()
+        return {"artifacts": [dict(r) for r in rows]}
 
     def _mem_forget_preview(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
         self.memory.require_owned(p["memory_id"], s.employee_id)
