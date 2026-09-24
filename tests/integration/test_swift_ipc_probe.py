@@ -45,7 +45,8 @@ def test_swift_client_talks_to_python_core(world: World) -> None:
         )
         assert proc.returncode == 0, proc.stderr
         out = json.loads(proc.stdout)
-        assert out["health"]["result"]["status"] == "ok"
+        health = out["health"]["result"]
+        assert health["status"] == "degraded" and health["components"]["worker"] == "not_started"  # A3-06
         task = out["created"]["result"]["task"]
         assert task["state"] == "CREATED"
         row = world.conn.execute("SELECT objective FROM tasks WHERE id = ?", (task["task_id"],)).fetchone()

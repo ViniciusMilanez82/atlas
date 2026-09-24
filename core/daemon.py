@@ -110,6 +110,9 @@ class Core:
                 )
                 return owner_id, emp.id
             TaskEngine(conn, self.clock).recover_after_restart()
+            conn.execute(  # A3-11: nobody is processing a request right after a restart
+                "UPDATE request_receipts SET state = 'RECEIVED', lease_expires_at = NULL WHERE state = 'PROCESSING'"
+            )
             return str(row[1]), str(row[0])
         finally:
             conn.close()

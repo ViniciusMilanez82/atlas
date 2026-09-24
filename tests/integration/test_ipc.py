@@ -281,7 +281,9 @@ def test_unix_socket_server_in_private_directory(
         s.connect(str(server.path))
         client = Client(s)
         assert client.hello(sessions.issue(world.owner, world.employee.id))["hello"] == "ok"
-        assert client.call("system.health")["result"]["status"] == "ok"
+        health = client.call("system.health")["result"]
+        # no worker in this transport test: health must not claim an executor (A3-06)
+        assert health["status"] == "degraded" and health["components"]["worker"] == "not_started"
         s.close()
     finally:
         server.close()
