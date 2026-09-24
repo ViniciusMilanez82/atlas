@@ -102,6 +102,16 @@ public final class AtlasAPI {
 
     public func exportMemories() async throws -> [String: Any] { try await read("memories.export") }
 
+    public func capabilityRequests() async throws -> [[String: Any]] {
+        try await read("capabilities.list")["requests"] as? [[String: Any]] ?? []
+    }
+
+    public func decideCapability(_ requestId: String, approve: Bool, note: String = "") async throws {
+        var p: [String: Any] = ["request_id": requestId, "decision": approve ? "APPROVE" : "REJECT"]
+        if !note.isEmpty { p["note"] = note }
+        try await write("capabilities.decide", p)
+    }
+
     public func files() async throws -> [[String: Any]] {
         try await read("artifacts.all", ["limit": 300])["artifacts"] as? [[String: Any]] ?? []
     }

@@ -441,6 +441,20 @@ struct ApprovalsView: View {
     @EnvironmentObject var model: AtlasViewModel
 
     var body: some View {
+        VStack(alignment: .leading) {
+            if !model.capabilityRequests.isEmpty {
+                Text("Pedidos de recurso").font(.headline)
+                ForEach(Array(model.capabilityRequests.enumerated()), id: \.offset) { _, r in
+                    CapabilityRequestRow(item: r)
+                }
+                Divider()
+            }
+            approvalsList
+        }
+        .task { await model.loadCapabilityRequests() }
+    }
+
+    private var approvalsList: some View {
         List(Array(model.approvals.enumerated()), id: \.offset) { _, ap in
             VStack(alignment: .leading, spacing: 4) {
                 Text("\(ap["action_type"] as? String ?? "") → \(ap["destination"] as? String ?? "")").font(.headline)
@@ -455,6 +469,32 @@ struct ApprovalsView: View {
                 }
             }
         }
+    }
+}
+
+struct CapabilityRequestRow: View {
+    @EnvironmentObject var model: AtlasViewModel
+    let item: [String: Any]
+
+    var body: some View {
+        let req = item["request"] as? [String: Any] ?? [:]
+        let price = req["price"] as? [String: Any] ?? [:]
+        let renew = ["once": "pagamento único", "monthly": "mensal", "yearly": "anual"][price["recurrence"] as? String ?? ""] ?? ""
+        VStack(alignment: .leading, spacing: 4) {
+            Text("\(req["provider"] as? String ?? "") — \(req["missing_capability"] as? String ?? "")").bold()
+            Text(req["problem"] as? String ?? "").font(.caption)
+            Text("Preço observado: \(price["amount"] as? String ?? "") \(price["currency"] as? String ?? "") (\(renew))")
+                .font(.caption)
+            Text("Dados enviados: \((req["data_shared"] as? [String] ?? []).joined(separator: ", "))").font(.caption)
+            Text("Alternativas: \((req["alternatives"] as? [String] ?? []).joined(separator: "; "))").font(.caption)
+            Text("Aprovar não faz compra nem libera dados sensíveis.").font(.caption2).foregroundStyle(.secondary)
+            HStack {
+                Button("Aprovar") { Task { await model.decideCapability(item["request_id"] as? String ?? "", approve: true) } }
+                Button("Recusar", role: .destructive) {
+                    Task { await model.decideCapability(item["request_id"] as? String ?? "", approve: false) }
+                }
+            }
+        }.padding(.vertical, 4)
     }
 }
 

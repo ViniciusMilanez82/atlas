@@ -196,6 +196,7 @@ public final class AtlasViewModel: ObservableObject {
     @Published public private(set) var confirmingReceipt = false
     /// Explicit targets chosen by the owner (A3-14, A3-15): answer THIS question / talk about THIS task.
     @Published public private(set) var memories: [MemoryItem] = []
+    @Published public private(set) var capabilityRequests: [[String: Any]] = []
     @Published public private(set) var files: [FileItem] = []
     @Published public private(set) var replyTarget: ChatMessage?
     @Published public private(set) var taskTarget: TaskItem?
@@ -498,6 +499,22 @@ public final class AtlasViewModel: ObservableObject {
             lastError = Self.friendly(error)
             return false
         }
+    }
+
+    /// N18: pending requests for a missing capability (need, price, renewal, data, alternatives).
+    public func loadCapabilityRequests() async {
+        await attempt { capabilityRequests = try await api.capabilityRequests() }
+    }
+
+    public func decideCapability(_ requestId: String, approve: Bool, note: String = "") async {
+        await attempt {
+            try await api.decideCapability(requestId, approve: approve, note: note)
+            notice = approve
+                ? "Aprovado como decisão. Nenhuma compra foi feita e nenhum dado sensível foi liberado."
+                : "Recusado. O Atlas vai seguir com uma alternativa ou explicar a limitação."
+        }
+        await loadCapabilityRequests()
+        await refresh()
     }
 
     public func loadFiles() async {
