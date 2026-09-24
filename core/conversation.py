@@ -1083,7 +1083,8 @@ class ConversationService:
                 task_id=None,
                 employee_id=employee_id,
                 purpose="conversation",
-                req=Requirements(structured_output=True, data_classification=built.classification),
+                # a conversational reply is light work (automatic mode prefers the light profile)
+                req=Requirements(structured_output=True, data_classification=built.classification, complexity="light"),
                 request=ModelRequest(
                     "auto",
                     built.messages,

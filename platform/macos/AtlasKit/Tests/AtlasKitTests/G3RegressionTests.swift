@@ -211,4 +211,16 @@ final class G3RegressionTests: XCTestCase {
         let name = await vm.suggestedFileName(artifactId: "a-1")
         XCTAssertEqual(name, "relatorio.md")
     }
+
+    /// N13: the plain-language mode is a real setting sent to the core, with all three profiles.
+    func testModeAndProfilesAreSaved() async throws {
+        let doc = AtlasAPI.settingsDocument(monthlyMinor: 500, perTaskMinor: 100, modelId: "gpt-6-sol",
+                                            acceptReferencePrices: true, mode: "economic",
+                                            lightModelId: "gpt-6-luna", deepModelId: "gpt-6-astra")
+        let intel = try XCTUnwrap(doc["intelligence"] as? [String: Any])
+        XCTAssertEqual(intel["mode"] as? String, "economic")
+        let profiles = try XCTUnwrap(intel["profiles"] as? [String: Any])
+        XCTAssertEqual(Set(profiles.keys), ["light", "general", "deep"])
+    }
 }
+

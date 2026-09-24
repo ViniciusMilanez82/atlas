@@ -409,7 +409,12 @@ class AgentRunner:
         classification = highest(task["data_policy"], built.classification)
         resp = self.model.call(
             task_id=task["task_id"],
-            req=Requirements(structured_output=True, data_classification=classification),
+            # repairing a failed verification is hard work (automatic mode prefers the strongest profile)
+            req=Requirements(
+                structured_output=True,
+                data_classification=classification,
+                complexity="hard" if self._last_verification is not None else "normal",
+            ),
             request=ModelRequest(
                 "auto",
                 built.messages,

@@ -450,6 +450,9 @@ class CoreService:
                 "configured": bool(intel and intel.configured),
                 "reason": intel.reason if intel else "intelligence setup not loaded",
                 "model_id": intel.model_id if intel else None,
+                "mode": (json.loads(row[1])["intelligence"].get("mode") if row else None),
+                # per profile: validated? priced? - the UI lists what still needs a check (spec 11.4)
+                "profiles": self.intelligence.profiles(json.loads(row[1])) if (row and self.intelligence) else [],
             },
         }
 

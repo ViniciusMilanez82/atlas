@@ -479,7 +479,23 @@ struct SettingsView: View {
                         value: $model.settings.monthlyMinor, in: 1...1_000_000, step: 50)
                 Stepper("Teto por tarefa: \(MoneyText.format(minor: model.settings.perTaskMinor, currency: model.settings.currency))",
                         value: $model.settings.perTaskMinor, in: 1...100_000, step: 10)
-                TextField("Modelo (ID exato da API)", text: $model.settings.modelId)
+                Picker("Modo de inteligência", selection: $model.settings.mode) {
+                    Text("Automático").tag("automatic")
+                    Text("Econômico").tag("economic")
+                    Text("Máxima qualidade").tag("max_quality")
+                }
+                .help("Automático escolhe pelo tipo de trabalho; Econômico usa o perfil validado mais barato; "
+                      + "Máxima qualidade usa o mais forte validado. Nenhum modo aumenta o orçamento.")
+                DisclosureGroup("Avançado: modelos por perfil") {
+                    TextField("Geral (ID exato da API)", text: $model.settings.modelId)
+                    TextField("Leve (ID exato da API)", text: $model.settings.lightModelId)
+                    TextField("Profundo (ID exato da API)", text: $model.settings.deepModelId)
+                    ForEach(["light", "general", "deep"], id: \.self) { p in
+                        Text("\(["light": "Leve", "general": "Geral", "deep": "Profundo"][p] ?? p): "
+                             + ((model.settings.profileStatus[p] ?? false) ? "validado" : "falta validar"))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
                 Toggle("Aceito usar a tabela de preços de referência \(model.settings.priceTable) como ESTIMATIVA",
                        isOn: $model.settings.acceptReferencePrices)
                 Text(model.settings.pricesVerified
@@ -495,8 +511,17 @@ struct SettingsView: View {
             Section("Testar inteligência (uma chamada paga pequena)") {
                 Stepper("Teto do teste: \(MoneyText.format(minor: checkCents, currency: model.settings.currency))",
                         value: $checkCents, in: 1...50)
-                Button(model.isChecking ? "Testando…" : "Testar agora") { Task { await model.testIntelligence(maxCents: checkCents) } }
-                    .disabled(model.isChecking)
+                HStack {
+                    Button(model.isChecking ? "Testando…" : "Testar geral") {
+                        Task { await model.testIntelligence(maxCents: checkCents) }
+                    }
+                    Button("Testar leve") {
+                        Task { await model.testIntelligence(maxCents: checkCents, modelId: model.settings.lightModelId) }
+                    }
+                    Button("Testar profundo") {
+                        Task { await model.testIntelligence(maxCents: checkCents, modelId: model.settings.deepModelId) }
+                    }
+                }.disabled(model.isChecking)
             }
         }
     }

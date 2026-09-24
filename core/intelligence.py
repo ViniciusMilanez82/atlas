@@ -40,6 +40,9 @@ PURPOSE = "model_inference"
 CAPS = ModelCapabilities(structured_output=True)
 # Part of the validation binding (A3-29): changing what Atlas relies on requires a new check.
 CAPABILITY_VERSION = "caps-" + hashlib.sha256(repr(CAPS).encode()).hexdigest()[:12]
+# Provisional quality order of the profiles until Atlas evaluations with real models exist (N13, D-03):
+# it only orders VALIDATED candidates; it never makes an unvalidated model usable.
+PROFILE_RANK = {"light": 1, "general": 2, "deep": 3}
 _CHECK_LOCK = threading.Lock()
 
 
@@ -140,6 +143,45 @@ class IntelligenceSetup:
             return gate
         return cfg, model
 
+    def validated_models(self) -> set[str]:
+        """Models whose LATEST check for the current credential/endpoint/capabilities passed (A3-29)."""
+        try:
+            ref = self._credential_ref()
+        except AtlasError:
+            return set()
+        ok: set[str] = set()
+        rows = self.conn.execute(
+            "SELECT model_id, passed FROM intelligence_validations WHERE provider = 'openai' AND credential_ref = ?"
+            " AND endpoint = ? AND capability_version = ? ORDER BY checked_at, rowid",
+            (ref, self.destination, CAPABILITY_VERSION),
+        ).fetchall()
+        for model_id, passed in rows:  # the latest result per model wins
+            if passed:
+                ok.add(model_id)
+            else:
+                ok.discard(model_id)
+        return ok
+
+    def profiles(self, cfg: dict[str, Any]) -> list[dict[str, Any]]:
+        """Every configured profile with what is known about it: validated? priced? (UI: 'o que falta validar')."""
+        ok = self.validated_models()
+        out = []
+        for name, prof in cfg["intelligence"]["profiles"].items():
+            try:
+                self.prices.get(prof["provider"], prof["model_id"])
+                priced = True
+            except KeyError:
+                priced = False
+            out.append({
+                "profile": name,
+                "provider": prof["provider"],
+                "model_id": prof["model_id"],
+                "validated": prof["model_id"] in ok,
+                "priced": priced,
+                "rank": PROFILE_RANK.get(name, 2),
+            })
+        return out
+
     def status(self) -> IntelligenceStatus:
         pre = self._preconditions()
         if isinstance(pre, str):
@@ -165,19 +207,35 @@ class IntelligenceSetup:
         return IntelligenceStatus(True, "ready", model, self.prices.version, self.prices.verified)
 
     def _client(
-        self, cfg: dict[str, Any], model: str, per_call_cap: int | None = None
+        self, cfg: dict[str, Any], model: str, per_call_cap: int | None = None, *, only_model: bool = False
     ) -> BudgetedModelClient:
+        """N13: the router gets every VALIDATED and priced profile, and the mode chosen by the owner
+        really changes the selection (automatic by complexity, economic cheapest, max_quality strongest,
+        manual = the default profile). ``only_model`` pins one model (used by the check itself)."""
+        if only_model:
+            entries = [CatalogEntry("openai", model, "check", 2, CAPS, validated=True)]
+            mode, manual = "manual", model
+        else:
+            entries = [
+                CatalogEntry("openai", p["model_id"], p["profile"], p["rank"], CAPS, validated=True)
+                for p in self.profiles(cfg)
+                if p["validated"] and p["priced"] and p["provider"] == "openai"
+            ]
+            mode = str(cfg["intelligence"].get("mode", "automatic"))
+            manual = model
+            if mode == "manual":
+                entries = [e for e in entries if e.model_id == model]
         provider = OpenAIResponsesProvider(
-            self.key_provider, capabilities={model: CAPS}, base_url=self.base_url
+            self.key_provider, capabilities={e.model_id: CAPS for e in entries}, base_url=self.base_url
         )
         router = ModelRouter(
-            [CatalogEntry("openai", model, "general", 2, CAPS, validated=True)],
+            entries,
             # Sensitive disclosure is decided per purpose by the Egress Guard on the final payload.
             Consent({"openai"}, sensitive_data_providers={"openai"}),
-            mode="manual",
-            manual_model=model,
+            mode=mode,
+            manual_model=manual,
         )
-        del cfg  # ceilings are read live inside each reservation, never from this snapshot (A3-19)
+        # ceilings are read live inside each reservation, never from this snapshot (A3-19)
         return BudgetedModelClient(
             self.conn,
             self.clock,
@@ -241,11 +299,18 @@ class IntelligenceSetup:
         pre = self._preconditions()
         if isinstance(pre, str):
             raise AtlasError(ErrorCode.MODEL_UNSUPPORTED, pre)
-        cfg, configured_model = pre
-        if model_id != configured_model:
+        cfg, _default_model = pre
+        configured = {p["model_id"] for p in cfg["intelligence"]["profiles"].values()}
+        if model_id not in configured:
             raise AtlasError(
-                ErrorCode.INVALID_INPUT, f"save settings with model {model_id} before testing it"
+                ErrorCode.INVALID_INPUT, f"save settings with model {model_id} in a profile before testing it"
             )
+        try:
+            self.prices.get("openai", model_id)
+        except KeyError:
+            raise AtlasError(
+                ErrorCode.MODEL_UNSUPPORTED, f"model {model_id} has no price entry; paid calls stay blocked"
+            ) from None
         report = IntelligenceReport(
             "openai", model_id, self.prices.version, self.prices.verified, to_utc_str(self.clock.now())
         )
@@ -257,7 +322,7 @@ class IntelligenceSetup:
         except (AtlasError, ProviderCallError) as exc:
             report.errors.append(f"model check failed: {type(exc).__name__}")
         if report.model_listed:
-            client = self._client(cfg, model_id, per_call_cap=max_cost_minor)
+            client = self._client(cfg, model_id, per_call_cap=max_cost_minor, only_model=True)
             request = ModelRequest(
                 model_id,
                 (Message(Role.USER, 'Reply with JSON: {"ok": true, "word": "atlas"}.'),),

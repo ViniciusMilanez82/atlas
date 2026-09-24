@@ -185,13 +185,19 @@ public final class AtlasAPI {
 
     /// Reference configuration with the owner's ceilings (minor units).
     public static func settingsDocument(monthlyMinor: Int, perTaskMinor: Int, modelId: String, currency: String = "USD",
-                                        acceptReferencePrices: Bool) -> [String: Any]
+                                        acceptReferencePrices: Bool, mode: String = "automatic",
+                                        lightModelId: String? = nil, deepModelId: String? = nil) -> [String: Any]
     {
-        [
+        // N13: the mode chosen in plain words (Automático/Econômico/Máxima qualidade) is a real setting;
+        // model ids stay in "Avançado". Unvalidated profiles are never used by the core.
+        var profiles: [String: Any] = ["general": ["provider": "openai", "model_id": modelId]]
+        if let lightModelId, !lightModelId.isEmpty { profiles["light"] = ["provider": "openai", "model_id": lightModelId] }
+        if let deepModelId, !deepModelId.isEmpty { profiles["deep"] = ["provider": "openai", "model_id": deepModelId] }
+        return [
             "schema_version": "1.0",
             "intelligence": [
-                "mode": "manual", "default_profile": "general",
-                "profiles": ["general": ["provider": "openai", "model_id": modelId]],
+                "mode": mode, "default_profile": "general",
+                "profiles": profiles,
                 "allow_cross_provider_fallback": false, "max_parallel_research_workers": 2,
                 "max_external_effect_workers": 1,
             ] as [String: Any],

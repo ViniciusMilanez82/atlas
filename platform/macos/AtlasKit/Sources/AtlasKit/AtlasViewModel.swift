@@ -93,7 +93,12 @@ public struct SendEnvelope: Equatable {
 public struct SettingsForm: Equatable {
     public var monthlyMinor = 500
     public var perTaskMinor = 100
-    public var modelId = "gpt-6-sol"
+    public var modelId = "gpt-6-sol"  // "general" profile (default)
+    public var lightModelId = "gpt-6-luna"
+    public var deepModelId = "gpt-6-astra"
+    public var mode = "automatic"  // automatic | economic | max_quality | manual
+    /// Per profile, what the core says: validated for the current key? priced? (spec 11.4)
+    public var profileStatus: [String: Bool] = [:]
     public var currency = "USD"
     public var acceptReferencePrices = false
     public var revision = 0
@@ -512,6 +517,14 @@ public final class AtlasViewModel: ObservableObject {
             let profiles = intel["profiles"] as? [String: Any] ?? [:]
             let profile = profiles[intel["default_profile"] as? String ?? ""] as? [String: Any]
             form.modelId = profile?["model_id"] as? String ?? form.modelId
+            form.lightModelId = (profiles["light"] as? [String: Any])?["model_id"] as? String ?? form.lightModelId
+            form.deepModelId = (profiles["deep"] as? [String: Any])?["model_id"] as? String ?? form.deepModelId
+            form.mode = intel["mode"] as? String ?? form.mode
+        }
+        if let intel = r["intelligence"] as? [String: Any], let profiles = intel["profiles"] as? [[String: Any]] {
+            for p in profiles {
+                if let name = p["profile"] as? String { form.profileStatus[name] = p["validated"] as? Bool ?? false }
+            }
         }
         settings = form
     }
@@ -531,7 +544,8 @@ public final class AtlasViewModel: ObservableObject {
         let form = settings
         let doc = AtlasAPI.settingsDocument(monthlyMinor: form.monthlyMinor, perTaskMinor: form.perTaskMinor,
                                             modelId: form.modelId, currency: form.currency,
-                                            acceptReferencePrices: form.acceptReferencePrices)
+                                            acceptReferencePrices: form.acceptReferencePrices, mode: form.mode,
+                                            lightModelId: form.lightModelId, deepModelId: form.deepModelId)
         do {
             let revision = try await api.saveSettings(doc, expectedRevision: form.revision)
             settings.revision = revision
@@ -544,18 +558,19 @@ public final class AtlasViewModel: ObservableObject {
         await refresh()
     }
 
-    public func testIntelligence(maxCents: Int) async {
+    public func testIntelligence(maxCents: Int, modelId: String? = nil) async {
         guard !isChecking else { return }  // repeated clicks never start a second paid check
         isChecking = true
         defer { isChecking = false }
         await attempt {
-            let report = try await api.testIntelligence(modelId: settings.modelId, maxCents: maxCents)
+            let report = try await api.testIntelligence(modelId: modelId ?? settings.modelId, maxCents: maxCents)
             if report["passed"] as? Bool != true {
                 throw AtlasAPIError(code: "CHECK_FAILED", message: "\(report["errors"] ?? "sem detalhes")")
             }
             let cost = report["cost_minor"] as? Int ?? 0
             notice = "Inteligência validada. Custo do teste: \(MoneyText.format(minor: cost, currency: report["currency"] as? String ?? settings.currency))."
         }
+        try? await loadSettings()  // refresh which profiles are validated
         await refresh()
     }
 
