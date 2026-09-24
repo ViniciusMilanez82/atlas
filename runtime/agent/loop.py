@@ -32,6 +32,7 @@ from runtime.models.context import Authority, ContextBuilder, ContextItem
 from runtime.models.router import BudgetedModelClient, Requirements
 from runtime.models.types import ModelRequest
 from runtime.tasks.engine import Lease, TaskEngine
+from runtime.tasks.lease_keeper import DEFAULT_INTERVAL_S, LeaseKeeper, database_path
 from runtime.tasks.limits import AttemptLimits, ProgressGuard, StepOutcome
 from runtime.tasks.state_machine import TaskState
 from runtime.tools.registry import RegistryError, ToolManifest
@@ -133,6 +134,8 @@ class AgentRunner:
         self.guard = ProgressGuard(self.tasks, limits)
         self.ctx_builder = ContextBuilder()
         self.actor = Actor("runtime", worker_id, "internal")
+        self.keeper_interval_s = DEFAULT_INTERVAL_S
+        self.last_keeper_beats = 0
 
     # ------------------------------------------------------------------ tool catalog (3A)
 
@@ -390,6 +393,19 @@ class AgentRunner:
     def run(self, task_id: str, spec: DeliverableSpec) -> RunOutcome:
         self._prepare(task_id)
         lease = self.tasks.acquire_lease(task_id, self.worker_id)
+        path = database_path(self.conn)
+        if path is None:  # in-memory database: no second connection can renew the lease
+            return self._run_leased(task_id, spec, lease)
+        keeper = LeaseKeeper(
+            path, self.clock, lease, lease_ttl=self.tasks.lease_ttl, interval_s=self.keeper_interval_s
+        )
+        with keeper:  # renews while model calls and dispatches block this thread (A3-05)
+            try:
+                return self._run_leased(task_id, spec, lease)
+            finally:
+                self.last_keeper_beats = keeper.beats
+
+    def _run_leased(self, task_id: str, spec: DeliverableSpec, lease: Lease) -> RunOutcome:
         plan_id, observations = self._resume_state(task_id)
         steps = 0
         gaps: list[str] = []

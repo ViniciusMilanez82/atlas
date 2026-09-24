@@ -33,6 +33,7 @@ from runtime.models.openai_responses import DEFAULT_BASE_URL
 from runtime.tasks.engine import TaskEngine
 from runtime.tasks.limits import ProgressGuard
 from runtime.tasks.scheduler import Scheduler
+from runtime.tasks.watchdog import Watchdog
 from runtime.tools.builtin import BUILTIN_MANIFESTS, BuiltinTools
 from runtime.tools.registry import ToolRegistry
 from runtime.verification.verifier import DeliverableSpec, Verifier
@@ -166,8 +167,6 @@ class Core:
         while not self.stop.is_set():
             self.monitor.beat()
             broker.collect_late_results()
-            guard.promote_due_retries()  # RETRYING -> READY after backoff (review A7)
-            scheduler.run_due()  # scheduled jobs create their tasks even while intelligence is off
             try:
                 client = intel.build_client()
             except AtlasError:
@@ -203,6 +202,16 @@ class Core:
             outcome = Core.run_one(runner, row[0], spec, self.monitor, broker.tasks)
             if outcome is None:
                 self.stop.wait(interval)
+
+    def watchdog(self, interval: float) -> None:
+        """Independent housekeeping thread (A3-05, T21): reclaims expired leases, promotes retries and
+        runs due scheduled jobs with its own connection, so a long task never stalls them."""
+        wd = Watchdog(open_store(self.db_path, self.clock), self.clock)
+        while not self.stop.wait(interval):
+            try:
+                wd.sweep()
+            except Exception as exc:  # visible, never silent; the next sweep retries
+                self.monitor.error(f"watchdog: {type(exc).__name__}")
 
     @staticmethod
     def run_one(
@@ -258,6 +267,7 @@ def main(argv: list[str] | None = None) -> int:
     core.write_session(sessions, owner_id, employee_id, server.path)
     worker = threading.Thread(target=core.worker, args=(employee_id, args.worker_interval), daemon=True)
     worker.start()
+    threading.Thread(target=core.watchdog, args=(max(args.worker_interval, 1.0),), daemon=True).start()
 
     def shutdown(signum: int, frame: FrameType | None) -> None:
         core.stop.set()
