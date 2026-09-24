@@ -8,14 +8,24 @@ with this worker's lease (so pause/stop/cancel revoke it immediately). What is p
 operational state: plan versions, steps, a one-line decision summary, actions, evidence and
 checkpoints - never private reasoning. COMPLETED requires the objective verifier to pass; a model
 saying "done" is not evidence. Tool output is fed back as untrusted external content.
+
+Alpha 2 (review A5, A7): the model sees a catalog built from the trusted, enabled manifests (id,
+version, description, effect, input schema) and every decision is validated - including the tool
+input against its schema - before anything reaches the broker. A run resumes from operational state:
+the latest plan, persisted step observations, and the owner's answers and corrections; it never
+replays private reasoning, and steps interrupted mid-flight are settled from the action ledger.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
+
+from jsonschema import Draft202012Validator
 
 from runtime.memory.manager import MemoryManager
 from runtime.models.context import Authority, ContextBuilder, ContextItem
@@ -24,6 +34,7 @@ from runtime.models.types import ModelRequest
 from runtime.tasks.engine import Lease, TaskEngine
 from runtime.tasks.limits import AttemptLimits, ProgressGuard, StepOutcome
 from runtime.tasks.state_machine import TaskState
+from runtime.tools.registry import RegistryError, ToolManifest
 from runtime.verification.verifier import DeliverableSpec, Verifier
 from security.broker.broker import Broker, DispatchResult
 from shared.actors import Actor
@@ -46,11 +57,20 @@ DECISION_SCHEMA: dict[str, Any] = {
         "question": {"type": "string"},
     },
 }
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+Notifier = Callable[[str, str, str, "str | None"], object]
 POLICY_SUMMARY = (
-    "Only the tools listed are available. External writes and purchases need task permission and may need "
+    "Only the tools in the catalog are available, each with the exact input schema shown. External writes and purchases need task permission and may need "
     "owner approval; you cannot grant or assume approval. Finish only by naming the artifact_id of a "
     "deliverable you created; it will be verified objectively."
 )
+
+
+STATUS_TEXT = {
+    "waiting for owner approval": "Preciso da sua aprovação para continuar esta tarefa.",
+    "external effect unknown": "Uma ação ficou com resultado incerto; vou conferir antes de qualquer repetição.",
+    "budget exhausted": "O orçamento desta tarefa acabou; ela ficou bloqueada até você decidir.",
+}
 
 
 @dataclass
@@ -77,6 +97,7 @@ class AgentRunner:
         worker_id: str = "agent-1",
         max_steps: int = 20,
         limits: AttemptLimits | None = None,
+        notify: Notifier | None = None,
     ) -> None:
         self.conn = conn
         self.clock = clock
@@ -85,12 +106,162 @@ class AgentRunner:
         self.model = model
         self.memory = memory
         self.verifier = verifier
-        self.tools = tools
+        self.catalog = self._catalog(tools)
+        self.tools = list(self.catalog)
+        self.notify = notify
         self.worker_id = worker_id
         self.max_steps = max_steps
         self.guard = ProgressGuard(self.tasks, limits)
         self.ctx_builder = ContextBuilder()
         self.actor = Actor("runtime", worker_id, "internal")
+
+    # ------------------------------------------------------------------ tool catalog (3A)
+
+    def _catalog(self, tool_ids: list[str]) -> dict[str, ToolManifest]:
+        """Only enabled tools whose manifest resolves (hash-checked) are offered to the model."""
+        catalog: dict[str, ToolManifest] = {}
+        for tool_id in tool_ids:
+            row = self.conn.execute(
+                "SELECT version FROM tools WHERE tool_id = ? AND enabled = 1 ORDER BY registered_at DESC LIMIT 1",
+                (tool_id,),
+            ).fetchone()
+            if row is None:
+                continue
+            try:
+                manifest, _ = self.broker.registry.resolve(tool_id, row[0])
+            except RegistryError:
+                continue
+            catalog[tool_id] = manifest
+        return catalog
+
+    def _catalog_text(self) -> str:
+        entries = [
+            {
+                "tool_id": m.tool_id,
+                "version": m.version,
+                "description": m.description,
+                "effect": m.effect_class,
+                "input_schema": m.input_schema,
+            }
+            for m in self.catalog.values()
+        ]
+        return json.dumps(entries, ensure_ascii=False, sort_keys=True)
+
+    def _validate(self, decision: dict[str, Any]) -> tuple[ToolManifest, dict[str, Any]] | str:
+        """Validate the whole decision before the broker sees it. Returns a reason string when invalid."""
+        if decision["decision"] == "finish":
+            if not UUID_RE.match(str(decision.get("artifact_id", ""))):
+                return "finish needs the artifact_id of a deliverable you created"
+            return "ok-finish"
+        if decision["decision"] == "ask_owner":
+            return "ok-ask" if str(decision.get("question", "")).strip() else "ask_owner needs a question"
+        manifest = self.catalog.get(str(decision.get("tool_id", "")))
+        if manifest is None:
+            return f"tool '{decision.get('tool_id', '')}' is not in the catalog"
+        try:
+            tool_input = json.loads(decision.get("input_json") or "{}")
+        except json.JSONDecodeError:
+            return "input_json is not valid JSON"
+        if not isinstance(tool_input, dict):
+            return "input_json must be a JSON object"
+        errors = sorted(Draft202012Validator(manifest.input_schema).iter_errors(tool_input), key=str)
+        if errors:
+            return f"input for {manifest.tool_id} violates its schema: " + "; ".join(
+                e.message[:200] for e in errors[:3]
+            )
+        return manifest, tool_input
+
+    # ------------------------------------------------------------------ resumption (3C)
+
+    def _resume_state(self, task_id: str) -> tuple[str, list[tuple[str, str, Authority]]]:
+        """Latest plan + observations rebuilt from the database. A new plan only on the first run."""
+        row = self.conn.execute(
+            "SELECT id FROM plans WHERE task_id = ? ORDER BY version DESC LIMIT 1", (task_id,)
+        ).fetchone()
+        if row is None:
+            return self._new_plan(task_id, "initial plan: iterate one verified step at a time"), []
+        self._settle_interrupted_steps(task_id)
+        observations: list[tuple[str, str, Authority]] = [
+            (
+                "This task was interrupted and is being resumed. Earlier completed steps are listed; do not "
+                "repeat actions whose results are already known.",
+                "system",
+                Authority.VERIFIED_FACT,
+            )
+        ]
+        for step in self.conn.execute(
+            "SELECT s.description, s.status, o.content, o.trust FROM steps s LEFT JOIN step_observations o"
+            " ON o.step_id = s.id WHERE s.task_id = ? ORDER BY s.created_at, s.rowid",
+            (task_id,),
+        ).fetchall():
+            observations.append((f"Earlier step ({step[1]}): {step[0]}", "system", Authority.VERIFIED_FACT))
+            if step[2]:
+                auth = Authority.EXTERNAL_CONTENT if step[3] == "untrusted" else Authority.VERIFIED_FACT
+                observations.append((step[2], "step-observation", auth))
+        observations += self._owner_messages(task_id)
+        self._journal(
+            task_id, "task.resumed", f"resumed on plan {row[0]} with {len(observations)} observation(s)"
+        )
+        return str(row[0]), observations
+
+    def _owner_messages(self, task_id: str) -> list[tuple[str, str, Authority]]:
+        try:
+            rows = self.conn.execute(
+                "SELECT id, role, kind, content FROM messages WHERE task_id = ? AND kind IN"
+                " ('question','answer','correction') ORDER BY rowid",
+                (task_id,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+        out: list[tuple[str, str, Authority]] = []
+        for r in rows:
+            if r[1] == "owner":
+                label = "Owner answer" if r[2] == "answer" else "Owner correction"
+                out.append((f"{label}: {r[3]}", f"message:{r[0]}", Authority.OWNER_INSTRUCTION))
+            else:
+                out.append((f"You asked the owner: {r[3]}", f"message:{r[0]}", Authority.VERIFIED_FACT))
+        return out
+
+    def _settle_interrupted_steps(self, task_id: str) -> None:
+        """A step left RUNNING by a crash is settled from the ledger; UNKNOWN effects stay unresolved."""
+        for step in self.conn.execute(
+            "SELECT id FROM steps WHERE task_id = ? AND status = 'RUNNING'", (task_id,)
+        ).fetchall():
+            actions = [
+                r[0]
+                for r in self.conn.execute(
+                    "SELECT status FROM actions WHERE step_id = ?", (step[0],)
+                ).fetchall()
+            ]
+            if "UNKNOWN" in actions or "DISPATCHING" in actions:
+                continue  # reconciliation decides; never assume either outcome
+            if "CONFIRMED" in actions:
+                self._finish_step(step[0], "DONE")
+                self._observe(
+                    step[0],
+                    task_id,
+                    "The action of this step was confirmed before the interruption, but its output was not "
+                    "captured. Read the relevant artifact again if you need its content.",
+                    "verified",
+                )
+            else:
+                self._finish_step(step[0], "FAILED")
+
+    def _observe(self, step_id: str, task_id: str, content: str, trust: str) -> None:
+        with transaction(self.conn):
+            self.conn.execute(
+                "INSERT OR REPLACE INTO step_observations(step_id, task_id, content, trust, created_at)"
+                " VALUES (?,?,?,?,?)",
+                (step_id, task_id, content[:20_000], trust, to_utc_str(self.clock.now())),
+            )
+
+    def _tell_owner(self, task_id: str, kind: str, content: str, artifact_id: str | None = None) -> None:
+        if self.notify is None:
+            return
+        try:
+            self.notify(task_id, kind, content, artifact_id)
+        except Exception:  # noqa: S110 - a failed notification never breaks the task
+            pass
 
     # ------------------------------------------------------------------ persistence helpers
 
@@ -160,8 +331,8 @@ class AgentRunner:
                 Authority.TASK_OBJECTIVE,
                 "Deliverable criteria: "
                 + "; ".join(c["description"] for c in task["completion_criteria"])
-                + "\nAvailable tools: "
-                + ", ".join(self.tools)
+                + "\nTool catalog (JSON): "
+                + self._catalog_text()
                 + "\nAttached artifacts: "
                 + ", ".join(self._attached(task["task_id"])),
                 "criteria",
@@ -194,7 +365,7 @@ class AgentRunner:
             request=ModelRequest("auto", built.messages, max_output_tokens=4000, json_schema=DECISION_SCHEMA),
         )
         decision: dict[str, Any] = json.loads(resp.output_text)
-        if decision.get("decision") not in ("tool", "finish", "ask_owner"):
+        if not isinstance(decision, dict) or decision.get("decision") not in ("tool", "finish", "ask_owner"):
             raise ValueError("invalid decision")
         return decision
 
@@ -203,8 +374,7 @@ class AgentRunner:
     def run(self, task_id: str, spec: DeliverableSpec) -> RunOutcome:
         self._prepare(task_id)
         lease = self.tasks.acquire_lease(task_id, self.worker_id)
-        plan_id = self._new_plan(task_id, "initial plan: iterate one verified step at a time")
-        observations: list[tuple[str, str, Authority]] = []
+        plan_id, observations = self._resume_state(task_id)
         steps = 0
         gaps: list[str] = []
         while steps < self.max_steps:
@@ -247,9 +417,24 @@ class AgentRunner:
                     "summary": decision.get("summary", "")[:300],
                 },
             )
+            verdict = self._validate(decision)
+            if isinstance(verdict, str) and not verdict.startswith("ok-"):
+                observations.append(
+                    (
+                        f"Your decision was rejected before execution: {verdict}",
+                        "system",
+                        Authority.VERIFIED_FACT,
+                    )
+                )
+                state = self.guard.record(lease, StepOutcome.NO_NEW_RESULT)
+                if state != TaskState.RUNNING:
+                    return self._outcome(task_id, verdict, steps)
+                continue
             if decision["decision"] == "ask_owner":
-                self._journal(task_id, "task.question", decision.get("question", "")[:900])
+                question = decision.get("question", "")[:900]
+                self._journal(task_id, "task.question", question)
                 self._safe_release(lease, TaskState.WAITING_USER, "agent asked the owner a question")
+                self._tell_owner(task_id, "question", question)
                 return self._outcome(task_id, "waiting for the owner", steps)
             if decision["decision"] == "finish":
                 result = self.verifier.verify_text_artifact(task_id, decision.get("artifact_id", ""), spec)
@@ -270,11 +455,15 @@ class AgentRunner:
                     task_id, "repair after failed verification: " + "; ".join(gaps)[:400]
                 )
                 continue
-            # decision == tool
-            outcome = self._run_tool(task_id, plan_id, lease, decision, observations)
+            # decision == tool, already validated against the catalog
+            assert not isinstance(verdict, str)
+            outcome = self._run_tool(task_id, plan_id, lease, decision, verdict, observations)
             if outcome is not None:
+                if outcome in ("waiting for owner approval", "external effect unknown", "budget exhausted"):
+                    self._tell_owner(task_id, "status", STATUS_TEXT[outcome])
                 return self._outcome(task_id, outcome, steps)
         self._safe_release(lease, TaskState.BLOCKED, "step budget exhausted", "NO_PROGRESS")
+        self._tell_owner(task_id, "status", "Parei esta tarefa: muitos passos sem um resultado verificado.")
         return self._outcome(task_id, "step budget exhausted", steps, gaps=gaps)
 
     def _run_tool(
@@ -283,31 +472,18 @@ class AgentRunner:
         plan_id: str,
         lease: Lease,
         decision: dict[str, Any],
+        validated: tuple[ToolManifest, dict[str, Any]],
         observations: list[tuple[str, str, Authority]],
     ) -> str | None:
-        tool_id = str(decision.get("tool_id", ""))
-        try:
-            tool_input = json.loads(decision.get("input_json") or "{}")
-        except json.JSONDecodeError:
-            tool_input = None
-        step_id = self._new_step(plan_id, task_id, decision.get("summary", tool_id), f"result of {tool_id}")
-        if tool_id not in self.tools or not isinstance(tool_input, dict):
-            self._finish_step(step_id, "FAILED")
-            observations.append(
-                (
-                    f"Tool '{tool_id}' is not available or its input is not an object.",
-                    "system",
-                    Authority.VERIFIED_FACT,
-                )
-            )
-            state = self.guard.record(lease, StepOutcome.NO_NEW_RESULT)
-            return None if state == TaskState.RUNNING else "no progress"
+        manifest, tool_input = validated
+        tool_id = manifest.tool_id
+        step_id = self._new_step(plan_id, task_id, decision.get("summary") or tool_id, f"result of {tool_id}")
         proposal = {
             "schema_version": "1.0",
             "task_id": task_id,
             "step_id": step_id,
             "tool_id": tool_id,
-            "tool_version": "1.0.0",
+            "tool_version": manifest.version,
             "input": tool_input,
             "expected_outcome": decision.get("summary") or tool_id,
             "verification": {"kind": "deterministic_check", "required": True},
@@ -322,15 +498,14 @@ class AgentRunner:
             state = self.guard.record(lease, StepOutcome.NO_NEW_RESULT)
             return None if state == TaskState.RUNNING else "no progress"
         if res.status == "CONFIRMED":
+            text = (
+                json.dumps(res.output, ensure_ascii=False)[:20_000]
+                if res.output is not None
+                else f"{tool_id} confirmed without output"
+            )
+            self._observe(step_id, task_id, text, "untrusted")  # persisted before the step is marked done
             self._finish_step(step_id, "DONE")
-            if res.output is not None:
-                observations.append(
-                    (
-                        json.dumps(res.output, ensure_ascii=False)[:20_000],
-                        f"tool:{tool_id}",
-                        Authority.EXTERNAL_CONTENT,
-                    )
-                )
+            observations.append((text, f"tool:{tool_id}", Authority.EXTERNAL_CONTENT))
             wrote = tool_id == "artifact.write_text"
             self.guard.record(lease, StepOutcome.VERIFIED_RESULT if wrote else StepOutcome.NO_NEW_RESULT)
             return None
@@ -360,6 +535,13 @@ class AgentRunner:
         self.tasks.release(lease, TaskState.VERIFYING, "deliverable verified")
         self.tasks.complete(task_id, actor=self.actor, expected_version=self.tasks.get(task_id)["version"])
         self._journal(task_id, "task.delivered", f"deliverable artifact {artifact_id} verified")
+        name = self.conn.execute("SELECT name FROM artifacts WHERE id = ?", (artifact_id,)).fetchone()
+        self._tell_owner(
+            task_id,
+            "result",
+            f"Concluí a tarefa. Entrega verificada: {name[0] if name else artifact_id}.",
+            artifact_id,
+        )
         out = self._outcome(task_id, "completed with verified deliverable", steps)
         out.deliverable_id = artifact_id
         return out
