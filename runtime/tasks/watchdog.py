@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field
+from pathlib import Path
 
+from runtime.artifacts.uploads import UploadSweeper
 from runtime.notifications.outbox import OutboxDispatcher
 from runtime.tasks.engine import TaskEngine
 from runtime.tasks.limits import ProgressGuard
@@ -30,14 +32,16 @@ class WatchdogReport:
     retried: list[str] = field(default_factory=list)
     scheduled: list[RunReport] = field(default_factory=list)
     delivered: int = 0
+    expired_uploads: list[str] = field(default_factory=list)
 
 
 class Watchdog:
     ACTOR = Actor("system", "watchdog")
 
-    def __init__(self, conn: sqlite3.Connection, clock: Clock) -> None:
+    def __init__(self, conn: sqlite3.Connection, clock: Clock, store_root: Path | None = None) -> None:
         self.conn = conn
         self.clock = clock
+        self.store_root = store_root
         self.engine = TaskEngine(conn, clock)
         self.guard = ProgressGuard(self.engine)
         self.scheduler = Scheduler(self.engine)
@@ -55,4 +59,6 @@ class Watchdog:
         report.retried = self.guard.promote_due_retries()
         report.scheduled = self.scheduler.run_due()
         report.delivered = OutboxDispatcher(self.conn, self.clock).deliver_pending()  # A3-27 retries
+        if self.store_root is not None:  # A3-24: expired staging, never uploads still in progress
+            report.expired_uploads = UploadSweeper(self.conn, self.clock, self.store_root).sweep()
         return report

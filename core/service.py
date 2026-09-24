@@ -14,16 +14,15 @@ import binascii
 import hashlib
 import json
 import sqlite3
-import threading
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 from core.conversation import ConversationService
 from core.health import WorkerMonitor
 from core.intelligence import IntelligenceSetup
 from core.ipc.sessions import Session
-from runtime.artifacts.manager import MAX_IMPORT_BYTES, ArtifactManager
+from runtime.artifacts.manager import ArtifactManager
+from runtime.artifacts.uploads import UploadStore, staging_path
 from runtime.memory.manager import MemoryManager
 from runtime.tasks.engine import TaskEngine
 from security.approvals.engine import ApprovalEngine
@@ -77,7 +76,6 @@ class CoreService:
         self.intelligence = intelligence
         self.artifacts = artifacts
         self.conversation = ConversationService(conn, clock, broker, intelligence)
-        self._uploads_lock = threading.Lock()
         self.handlers: dict[str, Callable[[Session, dict[str, Any]], dict[str, Any]]] = {
             "system.health": self._health,
             "conversations.send": self._send,
@@ -517,44 +515,50 @@ class CoreService:
             raise AtlasError(ErrorCode.INVALID_INPUT, "artifact store is not available")
         return self.artifacts
 
-    def _upload_path(self, s: Session, upload_ref: str) -> Path:
-        folder = self._artifact_store().root / "uploads"
-        folder.mkdir(parents=True, exist_ok=True)
-        return folder / f"{s.employee_id}-{upload_ref}.part"
+    def _uploads(self) -> UploadStore:
+        return UploadStore(self.conn, self.clock, self._artifact_store().root)
 
     def _upload(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
-        """Chunked copy of ONE file the owner picked; the core never touches the original on disk."""
+        """Chunked copy of ONE file the owner picked; the core never touches the original on disk.
+
+        Coordinated through ``upload_sessions`` (A3-24): every connection sees the same offsets, quota
+        and expiry, and an identical resend is answered as a duplicate instead of being appended twice.
+        """
         if s.actor.channel != "local_app":
             raise AtlasError(ErrorCode.UNAUTHORIZED, "attachments are added on the local app")
         try:
             chunk = base64.b64decode(p["data_b64"], validate=True)
         except (binascii.Error, ValueError):
             raise AtlasError(ErrorCode.INVALID_INPUT, "chunk is not valid base64") from None
-        path = self._upload_path(s, p["upload_ref"])
-        with self._uploads_lock:
-            size = path.stat().st_size if path.exists() else 0
-            offset = p["offset"]
-            if offset < size:  # resend after a lost reply: accepted only when identical
-                with path.open("rb") as fh:
-                    fh.seek(offset)
-                    same = fh.read(len(chunk)) == chunk
-                if same and offset + len(chunk) <= size:
-                    return {"upload_ref": p["upload_ref"], "received_bytes": size, "duplicate": True}
-                raise AtlasError(ErrorCode.VERSION_CONFLICT, f"upload already has {size} bytes")
-            if offset > size:
-                raise AtlasError(ErrorCode.VERSION_CONFLICT, f"upload has {size} bytes; resend from there")
-            if size + len(chunk) > MAX_IMPORT_BYTES:
-                path.unlink(missing_ok=True)
-                raise AtlasError(ErrorCode.INVALID_INPUT, "file exceeds the import size limit")
-            with path.open("ab") as fh:
-                fh.write(chunk)
-            return {"upload_ref": p["upload_ref"], "received_bytes": size + len(chunk), "duplicate": False}
+        res = self._uploads().append(s.employee_id, p["upload_ref"], p["offset"], chunk)
+        return {"upload_ref": p["upload_ref"], "received_bytes": res.received_bytes, "duplicate": res.duplicate}
+
+    def _artifact_reply(self, art: Any, recovered: bool) -> dict[str, Any]:
+        return {
+            "artifact_id": art.id,
+            "name": art.name,
+            "mime_type": art.mime_type,
+            "sha256": art.sha256,
+            "size_bytes": art.size_bytes,
+            "version": art.version,
+            "classification": art.classification,
+            "recovered": recovered,
+        }
 
     def _import(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
+        """Finalize an upload. Idempotent per upload_ref: a lost reply is recovered, never duplicated."""
         store = self._artifact_store()
+        uploads = self._uploads()
         if "task_id" in p:
             self._check_task(s, p["task_id"])
-        path = self._upload_path(s, p["upload_ref"])
+        sess = uploads.session(s.employee_id, p["upload_ref"])
+        if sess is None:
+            raise AtlasError(ErrorCode.INVALID_INPUT, "upload not found; send the file again")
+        if sess["state"] == "IMPORTED":
+            return self._artifact_reply(store.get(sess["artifact_id"]), recovered=True)
+        if sess["state"] != "RECEIVING":
+            raise AtlasError(ErrorCode.INVALID_INPUT, f"upload {sess['state'].lower()}; send the file again")
+        path = staging_path(store.root, s.employee_id, p["upload_ref"])
         if not path.is_file():
             raise AtlasError(ErrorCode.INVALID_INPUT, "upload not found; send the file again")
         try:
@@ -564,17 +568,19 @@ class CoreService:
                 employee_id=s.employee_id,
                 declared_name=p["declared_name"],
                 task_id=p.get("task_id"),
+                classification=p.get("classification", "INTERNAL"),
+                expected_sha256=p.get("expected_sha256"),
+                on_insert_in_txn=lambda aid: uploads.mark_imported_in_txn(s.employee_id, p["upload_ref"], aid),
             )
-        finally:
-            path.unlink(missing_ok=True)  # validated or rejected, the staging copy never lingers
-        return {
-            "artifact_id": art.id,
-            "name": art.name,
-            "mime_type": art.mime_type,
-            "sha256": art.sha256,
-            "size_bytes": art.size_bytes,
-            "version": art.version,
-        }
+        except AtlasError as exc:
+            if exc.code == ErrorCode.VERSION_CONFLICT:  # another connection finalized it first
+                again = uploads.session(s.employee_id, p["upload_ref"])
+                if again is not None and again["state"] == "IMPORTED":
+                    return self._artifact_reply(store.get(again["artifact_id"]), recovered=True)
+            uploads.fail(s.employee_id, p["upload_ref"], exc.message)  # rejected: staging removed, explained
+            raise
+        path.unlink(missing_ok=True)
+        return self._artifact_reply(art, recovered=False)
 
     def _read(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
         """Chunked read: the app previews as plain text or saves a copy and verifies the hash itself."""
@@ -585,8 +591,7 @@ class CoreService:
         if row is None or row[0] != s.employee_id:
             raise AtlasError(ErrorCode.INVALID_INPUT, "artifact not found for this employee")
         art = store.get(p["artifact_id"])
-        data = store.read_bytes(p["artifact_id"])  # re-verifies the stored hash on every read
-        chunk = data[p["offset"] : p["offset"] + p["length"]]
+        chunk, total = store.read_range(p["artifact_id"], p["offset"], p["length"])  # linear cost (A3-25)
         return {
             "artifact_id": art.id,
             "name": art.name,
@@ -596,5 +601,5 @@ class CoreService:
             "offset": p["offset"],
             "data_b64": base64.b64encode(chunk).decode("ascii"),
             "chunk_sha256": hashlib.sha256(chunk).hexdigest(),
-            "eof": p["offset"] + len(chunk) >= len(data),
+            "eof": p["offset"] + len(chunk) >= total,
         }

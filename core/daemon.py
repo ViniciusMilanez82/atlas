@@ -206,7 +206,7 @@ class Core:
     def watchdog(self, interval: float) -> None:
         """Independent housekeeping thread (A3-05, T21): reclaims expired leases, promotes retries and
         runs due scheduled jobs with its own connection, so a long task never stalls them."""
-        wd = Watchdog(open_store(self.db_path, self.clock), self.clock)
+        wd = Watchdog(open_store(self.db_path, self.clock), self.clock, self.store_root)
         while not self.stop.wait(interval):
             try:
                 wd.sweep()

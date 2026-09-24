@@ -965,6 +965,18 @@
         },
         "task_id": {
           "$ref": "#/$defs/uuid"
+        },
+        "expected_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "classification": {
+          "enum": [
+            "PUBLIC",
+            "INTERNAL",
+            "PERSONAL",
+            "SENSITIVE"
+          ]
         }
       }
     },
