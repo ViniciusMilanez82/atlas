@@ -27,7 +27,7 @@ uploads, interface) no nível de núcleo e ViewModel. Quatro achados novos (B-01
 **Evidência (comandos exatos).**
 
 ```text
-Windows local: %USERPROFILE%\.venvstlas\Scripts\python.exe scripts/check.py
+Windows local: python scripts/check.py (venv em %USERPROFILE%/.venvs/atlas)
   ruff=PASS secrets=PASS mypy=PASS (88 arquivos) pytest: 592 passed, 8 skipped
   skips: 2 daemon E2E + 1 servidor UDS + 1 teste A3-28 com processos (sem Unix sockets no Windows),
          1 symlink (privilégio), 1 chamada real opt-in (D-03), 1 probe Swift e 1 Keychain real (D-01)
