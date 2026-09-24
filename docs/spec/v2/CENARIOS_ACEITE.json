@@ -1,0 +1,362 @@
+[
+  {
+    "id": "T01",
+    "title": "Instalação em Mac limpo",
+    "given": "Mac Apple Silicon incluído na matriz de suporte, sem Python, Docker, editor ou SDK de desenvolvimento instalado.",
+    "when": "Instalar o bundle candidato pelo percurso gráfico, abrir e executar o primeiro diagnóstico.",
+    "then": "O aplicativo inicia seus componentes empacotados, informa requisitos reais e permite continuar sem terminal. Verificar origem, assinatura, notarização quando a entrega for de distribuição e erro acionável para hardware não suportado.",
+    "evidence": "Bundle real, Mac limpo; vídeo ou passos com capturas reais, manifesto, hash e diagnóstico.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T02",
+    "title": "Identidade e separação da vida pessoal",
+    "given": "Pastas, cookies, contas e mensagens-sentinela fictícias na sessão pessoal do Mac.",
+    "when": "Criar o funcionário, escolher nome/idioma e importar explicitamente apenas um arquivo.",
+    "then": "A identidade persiste; somente a cópia escolhida fica disponível. Nenhuma conta pessoal, pasta inteira ou sessão é herdada. Guest e código experimental não obtêm as sentinelas.",
+    "evidence": "Teste de autorização e de isolamento, app real e inventário de acessos negados.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T03",
+    "title": "Conversa natural, intenção e histórico completo",
+    "given": "Conversa com saudações, perguntas explicativas, consultas de andamento e mais de 100 mensagens.",
+    "when": "Alternar assuntos, delegar, reconectar após mais de 50 mensagens e modificar o vínculo de uma mensagem existente.",
+    "then": "Saudação não cria tarefa; consulta sobre tempo/economia não vira status interno. Histórico recebe atualizações por versão, sem buracos ou duplicações. Pergunta sobre trabalho usa estado real, não invenção do modelo.",
+    "evidence": "Corpora pt-BR versionados, gabarito de intenção, eventos e interface.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T04",
+    "title": "Memória fora da janela recente",
+    "given": "Fato e preferência sintéticos confirmados; mais de 100 mensagens posteriores.",
+    "when": "Reiniciar o aplicativo e perguntar com palavras diferentes, sem repetir o fato no pedido.",
+    "then": "A recuperação traz a fonte correta; a resposta usa a informação vigente. O teste inspeciona o contexto enviado, não apenas uma coincidência na resposta. Memória proposta não recebe autoridade de confirmação.",
+    "evidence": "Recuperação determinística e avaliação com modelo real quando autorizada.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T05",
+    "title": "Correção de preferência e contradição",
+    "given": "Preferência antiga, nova correção confirmada e uma fonte externa conflitante.",
+    "when": "Solicitar entrega posterior e consultar a razão da escolha.",
+    "then": "Nova versão prevalece; fonte externa não altera preferência do dono; histórico de substituição existe. Conflito factual material não resolvido gera pergunta específica, sem eliminar evidências.",
+    "evidence": "Banco, índice, contexto e resultado com referências de versão.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T06",
+    "title": "Validade temporal, fusos e exceções",
+    "given": "Memórias futuras/expiradas, eventos de dia inteiro, compromissos em fusos distintos e uma recorrência com exceção.",
+    "when": "Corrigir só o texto de uma memória e cruzar intervalos antes/depois das datas-limite.",
+    "then": "Validade não desaparece na correção. Sobreposição e exceções são calculadas por código; instantes UTC e datas locais não são confundidos. Calendário é um exemplo de dado estruturado, não módulo exclusivo do produto.",
+    "evidence": "Gabaritos de datas, testes de borda e fonte de cada evento.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T07",
+    "title": "Esquecimento operacional",
+    "given": "Um dado foi confirmado, citado em conversa, resumido e usado numa tarefa.",
+    "when": "Excluir dentro do escopo escolhido e perguntar novamente, também após restart e restauração autorizada.",
+    "then": "O dado deixa de ser recuperado por índice, histórico ou derivação ativa. Backups/restores respeitam tombstones ou avisam limites antes de reintroduzir conteúdo. Cópias fora do controle são explicitamente diferenciadas.",
+    "evidence": "Inspeção de todas as entradas de contexto e linhagem; nenhuma promessa de apagamento físico universal.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T08",
+    "title": "Sensibilidade de ponta a ponta",
+    "given": "Sentinelas sintéticas SENSITIVE em memória, documento, mensagem e resultado de ferramenta; sem consentimento de nuvem.",
+    "when": "Pedir resumo, resposta e tarefa; depois autorizar apenas uma finalidade e revogar.",
+    "then": "Antes do consentimento, nenhum transporte/embedding externo recebe sentinela. Depois, somente dados necessários seguem ao destino autorizado. Revogação barra a próxima emissão; guardar memória não autoriza divulgação.",
+    "evidence": "Captura de requests em servidor controlado, decisão do egress broker e testes após resumo/restart.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T09",
+    "title": "Mensagem atual nunca descartada",
+    "given": "Histórico suficiente para exceder o orçamento de contexto; antiga resposta do modelo contém afirmação não comprovada.",
+    "when": "Acrescentar pergunta e correção curtas ao final.",
+    "then": "Mensagem vigente e restrições ativas entram em toda inferência ou a chamada é bloqueada com motivo. A resposta antiga não é promovida a fato verificado. Fonte resumida continua recuperável.",
+    "evidence": "IDs incluídos/excluídos, razões e asserções sobre o payload real.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T10",
+    "title": "Duas perguntas, duas tarefas, assunto novo",
+    "given": "Duas tarefas independentes aguardam respostas diferentes.",
+    "when": "Responder fora de ordem, perguntar status, iniciar outro assunto e tentar responder questão já resolvida.",
+    "then": "Cada resposta atinge somente a pergunta correta; status/assunto novo não retoma uma tarefa com conteúdo inadequado. A interface permite escolher a pergunta alvo; a IA só infere quando inequívoco.",
+    "evidence": "Testes do contrato reply_to e jornada visual.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T11",
+    "title": "Armazenar, complementar e analisar são ações distintas",
+    "given": "Um arquivo válido e uma tarefa já aberta.",
+    "when": "Enviar primeiro para guardar; depois como complemento da tarefa; por fim solicitar análise nova.",
+    "then": "Três intenções produzem vínculos corretos: armazenamento sem tarefa, atualização da existente e nova delegação. A presença de anexo não decide a intenção nem autoriza compartilhamento.",
+    "evidence": "Banco, request envelope e contagem de tarefas nos três percursos.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T12",
+    "title": "Documentos reais por formato",
+    "given": "Mesmo conteúdo sintético em TXT, PDF textual, PDF digitalizado, DOCX, XLSX, PPTX e imagem; incluir tabelas e arquivo corrompido.",
+    "when": "Importar e extrair usando os caminhos reais que o agente utiliza.",
+    "then": "Valores e cláusulas coincidem com o gabarito; cada trecho tem página/célula/seção. Binário não vira texto UTF-8 artificial. Formato apenas armazenável é rotulado; falha de extração não resulta em análise fabricada.",
+    "evidence": "Extratores reais isolados, gabaritos e amostra visual; visão/OCR autorizado quando necessário.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T13",
+    "title": "Informação decisiva no final",
+    "given": "Documento com cláusulas após 20 mil e 200 mil caracteres e uma tabela final relevante.",
+    "when": "Solicitar comparação integral ou pergunta focada na cláusula final.",
+    "then": "Leitura paginada alcança a informação. Cobertura fica registrada, fonte continua acessível e nenhuma serialização é cortada no meio. Se a cobertura for insuficiente, isso impede conclusão integral.",
+    "evidence": "Ranges lidos, quantidade total, has_more e verificador de cobertura.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T14",
+    "title": "Dez anexos e uploads concorrentes",
+    "given": "Dez arquivos, mistura de válidos/inválidos, transporte lento e duas conexões.",
+    "when": "Arrastar todos, duplicar chunks, cancelar um upload, interromper antes de finalizar e reiniciar.",
+    "then": "Cada arquivo tem resultado explícito; nenhum some por estar ocupado. Um upload não duplica bytes, quota e TTL valem entre conexões e a finalização tem recibo recuperável.",
+    "evidence": "Hash por arquivo, metadados de upload e limpeza de staging.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T15",
+    "title": "Reenvio imutável e resultado incerto",
+    "given": "Pedido com texto, anexos e pergunta/tarefa alvo.",
+    "when": "Perder a resposta após gravação, alterar o rascunho na UI e tentar reenviar; repetir na importação.",
+    "then": "Mesmo ID mantém payload original ou recebe conflito; nova intenção recebe novo ID. Recibo recupera artifact_id criado, sem duplicar importação nem anexar documentos errados.",
+    "evidence": "Fault injection em commit/resposta e hash do envelope completo.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T16",
+    "title": "Queda em cada fronteira do processamento",
+    "given": "Requisição com chave idempotente, intenção faturável e tarefa consequente.",
+    "when": "Injetar crash após RECEIVED, após inferência, antes/depois de criar tarefa e antes de enviar resposta.",
+    "then": "Reenvio recupera resultado ou continua o processamento incompleto com reconciliação. Não fica duplicate vazio permanente; não repete gasto/efeito incerto sem regra explícita.",
+    "evidence": "Matriz de pontos de falha, receipts e uma história de processamento por ID.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T17",
+    "title": "Publicação atômica da tarefa",
+    "given": "Duas conexões e barreiras que atrasam vínculos de anexos/critério.",
+    "when": "Tentar adquirir a tarefa entre as etapas de preparação.",
+    "then": "Worker não vê tarefa executável incompleta. A transação final publica objetivo integral, versões, anexos, restrições e critérios juntos; rollback não deixa órfãos executáveis.",
+    "evidence": "Teste concorrente nas classes reais e invariantes de banco.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T18",
+    "title": "Pergunta e entrega não desaparecem",
+    "given": "Tarefa prestes a aguardar usuário ou concluir.",
+    "when": "Falhar na notificação e reiniciar depois do commit de estado.",
+    "then": "Outbox mantém mensagem pendente e a entrega é reconciliada. Pergunta/resultado aparece uma vez na conversa por chave idempotente; efeito externo não é desfeito só porque a notificação falhou.",
+    "evidence": "Estado+outbox na mesma transação, recibos e visualização.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T19",
+    "title": "Correção entre decisão e despacho",
+    "given": "Worker com decisão antiga pronta; ação ainda não despachada.",
+    "when": "Enviar correção material por outra conexão e liberar a execução suspensa pelo teste.",
+    "then": "Proposta antiga é recusada pela revisão de instrução/epoch. Próxima decisão usa a correção na mesma tarefa. Ações anteriores confirmadas ficam no histórico e não são repetidas.",
+    "evidence": "Barreira determinística, ledger e contexto do próximo passo.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T20",
+    "title": "Parada sob carga pelo controle real",
+    "given": "Conversa em envio, provedor lento, upload e reconexão simultâneos.",
+    "when": "Acionar o mesmo botão/atalho de parada que o usuário terá.",
+    "then": "Comando não depende de isSending nem da fila lenta. Nenhum novo despacho após o limite local de projeto, medido; ações já aceitas são descritas como ocorridas/incertas. Parada não gera aprovação.",
+    "evidence": "Amostra de latência com hardware, relógios monotônicos e log de despacho; zero bypass.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T21",
+    "title": "Lease longo, worker morto e recuperação",
+    "given": "Operação dura mais que TTL; em outra execução o worker cai enquanto o processo principal permanece.",
+    "when": "Renovar lease, provocar perda, receber resposta tardia e executar watchdog.",
+    "then": "Heartbeat independe da inferência. Trabalhador obsoleto não despacha; tarefa não fica RUNNING abandonada e saúde acusa o problema. Agendador não fica paralisado atrás de tarefa longa.",
+    "evidence": "Relógio injetável e processos reais; conciliação antes de READY.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T22",
+    "title": "Respostas malformadas e falhas internas",
+    "given": "Provedor controlado devolve lista, null, campos ausentes, tipos errados, JSON incompleto e esquema extra.",
+    "when": "Executar conversa e tarefa por todos esses casos, inclusive streaming interrompido.",
+    "then": "Schema completo é validado antes do acesso. Erros são normalizados e limitados; worker não morre silenciosamente; saúde e tarefa refletem falha recuperável. Não aprovar ação com saída inválida.",
+    "evidence": "Fuzz/contrato/integração e ausência de efeitos externos.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T23",
+    "title": "Verificação rejeita entrega falsa e aceita português",
+    "given": "Relatório íntegro sobre assunto errado, valores errados, referência inexistente, cláusula omitida e texto legítimo com a palavra todo.",
+    "when": "Submeter cada resultado ao mesmo verificador usado antes de COMPLETED.",
+    "then": "Falhas impedem conclusão ou viram entrega parcial identificada. Evidência específica por critério; hash sozinho não basta. Português normal passa e placeholders contextuais verdadeiros falham.",
+    "evidence": "Testes negativos e gabaritos de cálculos/fontes/cobertura.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T24",
+    "title": "Orçamento reduzido durante o trabalho",
+    "given": "Tarefa de vários passos com orçamento inicialmente alto.",
+    "when": "Reduzir teto e revogar consentimento entre dois despachos; executar chat/voz/teste em paralelo.",
+    "then": "Próxima reserva respeita revisão atual, não snapshot antigo. Consumo já ocorrido e reservas em voo permanecem auditáveis. Não há nova chamada incompatível após a alteração ser efetivada.",
+    "evidence": "Concorrência real no Core, extrato de reservas e revisão de política.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T25",
+    "title": "Cobrança e efeito desconhecidos",
+    "given": "Provedor/serviço controlado processa e perde a resposta, ou falha antes de receber.",
+    "when": "Simular timeout, crash e retorno sem usage; depois reconciliar com evidência.",
+    "then": "Não enviado comprovado libera reserva; incerto permanece UNKNOWN; custo confirmado liquida. Retry não duplica compra/envio e estimativa não aparece como valor faturado.",
+    "evidence": "Ledger antes/depois, recibos controlados e aprovações reservadas.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T26",
+    "title": "Credenciais não seguem redirecionamento indevido",
+    "given": "Servidores de teste em origens distintas e segredo exclusivamente sintético.",
+    "when": "Exercitar 301/302/303/307/308, downgrade, userinfo, portas e host com prefixo parecido com loopback.",
+    "then": "Destino não autorizado nunca recebe Authorization, cookies ou token. HTTP só em loopback exato habilitado para teste. Repetir com o Python efetivamente empacotado.",
+    "evidence": "Captura no destino de teste, análise de URL e decisão de bloqueio.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T27",
+    "title": "Isolamento de objetos e sessões",
+    "given": "Duas identidades sintéticas com memórias, mensagens, fontes e artefatos próprios.",
+    "when": "Tentar delegar/corrigir/ler um objeto usando IDs do outro escopo.",
+    "then": "Toda operação falha sem revelar conteúdo. Verificações relacionam sessão, proprietário, empregado e objeto; não basta role=owner. Dispositivo remoto revogado não recupera token local.",
+    "evidence": "Matriz de autorização positiva e negativa em todos os métodos expostos.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T28",
+    "title": "Duas instâncias não disputam autoridade",
+    "given": "Mesmo diretório de dados, dois Supervisores ou duas cópias do app iniciados simultaneamente.",
+    "when": "Fazer boot concorrente e depois deixar arquivos de socket órfãos de uma queda.",
+    "then": "Há um único responsável por tokens, banco de autoridade e recuperação. Segunda janela conecta ou recebe diagnóstico; não apaga socket saudável. Limpeza distingue processo vivo de arquivo órfão.",
+    "evidence": "Trava interprocesso, PID/epoch e testes de retomada.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T29",
+    "title": "Troca de chave invalida inteligência",
+    "given": "Chave sintética A validada para modelo/endpoint; chave B sem acesso.",
+    "when": "Trocar chave, endpoint, modelo e versão de capacidade separadamente.",
+    "then": "Indicador Pronta é removido quando seu vínculo deixa de valer. Preço, acesso e qualidade continuam estados distintos. Novo teste pago precisa de autorização e entra no ledger global.",
+    "evidence": "Validações vinculadas e UI atualizada.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T30",
+    "title": "Controles coerentes com cada estado",
+    "given": "Tarefas em todos os estados, inclusive BLOCKED por orçamento e UNKNOWN externo.",
+    "when": "Usar pausa, retomada, desbloqueio, rejeição e cancelamento pela UI.",
+    "then": "Só ações válidas aparecem; orçamento liberado reavalia condição antes de executar. UNKNOWN não vira reenvio cego para fazer o botão funcionar. Estados não elegíveis não ficam sem caminho explicável.",
+    "evidence": "Tabela de transições, app real e asserções do Core.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T31",
+    "title": "Encerramento responsivo e disponibilidade verdadeira",
+    "given": "Serviço de teste ignora encerramento cooperativo; uma operação externa está incerta.",
+    "when": "Fechar janela, pausar, encerrar serviços, sair, suspender e reiniciar o Mac.",
+    "then": "Cada operação tem significado correto. Shutdown fora da UI tem prazo e diagnóstico; pendências são reconciliadas. Não prometer trabalhar desligado ou antes do desbloqueio necessário.",
+    "evidence": "Jornada Mac e processos, logs redigidos e casos de suspensão/login.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T32",
+    "title": "Arquivos grandes e exportação útil",
+    "given": "Artefatos imutáveis de 1, 10 e 50 MiB em formatos suportados.",
+    "when": "Ler por chunks, adulterar fonte em um teste e salvar sem mudar nome sugerido.",
+    "then": "Custo de leitura/hash cresce aproximadamente linearmente; adulteração é recusada; nome/extensão correspondem ao conteúdo e o arquivo abre. Não remover integridade para acelerar.",
+    "evidence": "Instrumentação de I/O, hashes e abertura com aplicativo compatível.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T33",
+    "title": "Computador próprio realmente isolado",
+    "given": "VM de trabalho e Execution Box com código de teste tentando host, rede local, metadados e cofre.",
+    "when": "Executar tentativas por arquivos, DNS, IPv4/IPv6, UDP e acesso direto fora do proxy.",
+    "then": "Sentinelas do host são inacessíveis; saída proibida falha inclusive fora do browser. Um perfil de Chrome e um processo Python separado não contam como a VM. Sem fallback para desktop pessoal.",
+    "evidence": "Mac com virtualização real, threat model e registros do mediador externo.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T34",
+    "title": "Browser, obstáculo e takeover",
+    "given": "Navegador no guest; site de teste com login, CAPTCHA simulado e formulário material.",
+    "when": "Pesquisar, encontrar bloqueio, pedir intervenção, usuário assumir e devolver.",
+    "then": "Só um controlador opera; cliques antigos são descartados; segredo digitado não vira log/screenshot persistente. IA tenta alternativa autorizada, não promete acesso universal nem contorna controle.",
+    "evidence": "Tela real, evento de takeover, nova observação e ausência de ações atrasadas.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T35",
+    "title": "Pesquisa pública com fonte e data",
+    "given": "Objetivo geral exige informações atuais de mais de uma fonte.",
+    "when": "Pesquisar no guest/adaptador real, comparar e gerar entrega com referências.",
+    "then": "Fontes foram de fato recuperadas, datas e trechos sustentam afirmações; divergências são expostas. Não usar preço em cache como cotação ao vivo nem declarar consulta realizada se só houve tentativa.",
+    "evidence": "URLs, captured_at, evidência mínima, artefato e critérios cumpridos.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T36",
+    "title": "Conta operacional e recurso pago",
+    "given": "Conta dedicada sob responsabilidade do dono e sandbox de serviço com assinatura/compra.",
+    "when": "Propor recurso, receber aprovação limitada, mudar preço/destinatário e perder resposta após envio.",
+    "then": "Sem autorização aplicável não há compromisso; mudança material exige nova aprovação; UNKNOWN é conciliado. Cadastro não inventa identidade. Entrega usa conta do Atlas, não e-mail pessoal por padrão.",
+    "evidence": "Cartão de aprovação, escopos, recibos e testes sem compras reais não autorizadas.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T37",
+    "title": "Aprender uma skill sem alterar suas próprias regras",
+    "given": "Tarefa repetida e skill candidata gerada com e sem tentativa de rede/cofre.",
+    "when": "Testar em Execution Box, comparar com baseline, promover sob política e forçar regressão.",
+    "then": "Procedimento útil pode ser reutilizado com versão/evidência; candidato malicioso é bloqueado; ampliação de acesso exige aprovação. Rollback restaura versão anterior sem apagar auditoria.",
+    "evidence": "Manifesto, corpus de teste, provenance, promoção e rollback reais.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T38",
+    "title": "Voz, correções e interrupções",
+    "given": "Português brasileiro com ruído, nomes próprios, datas e valores semelhantes.",
+    "when": "Falar, ver transcrição, interromper a fala e depois mandar parar a tarefa.",
+    "then": "Mesmo funcionário e contexto do texto; cancelar TTS não equivale automaticamente a cancelar tarefa. Número/destinatário incerto é confirmado; áudio ambiente não autoriza pagamento. Microfone e custo são visíveis.",
+    "evidence": "Teste com áudio consentido/sintético e dispositivos reais; nenhuma gravação contínua escondida.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T39",
+    "title": "Celular, pareamento, offline e revogação",
+    "given": "Companion real, relay e Mac pareados; chaves de teste próprias.",
+    "when": "Enviar objetivo, ficar offline, reconectar, receber artefato, revogar dispositivo e tentar replay.",
+    "then": "Relay recebe ciphertext sob protocolo validado; não afirma trabalho começou offline. Uma tarefa/entrega por ID; revogado não lê nem comanda; aprovação sensível exige interface autenticada.",
+    "evidence": "Dois dispositivos, rede adversa, filas duráveis, teste criptográfico do protocolo adotado e captura da UI.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  },
+  {
+    "id": "T40",
+    "title": "Aceite completo, backup e atualização",
+    "given": "Build candidato, dados sintéticos, Mac limpo compatível e usuário sem programação.",
+    "when": "Instalar, criar identidade, conversar, lembrar, pesquisar, executar no guest, aprovar recurso, falar, receber pelo celular; atualizar, restaurar e excluir.",
+    "then": "Jornada termina sem terminal, com evidência e capacidades verdadeiras. Migração preserva conteúdo; restore não repete efeitos nem restaura aprovações perigosas. Nenhuma lacuna essencial é escondida pela etiqueta V1.",
+    "evidence": "Pacote assinado, versão/hash, gravação real, matriz T01–T40, custos e aceite humano informado.",
+    "status": "NAO_EXECUTADO_NESTA_ENTREGA"
+  }
+]
