@@ -97,18 +97,21 @@ def run_in_process(
     out = ctx.Queue()
     proc = ctx.Process(target=_child, args=(fn, tool_input, out), daemon=True)
     proc.start()
-    proc.join(timeout_s)
-    if proc.is_alive():
-        proc.terminate()
-        proc.join(2)
-        if proc.is_alive():
-            proc.kill()
-            proc.join(2)
-        return ExecutionReport(False, timed_out=True, killed=True)
+    # Read BEFORE joining (finding B-01): a large result blocks the child's queue feeder until the parent
+    # reads it, so joining first would kill a healthy child at the deadline.
     try:
-        kind, payload = out.get(timeout=2)
-    except Exception:  # child died without reporting
+        kind, payload = out.get(timeout=timeout_s)
+    except Exception:  # deadline reached, or the child died without reporting
+        if proc.is_alive():
+            proc.terminate()
+            proc.join(2)
+            if proc.is_alive():
+                proc.kill()
+                proc.join(2)
+            return ExecutionReport(False, timed_out=True, killed=True)
+        proc.join(2)
         return ExecutionReport(True, error=RuntimeError(f"tool process exited with code {proc.exitcode}"))
+    proc.join(5)
     if kind == "ok":
         return ExecutionReport(True, value=payload)
     return ExecutionReport(True, error=RuntimeError(str(payload)))

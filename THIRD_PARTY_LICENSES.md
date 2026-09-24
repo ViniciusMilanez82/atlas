@@ -27,3 +27,18 @@ Gerado a partir do venv em 2026-09-23. Dependências de runtime: jsonschema, PyY
 | rpds-py | 2026.6.3 | MIT |
 | ruff | 0.16.8 | MIT |
 | typing_extensions | 4.16.0 | PSF-2.0 |
+
+## Dependências de runtime adicionadas em 2026-09-24 (ADR-016, extração de documentos)
+
+| Pacote | Versão | Licença | Uso |
+| --- | --- | --- | --- |
+| pypdf | 6.19.0 | BSD-3-Clause | texto por página de PDF |
+| python-docx | 1.2.0 | MIT | parágrafos, tabelas, cabeçalhos de DOCX |
+| openpyxl | 3.1.5 | MIT | células, fórmulas e valores salvos de XLSX |
+| python-pptx | 1.0.2 | MIT | slides, tabelas e notas de PPTX |
+| lxml | 6.1.3 | BSD-3-Clause | dependência de python-docx/python-pptx |
+| et-xmlfile | 2.0.0 | MIT | dependência de openpyxl |
+| Pillow | 12.3.0 | MIT-CMU (HPND) | dependência de python-pptx |
+| XlsxWriter | 3.2.9 | BSD-2-Clause | dependência de python-pptx |
+| types-openpyxl | 3.1.5.20260827 | Apache-2.0 | stubs de tipo (somente desenvolvimento) |
+

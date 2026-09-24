@@ -602,7 +602,13 @@ class CoreService:
             uploads.fail(s.employee_id, p["upload_ref"], exc.message)  # rejected: staging removed, explained
             raise
         path.unlink(missing_ok=True)
-        return self._artifact_reply(art, recovered=False)
+        return {**self._artifact_reply(art, recovered=False), "analysis": self._analysis(art.id)}
+
+    def _analysis(self, artifact_id: str) -> dict[str, Any]:
+        """A3-09: say per file whether it is understood, partly understood or only stored."""
+        from runtime.documents.store import DocumentStore
+
+        return DocumentStore(self.conn, self.clock, self._artifact_store()).ensure_extracted(artifact_id)
 
     def _read(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
         """Chunked read: the app previews as plain text or saves a copy and verifies the hash itself."""

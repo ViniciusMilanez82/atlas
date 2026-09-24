@@ -68,6 +68,7 @@ DECISION_SCHEMA: dict[str, Any] = {
     },
 }
 _DECISION_VALIDATOR = Draft202012Validator(DECISION_SCHEMA)
+MAX_OBSERVATION_CHARS = 40_000
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 POLICY_SUMMARY = (
     "Only the tools in the catalog are available, each with the exact input schema shown. External writes and purchases need task permission and may need "
@@ -125,7 +126,7 @@ class AgentRunner:
         verifier: Verifier,
         tools: list[str],
         worker_id: str = "agent-1",
-        max_steps: int = 20,
+        max_steps: int = 200,  # absolute safety bound; lack of progress is limited by ProgressGuard (20)
         limits: AttemptLimits | None = None,
     ) -> None:
         self.conn = conn
@@ -284,7 +285,7 @@ class AgentRunner:
             self.conn.execute(
                 "INSERT OR REPLACE INTO step_observations(step_id, task_id, content, trust, created_at,"
                 " classification) VALUES (?,?,?,?,?,?)",
-                (step_id, task_id, content[:20_000], trust, to_utc_str(self.clock.now()), classification),
+                (step_id, task_id, content, trust, to_utc_str(self.clock.now()), classification),
             )
 
     def _deliver(self, task_id: str) -> None:
@@ -624,17 +625,25 @@ class AgentRunner:
             state = self.guard.record(lease, StepOutcome.NO_NEW_RESULT)
             return None if state == TaskState.RUNNING else "no progress"
         if res.status == "CONFIRMED":
-            text = (
-                json.dumps(res.output, ensure_ascii=False)[:20_000]
-                if res.output is not None
-                else f"{tool_id} confirmed without output"
-            )
+            text = json.dumps(res.output, ensure_ascii=False) if res.output is not None else f"{tool_id} confirmed"
+            if len(text) > MAX_OBSERVATION_CHARS:  # never cut JSON in the middle (A3-10)
+                text = json.dumps(
+                    {
+                        "note": "output too large for one observation; nothing was cut - read it in pages "
+                        "with documents.read (cursor) or narrow it with documents.search",
+                        "tool": tool_id,
+                        "keys": sorted(res.output or {})[:20],
+                    }
+                )
             cls = str((res.output or {}).get("classification") or "INTERNAL")  # set by the trusted adapter
             self._observe(step_id, task_id, text, "untrusted", cls)  # persisted before the step is marked done
             self._finish_step(step_id, "DONE")
             observations.append(Observation(text, f"tool:{tool_id}", Authority.EXTERNAL_CONTENT, cls))
+            # Progress = a new deliverable version, or new document segments read (a long document read
+            # page by page is progress, not a loop).
             wrote = tool_id == "artifact.write_text"
-            self.guard.record(lease, StepOutcome.VERIFIED_RESULT if wrote else StepOutcome.NO_NEW_RESULT)
+            read_more = tool_id in ("artifact.read_text", "documents.read") and bool((res.output or {}).get("segments"))
+            self.guard.record(lease, StepOutcome.VERIFIED_RESULT if wrote or read_more else StepOutcome.NO_NEW_RESULT)
             return None
         self._finish_step(step_id, "FAILED")
         if res.status in ("APPROVAL_REQUIRED", "UNKNOWN", "BUDGET_EXCEEDED"):
