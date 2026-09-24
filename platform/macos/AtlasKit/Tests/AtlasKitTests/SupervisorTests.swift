@@ -17,6 +17,20 @@ final class SupervisorTests: XCTestCase {
                                 openAIBaseURL: "http://127.0.0.1:9/v1", maxRestarts: maxRestarts)
     }
 
+    /// Health says "ok" only with a live worker (A3-06); after a (re)start that takes a moment.
+    private func waitHealthy(_ call: () async throws -> [String: Any], timeout: TimeInterval = 15) async throws
+        -> [String: Any]
+    {
+        let end = Date().addingTimeInterval(timeout)
+        var last: [String: Any] = [:]
+        while Date() < end {
+            last = try await call()
+            if last["status"] as? String == "ok" { return last }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return last
+    }
+
     private func waitForNewCore(_ sup: Supervisor, oldPid: Int32, timeout: TimeInterval = 25) -> Bool {
         let end = Date().addingTimeInterval(timeout)
         while Date() < end {
@@ -43,7 +57,7 @@ final class SupervisorTests: XCTestCase {
         _ = try await api.send(conversationId: conv, text: "Oi", clientMessageId: UUID().uuidString.lowercased())
         let oldPid = try XCTUnwrap(sup.coreProcessId)
         kill(oldPid, SIGKILL)
-        let health = try await api.health()  // retry-safe: waits for the Supervisor's restart
+        let health = try await waitHealthy { try await api.health() }  // retry-safe across the restart
         XCTAssertEqual(health["status"] as? String, "ok")
         XCTAssertNotEqual(sup.coreProcessId, oldPid)
         let page = try await api.history(conversationId: conv)  // persisted across the crash
@@ -74,7 +88,7 @@ final class SupervisorTests: XCTestCase {
             XCTAssertEqual(e.code, AtlasAPIError.unavailableCode)
         }
         try sup.restart()  // "Reiniciar serviços"
-        let health = try await conn.call("system.health", [:], retrySafe: true)
+        let health = try await waitHealthy { try await conn.call("system.health", [:], retrySafe: true) }
         XCTAssertEqual(health["status"] as? String, "ok")
         XCTAssertEqual(sup.restartCount, 0)
     }
@@ -122,13 +136,56 @@ final class SupervisorTests: XCTestCase {
         s = try sup.session()
         client = try IPCClient(socketPath: s.socketPath)
         try client.hello(token: s.ownerToken)
-        let health = try client.call("system.health", params: [:])
-        XCTAssertEqual((health["result"] as? [String: Any])?["status"] as? String, "ok")
+        var status = ""
+        for _ in 0..<150 {  // the new core answers "starting" until its worker has run once (A3-06)
+            let health = try client.call("system.health", params: [:])
+            status = (health["result"] as? [String: Any])?["status"] as? String ?? ""
+            if status == "ok" { break }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        XCTAssertEqual(status, "ok")
 
         // "Encerrar serviços" really stops both processes.
         let corePid = try XCTUnwrap(sup.coreProcessId)
         sup.stop()
         XCTAssertFalse(sup.isRunning)
         XCTAssertNotEqual(kill(corePid, 0), 0)  // process is gone
+    }
+
+    /// A3-28 / T28: a second Supervisor on the same directories refuses to take over; the first keeps
+    /// serving on its socket; once the owner stops, the lock is free again.
+    func testSecondSupervisorDoesNotTakeOver() async throws {
+        let cfg = try config()
+        let first = Supervisor(config: cfg)
+        let second = Supervisor(config: cfg)
+        defer {
+            first.stop()
+            second.stop()
+            try? FileManager.default.removeItem(at: cfg.dataDir.deletingLastPathComponent())
+        }
+        try first.start()
+        let before = try first.session()
+        XCTAssertThrowsError(try second.start()) { XCTAssertEqual($0 as? SupervisorError, .alreadyRunning) }
+        let after = try first.session()
+        XCTAssertEqual(after, before, "the token/socket of the live instance must not be rewritten")
+        let client = try IPCClient(socketPath: after.socketPath)
+        try client.hello(token: after.ownerToken)
+        XCTAssertNotNil(try client.call("identity.get", params: [:])["result"])
+        first.stop()
+        XCTAssertNoThrow(try second.start())
+    }
+
+    /// A3-31 / T31: a service that ignores SIGTERM is forced after the deadline; nothing waits forever.
+    func testStopIsBoundedWhenAServiceIgnoresTerm() throws {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/sh")
+        p.arguments = ["-c", "trap '' TERM; sleep 60"]
+        try p.run()
+        Thread.sleep(forTimeInterval: 0.2)
+        let t0 = Date()
+        let graceful = Supervisor.terminate(p, grace: 1)
+        XCTAssertFalse(graceful)
+        XCTAssertLessThan(Date().timeIntervalSince(t0), 4)
+        XCTAssertFalse(p.isRunning)
     }
 }

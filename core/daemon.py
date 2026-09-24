@@ -22,6 +22,7 @@ from types import FrameType
 
 from core.conversation import ConversationService
 from core.health import WorkerMonitor
+from core.instance_lock import InstanceBusy, InstanceLock
 from core.intelligence import IntelligenceSetup
 from core.ipc.server import UnixSocketServer
 from core.ipc.sessions import SessionRegistry
@@ -260,6 +261,11 @@ def main(argv: list[str] | None = None) -> int:
     if sys.platform == "win32":
         print("atlas-core requires macOS or Linux (Unix domain sockets)", file=sys.stderr)
         return 2
+    try:  # A3-28: own the data directory BEFORE recovery, token or socket are touched
+        lock = InstanceLock(args.data_dir).acquire()
+    except InstanceBusy as exc:
+        print(json.dumps({"event": "refused", "reason": str(exc), "holder": exc.holder}), flush=True)
+        return 3
     core = Core(args.data_dir, args.ipc_dir, args.openai_base_url)
     owner_id, employee_id = core.bootstrap(args.owner_name, args.employee_name, args.locale, args.timezone)
     sessions = SessionRegistry()
@@ -280,4 +286,5 @@ def main(argv: list[str] | None = None) -> int:
     server.serve_forever()
     worker.join(timeout=5)
     (args.ipc_dir / "session.json").unlink(missing_ok=True)
+    lock.release()
     return 0

@@ -9,12 +9,19 @@ import UniformTypeIdentifiers
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Quitting the app stops the services (single database writer). Keeping Atlas working after quit
     /// needs the login item (SMAppService), which must be validated on a real Mac (D-01).
-    static var onTerminate: (() -> Void)?
+    static var onTerminateAsync: (() async -> Void)?
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
-    func applicationWillTerminate(_ notification: Notification) {
-        AppDelegate.onTerminate?()
+    /// A3-31: the services stop OFF the main actor with a deadline; the window stays responsive and the
+    /// app quits when the bounded stop returns (graceful or forced, never an unbounded wait).
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let stop = AppDelegate.onTerminateAsync else { return .terminateNow }
+        Task { @MainActor in
+            await stop()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 }
 
@@ -76,7 +83,12 @@ final class AppController: ObservableObject {
         starting = true
         do {
             if !supervisor.isRunning {
-                try await Task.detached(priority: .userInitiated) { try supervisor.start() }.value
+                do {
+                    try await Task.detached(priority: .userInitiated) { try supervisor.start() }.value
+                } catch SupervisorError.alreadyRunning {
+                    // A3-28: another Atlas window owns the services; connect to it, never take over.
+                    model.noteExternalServices()
+                }
             }
             bootError = nil
             await model.start()
@@ -90,9 +102,12 @@ final class AppController: ObservableObject {
         starting = false
     }
 
-    func shutdown() {
+    /// Bounded and off the main actor (A3-31). Says what had to be forced, if anything.
+    func shutdown() async {
         timer?.invalidate()
-        supervisor?.stop()
+        guard let supervisor else { return }
+        let report = await Task.detached(priority: .userInitiated) { supervisor.stop(grace: 8) }.value
+        model.noteShutdown(forced: report.forced)
     }
 }
 
@@ -106,7 +121,7 @@ struct AtlasApp: App {
             RootView().environmentObject(controller).environmentObject(controller.model)
                 .frame(minWidth: 900, minHeight: 600)
                 .task {
-                    AppDelegate.onTerminate = { [weak controller] in controller?.shutdown() }
+                    AppDelegate.onTerminateAsync = { [weak controller] in await controller?.shutdown() }
                     await controller.start()
                 }
         }
@@ -115,7 +130,7 @@ struct AtlasApp: App {
                 Button("Pare tudo") { Task { await controller.model.stopAll() } }
                     .keyboardShortcut(".", modifiers: [.command])
                 Button("Reiniciar serviços") { Task { await controller.model.restart() } }
-                Button("Encerrar serviços") { controller.shutdown() }
+                Button("Encerrar serviços") { Task { await controller.shutdown() } }
             }
         }
     }

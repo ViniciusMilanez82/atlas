@@ -46,6 +46,15 @@ public struct SessionInfo: Equatable {
 public enum SupervisorError: Error, Equatable {
     case startFailed(String)
     case notRunning
+    /// Another Atlas instance owns these directories (A3-28). Connect to it instead of taking over.
+    case alreadyRunning
+}
+
+/// What "Encerrar serviços" really did (A3-31): graceful, or forced after the deadline.
+public struct StopReport: Equatable {
+    public var forced: [String] = []
+    public var elapsed: TimeInterval = 0
+    public var graceful: Bool { forced.isEmpty }
 }
 
 public final class Supervisor {
@@ -55,6 +64,7 @@ public final class Supervisor {
     private var restarts = 0
     private var stopping = false
     private let lock = NSLock()
+    private var instanceLockFD: Int32 = -1
     public private(set) var lastEvent = "stopped"
 
     public init(config: SupervisorConfig) {
@@ -84,9 +94,33 @@ public final class Supervisor {
         return condition()
     }
 
+    /// A3-28: an exclusive, OS-released lock on the Atlas directory, taken BEFORE the token file or any
+    /// socket is touched. A second app/Supervisor gets `.alreadyRunning` and never deletes a live socket.
+    private func acquireInstanceLock() throws {
+        if instanceLockFD >= 0 { return }
+        let base = config.ipcDir.deletingLastPathComponent()
+        try Supervisor.privateDir(base)
+        let fd = open(base.appendingPathComponent("supervisor.lock").path, O_RDWR | O_CREAT, 0o600)
+        guard fd >= 0 else { throw SupervisorError.startFailed("cannot open the instance lock") }
+        if flock(fd, LOCK_EX | LOCK_NB) != 0 {
+            close(fd)
+            throw SupervisorError.alreadyRunning
+        }
+        instanceLockFD = fd
+    }
+
+    private func releaseInstanceLock() {
+        if instanceLockFD >= 0 {
+            flock(instanceLockFD, LOCK_UN)
+            close(instanceLockFD)
+            instanceLockFD = -1
+        }
+    }
+
     public func start() throws {
         lock.lock()
         defer { lock.unlock() }
+        try acquireInstanceLock()
         stopping = false
         try Supervisor.privateDir(config.dataDir)
         try Supervisor.privateDir(config.ipcDir)
@@ -175,21 +209,40 @@ public final class Supervisor {
         return SessionInfo(socketPath: sock, ownerToken: token, employeeId: emp)
     }
 
-    /// Stops both services for real (the "Encerrar serviços" operation, spec 3.4).
-    public func stop() {
+    /// Cooperative stop with a deadline (A3-31): SIGTERM, wait up to `grace`, then SIGKILL. Never waits
+    /// without a bound. Returns false when the process had to be killed.
+    @discardableResult
+    public static func terminate(_ p: Process, grace: TimeInterval) -> Bool {
+        guard p.isRunning else { return true }
+        p.terminate()
+        let end = Date().addingTimeInterval(grace)
+        while p.isRunning && Date() < end { Thread.sleep(forTimeInterval: 0.05) }
+        guard p.isRunning else { return true }
+        kill(p.processIdentifier, SIGKILL)
+        let hard = Date().addingTimeInterval(2)
+        while p.isRunning && Date() < hard { Thread.sleep(forTimeInterval: 0.05) }
+        return false
+    }
+
+    /// Stops both services for real (the "Encerrar serviços" operation, spec 3.4). Bounded: each service
+    /// gets `grace` seconds to finish cooperatively (checkpoint, reconcile) before it is forced. Call it
+    /// OFF the main actor; the report says what had to be forced so the UI can explain it.
+    @discardableResult
+    public func stop(grace: TimeInterval = 8) -> StopReport {
+        let started = Date()
         lock.lock()
         stopping = true
         let c = core
         let k = keychain
         lock.unlock()
-        if let c, c.isRunning {
-            c.terminate()
-            c.waitUntilExit()
-        }
-        if let k, k.isRunning {
-            k.terminate()
-            k.waitUntilExit()
-        }
-        lastEvent = "stopped"
+        var report = StopReport()
+        if let c, !Supervisor.terminate(c, grace: grace) { report.forced.append("atlas-core") }
+        if let k, !Supervisor.terminate(k, grace: 2) { report.forced.append("keychain") }
+        lock.lock()
+        releaseInstanceLock()
+        lock.unlock()
+        report.elapsed = Date().timeIntervalSince(started)
+        lastEvent = report.graceful ? "stopped" : "stopped (forced: \(report.forced.joined(separator: ", ")))"
+        return report
     }
 }

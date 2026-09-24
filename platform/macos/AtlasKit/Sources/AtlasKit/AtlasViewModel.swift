@@ -417,6 +417,19 @@ public final class AtlasViewModel: ObservableObject {
         await refresh()
     }
 
+    /// Another Atlas window already runs the services (A3-28): this window only connects to them.
+    public func noteExternalServices() {
+        notice = "Outra janela do Atlas já gerencia os serviços; esta janela está conectada a ela."
+    }
+
+    /// A3-31: say how the services ended, including what had to be forced after the deadline.
+    public func noteShutdown(forced: [String]) {
+        notice = forced.isEmpty
+            ? "Serviços encerrados."
+            : "Serviços encerrados; \(forced.joined(separator: ", ")) não respondeu a tempo e foi finalizado. "
+                + "Ações em andamento serão conferidas ao reiniciar."
+    }
+
     public func restart() async {
         guard let restartServices else { return }
         await attempt {
