@@ -653,7 +653,7 @@ class AgentRunner:
             observations.append(Observation(text, f"tool:{tool_id}", Authority.EXTERNAL_CONTENT, cls))
             # Progress = a new deliverable version, or new document segments read (a long document read
             # page by page is progress, not a loop).
-            wrote = tool_id == "artifact.write_text"
+            wrote = tool_id in ("artifact.write_text", "artifact.write_document")
             read_more = tool_id in ("artifact.read_text", "documents.read") and bool((res.output or {}).get("segments"))
             self.guard.record(lease, StepOutcome.VERIFIED_RESULT if wrote or read_more else StepOutcome.NO_NEW_RESULT)
             return None

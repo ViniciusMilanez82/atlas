@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from runtime.artifacts.manager import ArtifactManager
+from runtime.documents.generate import GenerationError, generate
 from runtime.documents.store import MAX_PAGE_CHARS, DocumentStore
 from runtime.memory.manager import MemoryManager
 from runtime.tools.registry import ToolManifest, ToolRegistry
@@ -93,7 +94,55 @@ SEARCH_DOCUMENTS = ToolManifest(
     timeout_s=150,
     verification="deterministic_check",
 )
-BUILTIN_MANIFESTS = (READ_ARTIFACT, WRITE_ARTIFACT, SEARCH_MEMORY, READ_DOCUMENT, SEARCH_DOCUMENTS)
+_TEXT = {"type": "string", "maxLength": 20_000}
+WRITE_DOCUMENT = ToolManifest(
+    tool_id="artifact.write_document",
+    version="1.0.0",
+    description="Create a PDF, DOCX, XLSX or PPTX deliverable from structured blocks (heading, paragraph, bullets, "
+    "table, slide). The file is validated by re-reading it before it is stored.",
+    input_schema={
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["name", "title", "blocks"],
+        "properties": {
+            "name": {"type": "string", "maxLength": 200, "pattern": "\\.(pdf|docx|xlsx|pptx)$"},
+            "title": {"type": "string", "minLength": 1, "maxLength": 300},
+            "blocks": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 400,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["type"],
+                    "properties": {
+                        "type": {"enum": ["heading", "paragraph", "bullets", "table", "slide"]},
+                        "text": _TEXT,
+                        "title": {"type": "string", "maxLength": 300},
+                        "items": {"type": "array", "maxItems": 100, "items": _TEXT},
+                        "bullets": {"type": "array", "maxItems": 30, "items": _TEXT},
+                        "notes": _TEXT,
+                        "sheet": {"type": "string", "maxLength": 31},
+                        "rows": {
+                            "type": "array",
+                            "maxItems": 2000,
+                            "items": {
+                                "type": "array",
+                                "maxItems": 50,
+                                "items": {"type": ["string", "number", "null"]},
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    },
+    effect_class="LOCAL_WRITE",
+    base_risk="R1",
+    timeout_s=60,
+    verification="artifact_hash",
+)
+BUILTIN_MANIFESTS = (READ_ARTIFACT, WRITE_ARTIFACT, SEARCH_MEMORY, READ_DOCUMENT, SEARCH_DOCUMENTS, WRITE_DOCUMENT)
 
 
 class BuiltinTools:
@@ -211,6 +260,45 @@ class BuiltinTools:
         ]
         return max((c for c in found if c in levels), key=levels.index, default="INTERNAL")
 
+    def write_document(self, tool_input: dict[str, Any], ctx: Any) -> AdapterOutcome:
+        """N11: render + validate by round trip; only a file that re-reads correctly becomes a deliverable."""
+        try:
+            gen = generate(tool_input["name"], tool_input["title"], tool_input["blocks"])
+        except GenerationError as exc:
+            return AdapterOutcome("FAILED", error_message=str(exc))
+        conn = connect(self.db_path)
+        try:
+            task_id, employee_id = self._task(conn, ctx.action_id)
+            am = ArtifactManager(conn, self.clock, self.store_root)
+            art = am.create_document(
+                actor=Actor("control_plane", "broker", "internal"),
+                employee_id=employee_id,
+                task_id=task_id,
+                name=tool_input["name"],
+                data=gen.data,
+                mime=gen.mime,
+                classification=self._derived_classification(conn, task_id),
+            )
+            return AdapterOutcome(
+                "SUCCEEDED",
+                external_reference=f"artifact:{art.id}",
+                output={
+                    "artifact_id": art.id,
+                    "name": art.name,
+                    "version": art.version,
+                    "sha256": art.sha256,
+                    "mime_type": art.mime_type,
+                    "size_bytes": art.size_bytes,
+                    "parts": gen.pages_or_parts,
+                    "warnings": gen.warnings,
+                    "validated": "re-read with the document extractors; every text block found",
+                },
+            )
+        except AtlasError as exc:
+            return AdapterOutcome("FAILED", error_message=exc.message)
+        finally:
+            conn.close()
+
     def search_memory(self, tool_input: dict[str, Any], ctx: Any) -> AdapterOutcome:
         conn = connect(self.db_path)
         try:
@@ -248,6 +336,7 @@ class BuiltinTools:
             SEARCH_MEMORY.tool_id: self.search_memory,
             READ_DOCUMENT.tool_id: self.read_document,
             SEARCH_DOCUMENTS.tool_id: self.search_documents,
+            WRITE_DOCUMENT.tool_id: self.write_document,
         }
         for m in BUILTIN_MANIFESTS:
             registry.register(m, bindings[m.tool_id])

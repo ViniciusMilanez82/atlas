@@ -99,11 +99,20 @@ class Verifier:
             return None
         res.checks["belongs_to_task"] = True
         try:
-            text = data.decode("utf-8")
-            if art.mime_type == "application/json":
-                json.loads(text)
+            if art.name.lower().endswith((".pdf", ".docx", ".xlsx", ".pptx")):
+                # Binary deliverables open when the format extractor reads them back (N11).
+                from runtime.documents.extract import READY, extract
+
+                ex = extract(data, art.name)
+                if ex.state != READY:
+                    raise ValueError(ex.diagnostic or ex.state)
+                text = "\n".join(s.text for s in ex.segments)
+            else:
+                text = data.decode("utf-8")
+                if art.mime_type == "application/json":
+                    json.loads(text)
             res.checks["opens"] = True
-        except (UnicodeDecodeError, json.JSONDecodeError):
+        except (UnicodeDecodeError, ValueError):
             res.checks["opens"] = False
             res.gaps.append("file does not open as its declared type")
             return None

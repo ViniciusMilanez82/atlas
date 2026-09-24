@@ -366,6 +366,38 @@ class ArtifactManager:
             actor=actor,
         )
 
+    def create_document(
+        self,
+        *,
+        actor: Actor,
+        employee_id: str,
+        task_id: str,
+        name: str,
+        data: bytes,
+        mime: str,
+        classification: str = "INTERNAL",
+    ) -> Artifact:
+        """Atlas-produced binary deliverable (PDF/DOCX/XLSX/PPTX) already validated by round trip (N11)."""
+        name = self._clean_name(name)
+        ext = Path(name).suffix.lower()
+        if ext not in (".pdf", ".docx", ".xlsx", ".pptx"):
+            raise AtlasError(ErrorCode.INVALID_INPUT, "documents must be .pdf, .docx, .xlsx or .pptx")
+        if len(data) > MAX_IMPORT_BYTES:
+            raise AtlasError(ErrorCode.INVALID_INPUT, "artifact too large")
+        kind = sniff(data)
+        if kind not in EXTENSIONS[ext] and not (ext != ".pdf" and kind == "zip"):
+            raise AtlasError(ErrorCode.INVALID_INPUT, f"content is {kind}, which does not match {ext}")
+        return self._insert(
+            employee_id=employee_id,
+            task_id=task_id,
+            name=name,
+            mime=mime,
+            data=data,
+            classification=classification,
+            relation="output",
+            actor=actor,
+        )
+
     def export(self, artifact_id: str, dest_dir: Path, *, actor: Actor, expected_sha256: str) -> Path:
         """Explicit export: a new copy in a folder the owner chose; never overwrites."""
         if actor.kind != "owner":
