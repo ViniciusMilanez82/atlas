@@ -55,41 +55,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build development Atlas.app
         run: packaging/macos/build_app.sh "$RUNNER_TEMP/dist"
-      - name: Screen right after the build
-        run: mkdir -p "$RUNNER_TEMP/shots" && screencapture -x "$RUNNER_TEMP/shots/0-after-build.png"
-      - name: Bisect the Local Network prompt with the embedded Python (diagnostic)
-        continue-on-error: true
-        run: |
-          R="$RUNNER_TEMP/dist/Atlas.app/Contents/Resources"
-          export PYTHONPATH="$R/core-src:$R/site-packages" PYTHONNOUSERSITE=1
-          mkdir -p "$RUNNER_TEMP/shots"
-          "$R/python/bin/python3" -c "import time; time.sleep(6)"
-          screencapture -x "$RUNNER_TEMP/shots/1-bare-python.png"
-          "$R/python/bin/python3" -c "import core.daemon, core.service, runtime.agent.loop, security.broker.executor; import time; time.sleep(6)"
-          screencapture -x "$RUNNER_TEMP/shots/2-import-core.png"
-          D=$(mktemp -d /tmp/lnp.XXXX); mkdir -m 700 "$D/data" "$D/ipc"
-          "$R/python/bin/python3" -m core --data-dir "$D/data" --ipc-dir "$D/ipc" --openai-base-url http://127.0.0.1:9/v1 &
-          CORE=$!
-          sleep 12
-          screencapture -x "$RUNNER_TEMP/shots/3-daemon-running.png"
-          kill $CORE || true
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: Atlas-local-network-bisect
-          path: ${{ runner.temp }}/shots
-          if-no-files-found: warn
-          retention-days: 7
       - name: Open the built app on the runner and capture the real window (evidence only; not interactive validation)
         continue-on-error: true
         run: |
           open "$RUNNER_TEMP/dist/Atlas.app"
           sleep 30
           screencapture -x "$RUNNER_TEMP/atlas-window.png"
-          echo "--- network sockets held by the app's processes (diagnostic for the Local Network prompt)"
+          echo "--- network sockets held by the app's processes (expected: none)"
           for pid in $(pgrep -f "Atlas.app/Contents"); do ps -o pid=,command= -p "$pid"; lsof -nP -a -i -p "$pid" || true; done
-          echo "--- system log mentioning local network"
-          log show --last 2m --style compact --predicate 'eventMessage CONTAINS[c] "local network" OR subsystem == "com.apple.network"' 2>/dev/null | grep -i -E "python|atlas|local network" | tail -40 || true
           osascript -e 'tell application "Atlas" to quit' || true
           sleep 5
           pgrep -fl "Atlas.app" || echo "app and services stopped"

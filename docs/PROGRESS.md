@@ -532,3 +532,16 @@ atlas-bundle-check: pacote sem Python do sistema respondeu "Oi" com o motivo rea
 | Pronto para distribuição | **Não**: assinatura ad-hoc, sem notarização (D-07), sem SMAppService validado |
 
 **Custos incorridos:** zero. Nenhuma credencial foi solicitada ou usada.
+
+**Primeira abertura real no runner (job `app-evidence`, macOS 15 limpo).**
+[docs/evidence/alpha2-first-launch-ci-runner.png](evidence/alpha2-first-launch-ci-runner.png) é uma
+captura de tela real, não um mock. O `Atlas.app` foi aberto com `open`. Supervisor, Keychain e núcleo
+subiram, e a janela mostra "Conectado". A inteligência aparece como "Não configurada" com o motivo
+real. Nenhum processo do app tinha socket de rede aberto. Ao sair, app e serviços terminaram.
+
+Achado investigado: numa execução anterior apareceu o aviso "Allow Python to find devices on local
+networks?". A bisseção num runner limpo mostrou que ele não vem do app, nem do Python embutido, nem
+do núcleo. Ele vinha da suíte de testes, que roda antes no mesmo job.
+
+**Isso não prova:** que uma pessoa usou o app, os passos 2 a 10 do cenário visual e o comportamento
+no Mac do proprietário (D-01).
