@@ -57,6 +57,7 @@ DECISION_SCHEMA: dict[str, Any] = {
         "question": {"type": "string"},
     },
 }
+_DECISION_VALIDATOR = Draft202012Validator(DECISION_SCHEMA)
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 Notifier = Callable[[str, str, str, "str | None"], object]
 POLICY_SUMMARY = (
@@ -71,6 +72,24 @@ STATUS_TEXT = {
     "external effect unknown": "Uma ação ficou com resultado incerto; vou conferir antes de qualquer repetição.",
     "budget exhausted": "O orçamento desta tarefa acabou; ela ficou bloqueada até você decidir.",
 }
+
+
+def parse_decision(text: str) -> dict[str, Any]:
+    """Validate the COMPLETE decision contract before any field is read (A3-06, spec 4.1).
+
+    Raises ``ValueError`` with a short, model-facing reason. Nothing downstream indexes or slices an
+    unvalidated value, so a list, a missing field or a ``null`` summary cannot crash the worker.
+    """
+    try:
+        decision: Any = json.loads(text)
+    except json.JSONDecodeError:
+        raise ValueError("the answer is not valid JSON") from None
+    errors = sorted(_DECISION_VALIDATOR.iter_errors(decision), key=lambda e: list(e.absolute_path))
+    if errors:
+        where = "/".join(str(p) for p in errors[0].absolute_path) or "(root)"
+        raise ValueError(f"the decision violates its schema at {where}: {errors[0].message[:160]}")
+    assert isinstance(decision, dict)
+    return decision
 
 
 @dataclass
@@ -364,10 +383,7 @@ class AgentRunner:
             req=Requirements(structured_output=True, data_classification=task["data_policy"]),
             request=ModelRequest("auto", built.messages, max_output_tokens=4000, json_schema=DECISION_SCHEMA),
         )
-        decision: dict[str, Any] = json.loads(resp.output_text)
-        if not isinstance(decision, dict) or decision.get("decision") not in ("tool", "finish", "ask_owner"):
-            raise ValueError("invalid decision")
-        return decision
+        return parse_decision(resp.output_text)
 
     # ------------------------------------------------------------------ run
 
@@ -386,8 +402,8 @@ class AgentRunner:
             task = self.tasks.get(task_id)
             try:
                 decision = self._decide(task, observations)
-            except (AtlasError, ValueError, json.JSONDecodeError) as exc:
-                reason = exc.message if isinstance(exc, AtlasError) else "model returned an invalid decision"
+            except (AtlasError, ValueError) as exc:
+                reason = exc.message if isinstance(exc, AtlasError) else f"invalid decision: {exc}"
                 if isinstance(exc, AtlasError) and exc.code in (
                     ErrorCode.BUDGET_EXCEEDED,
                     ErrorCode.UNAUTHORIZED,
@@ -414,7 +430,7 @@ class AgentRunner:
                 {
                     "step": steps,
                     "decision": decision["decision"],
-                    "summary": decision.get("summary", "")[:300],
+                    "summary": decision["summary"],
                 },
             )
             verdict = self._validate(decision)
@@ -431,7 +447,7 @@ class AgentRunner:
                     return self._outcome(task_id, verdict, steps)
                 continue
             if decision["decision"] == "ask_owner":
-                question = decision.get("question", "")[:900]
+                question = decision["question"][:900]
                 self._journal(task_id, "task.question", question)
                 self._safe_release(lease, TaskState.WAITING_USER, "agent asked the owner a question")
                 self._tell_owner(task_id, "question", question)

@@ -19,6 +19,8 @@ import sqlite3
 import unicodedata
 from typing import Any
 
+from jsonschema import Draft202012Validator
+
 from core.intelligence import IntelligenceSetup
 from runtime.memory.manager import MemoryManager
 from runtime.models.context import Authority, ContextBuilder, ContextItem
@@ -58,6 +60,7 @@ CHAT_SCHEMA: dict[str, Any] = {
         "objective": {"type": "string", "maxLength": 2000},
     },
 }
+_CHAT_VALIDATOR = Draft202012Validator(CHAT_SCHEMA)
 EMPLOYEE = Actor("runtime", "conversation", "internal")
 
 
@@ -571,6 +574,8 @@ class ConversationService:
                 request=ModelRequest("auto", built.messages, max_output_tokens=800, json_schema=CHAT_SCHEMA),
             )
             decision = json.loads(resp.output_text)
+            if next(_CHAT_VALIDATOR.iter_errors(decision), None) is not None:  # full contract (A3-06)
+                raise ValueError("chat decision violates its schema")
         except (AtlasError, ValueError) as exc:
             msg = exc.message if isinstance(exc, AtlasError) else "resposta do modelo inválida"
             reply = self.say(
@@ -580,8 +585,14 @@ class ConversationService:
                 reply_marker=marker,
             )
             return self._result(mid, reply, "chat_error", None)
-        if decision.get("intent") == "delegate":
-            objective = (decision.get("objective") or text).strip() or text
+        if decision["intent"] == "delegate":
+            objective = decision["objective"].strip() or text
             return self._delegate(actor, employee_id, cid, mid, objective, artifact_ids, marker=marker)
-        reply = self.say(cid, "chat", str(decision.get("reply", "")).strip() or "…", reply_marker=marker)
+        if not decision["reply"].strip():
+            reply = self.say(
+                cid, "error", "Não consegui responder agora (resposta vazia). Nada foi executado.",
+                reply_marker=marker,
+            )
+            return self._result(mid, reply, "chat_error", None)
+        reply = self.say(cid, "chat", decision["reply"].strip(), reply_marker=marker)
         return self._result(mid, reply, "chat", None)

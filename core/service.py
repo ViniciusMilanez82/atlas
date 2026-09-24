@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from core.conversation import ConversationService
+from core.health import WorkerMonitor
 from core.intelligence import IntelligenceSetup
 from core.ipc.sessions import Session
 from runtime.artifacts.manager import MAX_IMPORT_BYTES, ArtifactManager
@@ -63,8 +64,10 @@ class CoreService:
         *,
         intelligence: IntelligenceSetup | None = None,
         artifacts: ArtifactManager | None = None,
+        worker: WorkerMonitor | None = None,
     ) -> None:
         self.conn = conn
+        self.worker = worker
         self.clock = clock
         self.broker = broker
         self.tasks: TaskEngine = broker.tasks
@@ -187,10 +190,14 @@ class CoreService:
     def _health(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
         self.conn.execute("SELECT 1").fetchone()
         intel = self.intelligence.status() if self.intelligence else None
+        worker = self.worker.snapshot() if self.worker else {"state": "not_started", "last_error": None}
         return {
-            "status": "ok",
+            # "connected" is not "able to execute": a missing or failed executor is never reported as ok
+            "status": "ok" if worker["state"] == "ok" else "degraded",
             "version": self.version,
+            "worker": worker,
             "components": {
+                "worker": worker["state"],
                 "database": "ok",
                 "workspace": "not_available",
                 "voice": "not_available",

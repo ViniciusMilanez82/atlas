@@ -21,11 +21,12 @@ from pathlib import Path
 from types import FrameType
 
 from core.conversation import ConversationService
+from core.health import WorkerMonitor
 from core.intelligence import IntelligenceSetup
 from core.ipc.server import UnixSocketServer
 from core.ipc.sessions import SessionRegistry
 from core.service import CoreService
-from runtime.agent.loop import AgentRunner
+from runtime.agent.loop import AgentRunner, RunOutcome
 from runtime.artifacts.manager import ArtifactManager
 from runtime.memory.manager import MemoryManager
 from runtime.models.openai_responses import DEFAULT_BASE_URL
@@ -42,6 +43,8 @@ from security.vault.vault import Vault, VaultBackend, VaultUnavailable, platform
 from shared.actors import Actor
 from shared.clock import Clock, SystemClock
 from shared.errors import AtlasError
+from storage import journal
+from storage.db import transaction
 from storage.repositories.identity import create_employee, create_owner
 from storage.store import open_store
 
@@ -57,6 +60,7 @@ class Core:
         self.db_path = data_dir / "atlas.sqlite"
         self.store_root = data_dir / "artifacts"
         self.stop = threading.Event()
+        self.monitor = WorkerMonitor(self.clock)
         data_dir.mkdir(parents=True, exist_ok=True)
         self.vault_backend: VaultBackend | None
         try:
@@ -88,7 +92,9 @@ class Core:
 
     def service(self) -> CoreService:
         _, broker, intel, artifacts = self._components()
-        return CoreService(broker.conn, self.clock, broker, intelligence=intel, artifacts=artifacts)
+        return CoreService(
+            broker.conn, self.clock, broker, intelligence=intel, artifacts=artifacts, worker=self.monitor
+        )
 
     # ---------------------------------------------------------------- lifecycle
 
@@ -135,8 +141,30 @@ class Core:
         conversation = ConversationService(broker.conn, self.clock, broker, intel)
         guard = ProgressGuard(broker.tasks)
         scheduler = Scheduler(broker.tasks)
+        self.monitor.started()
+        try:
+            self._loop(employee_id, interval, broker, intel, memory, verifier, tools, conversation, guard, scheduler)
+        except BaseException as exc:  # the thread ends: say so instead of leaving health green
+            self.monitor.stopped(f"{type(exc).__name__}: worker loop ended")
+            raise
+        self.monitor.stopped()
+
+    def _loop(
+        self,
+        employee_id: str,
+        interval: float,
+        broker: Broker,
+        intel: IntelligenceSetup,
+        memory: MemoryManager,
+        verifier: Verifier,
+        tools: list[str],
+        conversation: ConversationService,
+        guard: ProgressGuard,
+        scheduler: Scheduler,
+    ) -> None:
         recovered = False
         while not self.stop.is_set():
+            self.monitor.beat()
             broker.collect_late_results()
             guard.promote_due_retries()  # RETRYING -> READY after backoff (review A7)
             scheduler.run_due()  # scheduled jobs create their tasks even while intelligence is off
@@ -172,10 +200,41 @@ class Core:
                 worker_id=f"worker-{os.getpid()}",
                 notify=conversation.notify,
             )
-            try:
-                runner.run(row[0], spec)
-            except AtlasError:
+            outcome = Core.run_one(runner, row[0], spec, self.monitor, broker.tasks)
+            if outcome is None:
                 self.stop.wait(interval)
+
+    @staticmethod
+    def run_one(
+        runner: AgentRunner, task_id: str, spec: DeliverableSpec, monitor: WorkerMonitor, tasks: TaskEngine
+    ) -> RunOutcome | None:
+        """Run one task under a guard (A3-06). An unexpected error never ends the worker silently: it is
+        journaled, shown by ``system.health`` and the task is reclaimed (fencing bumped) for recovery."""
+        try:
+            return runner.run(task_id, spec)
+        except AtlasError:
+            return None
+        except Exception as exc:
+            what = f"{type(exc).__name__} while running task {task_id}"
+            monitor.error(what)
+            try:
+                state = ProgressGuard(tasks).reclaim_after_worker_loss(
+                    task_id, f"worker error: {type(exc).__name__}"
+                )
+                emp = tasks.get(task_id)["employee_id"]
+                with transaction(tasks.conn):
+                    journal.append(
+                        tasks.conn,
+                        tasks.clock,
+                        employee_id=emp,
+                        task_id=task_id,
+                        type="worker.error",
+                        actor=Actor("system", "watchdog"),
+                        summary=f"{what}; task reclaimed as {state or 'unchanged'}",
+                    )
+            except Exception as inner:  # diagnostics must not kill the worker either
+                monitor.error(f"{what}; recovery failed with {type(inner).__name__}")
+            return None
 
 
 def main(argv: list[str] | None = None) -> int:
