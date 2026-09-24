@@ -16,6 +16,7 @@ from runtime.artifacts.manager import ArtifactManager
 from runtime.documents.generate import GenerationError, generate
 from runtime.documents.store import MAX_PAGE_CHARS, DocumentStore
 from runtime.memory.manager import MemoryManager
+from runtime.tools.compute import ComputeError, analyze_calendar, evaluate, format_br
 from runtime.tools.registry import ToolManifest, ToolRegistry
 from security.broker.broker import AdapterOutcome
 from shared.actors import Actor
@@ -142,7 +143,89 @@ WRITE_DOCUMENT = ToolManifest(
     timeout_s=60,
     verification="artifact_hash",
 )
-BUILTIN_MANIFESTS = (READ_ARTIFACT, WRITE_ARTIFACT, SEARCH_MEMORY, READ_DOCUMENT, SEARCH_DOCUMENTS, WRITE_DOCUMENT)
+CALC = ToolManifest(
+    tool_id="calc.evaluate",
+    version="1.0.0",
+    description="Compute an arithmetic expression exactly (Decimal): + - * / ** ( ) and percent. Use it for every "
+    "number you state; Brazilian notation 1.234,56 by default.",
+    input_schema={
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["expression"],
+        "properties": {
+            "expression": {"type": "string", "minLength": 1, "maxLength": 500},
+            "decimal_comma": {"type": "boolean"},
+        },
+    },
+    effect_class="READ_ONLY",
+    base_risk="R0",
+    timeout_s=5,
+    verification="deterministic_check",
+)
+_EVENT = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["id"],
+    "properties": {
+        "id": {"type": "string", "maxLength": 100},
+        "title": {"type": "string", "maxLength": 300},
+        "start": {"type": "string", "maxLength": 40},
+        "end": {"type": "string", "maxLength": 40},
+        "date": {"type": "string", "maxLength": 10},
+        "days": {"type": "integer", "minimum": 1, "maximum": 366},
+        "all_day": {"type": "boolean"},
+        "timezone": {"type": "string", "maxLength": 64},
+        "recurrence": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "freq": {"enum": ["DAILY", "WEEKLY"]},
+                "interval": {"type": "integer", "minimum": 1, "maximum": 52},
+                "count": {"type": "integer", "minimum": 1, "maximum": 1000},
+                "until": {"type": "string", "maxLength": 10},
+            },
+        },
+        "exceptions": {"type": "array", "maxItems": 200, "items": {"type": "string", "maxLength": 10}},
+    },
+}
+CALENDAR = ToolManifest(
+    tool_id="calendar.analyze",
+    version="1.0.0",
+    description="Expand events (UTC instants, civil times in IANA zones, all-day dates, daily/weekly recurrences "
+    "with exceptions) inside a window and compute overlaps by code. Use it for any date/time reasoning.",
+    input_schema={
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["events", "window"],
+        "properties": {
+            "events": {"type": "array", "minItems": 1, "maxItems": 200, "items": _EVENT},
+            "window": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["start", "end", "timezone"],
+                "properties": {
+                    "start": {"type": "string", "maxLength": 40},
+                    "end": {"type": "string", "maxLength": 40},
+                    "timezone": {"type": "string", "maxLength": 64},
+                },
+            },
+        },
+    },
+    effect_class="READ_ONLY",
+    base_risk="R0",
+    timeout_s=10,
+    verification="deterministic_check",
+)
+BUILTIN_MANIFESTS = (
+    READ_ARTIFACT,
+    WRITE_ARTIFACT,
+    SEARCH_MEMORY,
+    READ_DOCUMENT,
+    SEARCH_DOCUMENTS,
+    WRITE_DOCUMENT,
+    CALC,
+    CALENDAR,
+)
 
 
 class BuiltinTools:
@@ -299,6 +382,25 @@ class BuiltinTools:
         finally:
             conn.close()
 
+    def calc(self, tool_input: dict[str, Any], ctx: Any) -> AdapterOutcome:
+        try:
+            value = evaluate(tool_input["expression"], decimal_comma=tool_input.get("decimal_comma", True))
+        except ComputeError as exc:
+            return AdapterOutcome("FAILED", error_message=str(exc))
+        return AdapterOutcome(
+            "SUCCEEDED",
+            external_reference="calc.evaluate",
+            output={"expression": tool_input["expression"], "result": str(value), "result_br": format_br(value),
+                    "method": "Decimal arithmetic by code"},
+        )
+
+    def calendar(self, tool_input: dict[str, Any], ctx: Any) -> AdapterOutcome:
+        try:
+            out = analyze_calendar(tool_input["events"], tool_input["window"])
+        except (ComputeError, KeyError) as exc:
+            return AdapterOutcome("FAILED", error_message=str(exc))
+        return AdapterOutcome("SUCCEEDED", external_reference="calendar.analyze", output=out)
+
     def search_memory(self, tool_input: dict[str, Any], ctx: Any) -> AdapterOutcome:
         conn = connect(self.db_path)
         try:
@@ -337,6 +439,8 @@ class BuiltinTools:
             READ_DOCUMENT.tool_id: self.read_document,
             SEARCH_DOCUMENTS.tool_id: self.search_documents,
             WRITE_DOCUMENT.tool_id: self.write_document,
+            CALC.tool_id: self.calc,
+            CALENDAR.tool_id: self.calendar,
         }
         for m in BUILTIN_MANIFESTS:
             registry.register(m, bindings[m.tool_id])
