@@ -10,6 +10,9 @@ public struct ChatMessage: Identifiable, Equatable {
     public let artifactId: String?
     public let memoryId: String?
     public let createdAt: String
+    /// Stable order assigned by the core (0 when unknown) and global change revision (A3-23).
+    public let sequence: Int
+    public let revision: Int
 
     init(_ d: [String: Any]) {
         id = d["message_id"] as? String ?? UUID().uuidString
@@ -20,6 +23,8 @@ public struct ChatMessage: Identifiable, Equatable {
         artifactId = d["artifact_id"] as? String
         memoryId = d["memory_id"] as? String
         createdAt = d["created_at"] as? String ?? ""
+        sequence = d["sequence"] as? Int ?? 0
+        revision = d["revision"] as? Int ?? 0
     }
 
     public var isOwner: Bool { role == "owner" }
@@ -31,6 +36,8 @@ public struct TaskItem: Identifiable, Equatable {
     public let state: String
     public let version: Int
     public let blockedReason: String?
+    /// Exactly what the core accepts in this state (A3-30); the UI never guesses buttons.
+    public let availableActions: [String]
 
     init(_ d: [String: Any]) {
         id = d["task_id"] as? String ?? ""
@@ -38,6 +45,7 @@ public struct TaskItem: Identifiable, Equatable {
         state = d["state"] as? String ?? ""
         version = d["version"] as? Int ?? 0
         blockedReason = d["blocked_reason"] as? String
+        availableActions = d["available_actions"] as? [String] ?? []
     }
 
     public var stateText: String {
@@ -48,6 +56,11 @@ public struct TaskItem: Identifiable, Equatable {
             "VERIFYING": "Verificando", "COMPLETED": "Concluída", "FAILED": "Falhou", "CANCELLED": "Cancelada",
         ][state] ?? state
     }
+
+    public static let actionLabels: [String: String] = [
+        "pause": "Pausar", "resume": "Retomar", "cancel": "Cancelar", "reevaluate": "Reavaliar bloqueio",
+        "reconcile": "Conferir ação incerta",
+    ]
 }
 
 public struct Attachment: Identifiable, Equatable {
@@ -55,6 +68,26 @@ public struct Attachment: Identifiable, Equatable {
     public let name: String
     public let sizeBytes: Int
     public let sha256: String
+}
+
+/// Result of one file of an import queue (A3-21): every file ends imported or with an explicit error.
+public struct ImportResult: Identifiable, Equatable {
+    public let id = UUID()
+    public let name: String
+    public let artifactId: String?
+    public let error: String?
+    public var ok: Bool { artifactId != nil }
+}
+
+/// The immutable request that is sent and, if needed, resent as-is (A3-22). Changing the text or the
+/// attachments in the window creates a NEW envelope with a new id; the old one is never reinterpreted.
+public struct SendEnvelope: Equatable {
+    public let clientId: String
+    public let text: String
+    public let delegate: Bool
+    public let artifactIds: [String]
+    public let replyTo: String?
+    public let taskId: String?
 }
 
 public struct SettingsForm: Equatable {
@@ -84,6 +117,7 @@ public final class AtlasViewModel: ObservableObject {
     @Published public private(set) var tasks: [TaskItem] = []
     @Published public private(set) var approvals: [[String: Any]] = []
     @Published public private(set) var attachments: [Attachment] = []
+    @Published public private(set) var importResults: [ImportResult] = []
     @Published public var settings = SettingsForm()
     @Published public private(set) var lastError: String?
     @Published public private(set) var notice: String?
@@ -93,8 +127,13 @@ public final class AtlasViewModel: ObservableObject {
     @Published public private(set) var isAttaching = false
     @Published public private(set) var isStopping = false
     @Published public private(set) var eventCursor = 0
-    /// Text + client id kept after a failed send, so "Tentar de novo" reuses the SAME id (no duplicate).
-    @Published public private(set) var failedDraft: (text: String, clientId: String, delegate: Bool)?
+    /// The exact envelope kept after a failed send, so "Tentar de novo" resends the SAME request.
+    @Published public private(set) var failedDraft: SendEnvelope?
+    /// True while the outcome of a send is unknown (reply lost): "confirmando recebimento".
+    @Published public private(set) var confirmingReceipt = false
+    /// Explicit targets chosen by the owner (A3-14, A3-15): answer THIS question / talk about THIS task.
+    @Published public private(set) var replyTarget: ChatMessage?
+    @Published public private(set) var taskTarget: TaskItem?
 
     public let api: AtlasAPI
     public private(set) var conversationId = ""
@@ -102,6 +141,9 @@ public final class AtlasViewModel: ObservableObject {
     public var serviceStatus: (() -> String)?
     private var refreshing = false
     private var errorFromRefresh = false
+    private var importQueue: [URL] = []
+    private var maxSequence = 0
+    private var maxRevision = 0
 
     public init(api: AtlasAPI) {
         self.api = api
@@ -146,7 +188,8 @@ public final class AtlasViewModel: ObservableObject {
             try await loadSettings()
             conversationId = try await api.currentConversation()
             let page = try await api.history(conversationId: conversationId)
-            messages = page.messages.map(ChatMessage.init)
+            messages = []
+            upsert(page.messages.map(ChatMessage.init))
             hasOlderMessages = page.hasMore
         }
         await refresh()
@@ -168,9 +211,7 @@ public final class AtlasViewModel: ObservableObject {
             approvals = try await api.approvals()
             let ev = try await api.events(after: eventCursor)  // cursor survives reconnects
             eventCursor = ev.cursor
-            if !conversationId.isEmpty {
-                merge(try await api.history(conversationId: conversationId).messages.map(ChatMessage.init))
-            }
+            if !conversationId.isEmpty { try await reconcileHistory() }
             if errorFromRefresh {  // a background refresh only clears the error it caused itself
                 lastError = nil
                 errorFromRefresh = false
@@ -185,11 +226,42 @@ public final class AtlasViewModel: ObservableObject {
         }
     }
 
-    private func merge(_ newer: [ChatMessage]) {
-        var known = Set(messages.map(\.id))
-        for m in newer where !known.contains(m.id) {
-            messages.append(m)
-            known.insert(m.id)
+    /// A3-23: fetch EVERYTHING after the last confirmed sequence (no gap after 50+ messages), then every
+    /// message changed since the last seen revision, and upsert both. Cursors move only after applying.
+    private func reconcileHistory() async throws {
+        var after = maxSequence
+        while true {
+            let page = try await api.history(conversationId: conversationId, afterSequence: after, limit: 200)
+            let batch = page.messages.map(ChatMessage.init)
+            upsert(batch)
+            guard page.hasMore, let last = batch.last, last.sequence > after else { break }
+            after = last.sequence
+        }
+        if maxRevision > 0 {
+            var since = maxRevision
+            while true {
+                let page = try await api.history(conversationId: conversationId, changedSinceRevision: since, limit: 200)
+                let batch = page.messages.map(ChatMessage.init)
+                upsert(batch)
+                let top = batch.map(\.revision).max() ?? since
+                guard page.hasMore, top > since else { break }
+                since = top
+            }
+        }
+    }
+
+    /// Insert or replace by id; keep the core's order by sequence (messages without one keep arrival order).
+    func upsert(_ newer: [ChatMessage]) {
+        for m in newer {
+            if let i = messages.firstIndex(where: { $0.id == m.id }) {
+                if m.revision >= messages[i].revision { messages[i] = m }
+            } else if m.sequence > 0, let j = messages.firstIndex(where: { $0.sequence > m.sequence }) {
+                messages.insert(m, at: j)
+            } else {
+                messages.append(m)
+            }
+            maxSequence = max(maxSequence, m.sequence)
+            maxRevision = max(maxRevision, m.revision)
         }
     }
 
@@ -197,40 +269,67 @@ public final class AtlasViewModel: ObservableObject {
         guard hasOlderMessages, let first = messages.first else { return }
         await attempt {
             let page = try await api.history(conversationId: conversationId, before: first.id)
-            messages = page.messages.map(ChatMessage.init) + messages
+            let older = page.messages.map(ChatMessage.init).filter { m in !messages.contains { $0.id == m.id } }
+            messages = older + messages
             hasOlderMessages = page.hasMore
         }
     }
 
     // MARK: conversation
 
+    /// Explicit target for the next message (the owner's "Responder" on a question).
+    public func reply(to question: ChatMessage) {
+        replyTarget = question
+        taskTarget = nil
+    }
+
+    /// Explicit task for the next message ("Responder nesta tarefa"): corrections/attachments go there.
+    public func talk(about task: TaskItem) {
+        taskTarget = task
+        replyTarget = nil
+    }
+
+    public func clearTargets() {
+        replyTarget = nil
+        taskTarget = nil
+    }
+
     public func send(_ text: String, delegate: Bool = false) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isSending else { return }
-        await deliver(trimmed, clientId: UUID().uuidString.lowercased(), delegate: delegate)
+        // A3-15: attachments travel with the message but never decide the intent; A3-22: one immutable
+        // envelope, built once, with everything that defines the request.
+        let envelope = SendEnvelope(clientId: UUID().uuidString.lowercased(), text: trimmed, delegate: delegate,
+                                    artifactIds: attachments.map(\.id), replyTo: replyTarget?.id,
+                                    taskId: taskTarget?.id)
+        await deliver(envelope)
     }
 
     public func retryFailedSend() async {
         guard let draft = failedDraft, !isSending else { return }
-        await deliver(draft.text, clientId: draft.clientId, delegate: draft.delegate)
+        await deliver(draft)  // the SAME envelope, even if the window's attachments changed meanwhile
     }
 
-    private func deliver(_ text: String, clientId: String, delegate: Bool) async {
+    private func deliver(_ e: SendEnvelope) async {
         isSending = true
         defer { isSending = false }
-        let ids = attachments.map(\.id)
         do {
-            let out = try await api.send(conversationId: conversationId, text: text, clientMessageId: clientId,
-                                         delegate: delegate || !ids.isEmpty, artifactIds: ids)
+            let out = try await api.send(conversationId: conversationId, text: e.text, clientMessageId: e.clientId,
+                                         delegate: e.delegate, artifactIds: e.artifactIds, replyTo: e.replyTo,
+                                         taskId: e.taskId)
             failedDraft = nil
-            attachments = []
+            confirmingReceipt = out["intent"] as? String == "processing"
+            attachments.removeAll { e.artifactIds.contains($0.id) }
+            if replyTarget?.id == e.replyTo { replyTarget = nil }
+            if taskTarget?.id == e.taskId { taskTarget = nil }
             lastError = nil
             var fresh: [ChatMessage] = []
             if let m = out["message"] as? [String: Any] { fresh.append(ChatMessage(m)) }
             if let r = out["reply"] as? [String: Any] { fresh.append(ChatMessage(r)) }
-            merge(fresh)
+            upsert(fresh)
         } catch {
-            failedDraft = (text, clientId, delegate)
+            failedDraft = e
+            confirmingReceipt = (error as? AtlasAPIError)?.code == AtlasAPIError.unknownOutcomeCode
             lastError = Self.friendly(error)
         }
     }
@@ -244,7 +343,7 @@ public final class AtlasViewModel: ObservableObject {
             let out = try await api.send(conversationId: conversationId, text: message.content,
                                          clientMessageId: UUID().uuidString.lowercased(), delegate: true,
                                          replyTo: message.id)
-            if let r = out["reply"] as? [String: Any] { merge([ChatMessage(r)]) }
+            if let r = out["reply"] as? [String: Any] { upsert([ChatMessage(r)]) }
         }
     }
 
@@ -285,23 +384,46 @@ public final class AtlasViewModel: ObservableObject {
 
     // MARK: attachments
 
-    public func attach(fileURL: URL) async {
-        guard !isAttaching else { return }
+    /// A3-21: a queue, one file at a time, with a result per file. A drop of ten files while another
+    /// import runs never discards any: they wait their turn and each one ends imported or failed.
+    public func attach(fileURLs urls: [URL]) async {
+        importQueue.append(contentsOf: urls)
+        guard !isAttaching else { return }  // the running loop below picks them up
         isAttaching = true
         defer { isAttaching = false }
-        await attempt {
-            let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
+        while !importQueue.isEmpty {
+            let url = importQueue.removeFirst()
+            importResults.append(await importOne(url))
+        }
+        let failed = importResults.filter { !$0.ok }
+        if !failed.isEmpty {
+            lastError = "\(failed.count) arquivo(s) não foram anexados: "
+                + failed.map { "\($0.name) (\($0.error ?? "erro"))" }.joined(separator: "; ")
+        }
+    }
+
+    public func attach(fileURL: URL) async { await attach(fileURLs: [fileURL]) }
+
+    public func clearImportResults() { importResults = [] }
+
+    private func importOne(_ url: URL) async -> ImportResult {
+        let name = url.lastPathComponent
+        do {
+            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
             guard values.isRegularFile == true, values.isSymbolicLink != true else {
                 throw AtlasAPIError(code: "INVALID_INPUT", message: "escolha um arquivo comum (não pasta nem atalho)")
             }
             guard (values.fileSize ?? 0) <= AtlasAPI.maxAttachmentBytes else {
                 throw AtlasAPIError(code: "INVALID_INPUT", message: "o arquivo passa de 50 MB")
             }
-            let data = try await Task.detached(priority: .userInitiated) { try Data(contentsOf: fileURL) }.value
-            let r = try await api.importFile(data: data, name: fileURL.lastPathComponent)
-            attachments.append(Attachment(id: r["artifact_id"] as? String ?? "", name: r["name"] as? String ?? "",
-                                          sizeBytes: r["size_bytes"] as? Int ?? data.count,
-                                          sha256: r["sha256"] as? String ?? ""))
+            let data = try await Task.detached(priority: .userInitiated) { try Data(contentsOf: url) }.value
+            let r = try await api.importFile(data: data, name: name)
+            let a = Attachment(id: r["artifact_id"] as? String ?? "", name: r["name"] as? String ?? name,
+                               sizeBytes: r["size_bytes"] as? Int ?? data.count, sha256: r["sha256"] as? String ?? "")
+            attachments.append(a)
+            return ImportResult(name: name, artifactId: a.id, error: nil)
+        } catch {
+            return ImportResult(name: name, artifactId: nil, error: Self.friendly(error))
         }
     }
 
@@ -314,6 +436,11 @@ public final class AtlasViewModel: ObservableObject {
         } catch {
             return Self.friendly(error)
         }
+    }
+
+    /// A3-32: the save panel starts with the artifact's real name and extension.
+    public func suggestedFileName(artifactId: String) async -> String {
+        (try? await api.artifactName(artifactId)).flatMap { $0.isEmpty ? nil : $0 } ?? "entrega"
     }
 
     /// Save-as: the owner picked `destination` in a save panel (which already asked before replacing
@@ -342,9 +469,24 @@ public final class AtlasViewModel: ObservableObject {
         (try? await api.artifacts(taskId: task.id)) ?? []
     }
 
-    public func control(_ method: String, _ task: TaskItem) async {
-        await attempt { try await api.control(method, taskId: task.id, version: task.version) }
+    /// A3-30: only actions the core listed for this task are executed.
+    public func perform(_ action: String, on task: TaskItem) async {
+        guard task.availableActions.contains(action) else {
+            lastError = "Essa ação não está disponível para a tarefa no estado atual."
+            return
+        }
+        let method = ["pause": "tasks.pause", "resume": "tasks.resume", "cancel": "tasks.cancel",
+                      "reevaluate": "tasks.reevaluate", "reconcile": "tasks.reevaluate"][action] ?? ""
+        await attempt {
+            let out = try await api.control(method, taskId: task.id, version: task.version)
+            if let why = out["explanation"] as? String { notice = why }
+        }
         await refresh()
+    }
+
+    public func control(_ method: String, _ task: TaskItem) async {
+        let action = ["tasks.pause": "pause", "tasks.resume": "resume", "tasks.cancel": "cancel"][method] ?? method
+        await perform(action, on: task)
     }
 
     public func decide(_ approval: [String: Any], approve: Bool) async {

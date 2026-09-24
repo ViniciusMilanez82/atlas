@@ -49,11 +49,14 @@ public final class AtlasAPI {
         try await read("conversations.current")["conversation_id"] as? String ?? ""
     }
 
-    public func history(conversationId: String, before: String? = nil, limit: Int = 50) async throws
+    public func history(conversationId: String, before: String? = nil, afterSequence: Int? = nil,
+                        changedSinceRevision: Int? = nil, limit: Int = 50) async throws
         -> (messages: [[String: Any]], hasMore: Bool)
     {
         var p: [String: Any] = ["conversation_id": conversationId, "limit": limit]
         if let before { p["before_message_id"] = before }
+        if let afterSequence { p["after_sequence"] = afterSequence }  // A3-23: gap-free catch-up
+        if let changedSinceRevision { p["changed_since_revision"] = changedSinceRevision }  // A3-23: upserts
         let r = try await read("conversations.history", p)
         return (r["messages"] as? [[String: Any]] ?? [], r["has_more"] as? Bool ?? false)
     }
@@ -61,7 +64,8 @@ public final class AtlasAPI {
     /// Retry-safe: the core deduplicates by `clientMessageId`, so a resend after a reconnect returns
     /// what already happened instead of doing it twice.
     public func send(conversationId: String, text: String, clientMessageId: String, delegate: Bool = false,
-                     artifactIds: [String] = [], replyTo: String? = nil) async throws -> [String: Any]
+                     artifactIds: [String] = [], replyTo: String? = nil, taskId: String? = nil) async throws
+        -> [String: Any]
     {
         var p: [String: Any] = [
             "employee_id": employeeId, "conversation_id": conversationId, "client_message_id": clientMessageId,
@@ -69,6 +73,7 @@ public final class AtlasAPI {
         ]
         if !artifactIds.isEmpty { p["artifact_ids"] = artifactIds }
         if let replyTo { p["reply_to_message_id"] = replyTo }
+        if let taskId { p["task_id"] = taskId }
         return try await transport.call("conversations.send", p, retrySafe: true)
     }
 
@@ -83,7 +88,8 @@ public final class AtlasAPI {
 
     // MARK: work
 
-    public func control(_ method: String, taskId: String, version: Int) async throws {
+    @discardableResult
+    public func control(_ method: String, taskId: String, version: Int) async throws -> [String: Any] {
         try await write(method, ["task_id": taskId, "expected_version": version])
     }
 
@@ -120,8 +126,18 @@ public final class AtlasAPI {
             ], retrySafe: true)
             offset = end
         } while offset < data.count
-        return try await write("artifacts.import", ["employee_id": employeeId, "upload_ref": ref,
-                                                    "declared_name": name])
+        // A3-22: the import is a receipt per upload_ref, so a lost reply is recovered by asking again with
+        // the same ref (the core returns the artifact it already created; never a duplicate).
+        return try await transport.call("artifacts.import", [
+            "employee_id": employeeId, "upload_ref": ref, "declared_name": name,
+            "expected_sha256": Hashing.sha256Hex(data),
+        ], retrySafe: true)
+    }
+
+    /// Name (with extension) of a stored artifact, for the save panel (A3-32).
+    public func artifactName(_ artifactId: String) async throws -> String {
+        let r = try await read("artifacts.read", ["artifact_id": artifactId, "offset": 0, "length": 1])
+        return r["name"] as? String ?? ""
     }
 
     /// Reads a whole artifact in chunks and verifies each chunk and the final SHA-256.

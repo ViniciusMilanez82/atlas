@@ -218,8 +218,34 @@ struct ConversationView: View {
             }
             if let draft = model.failedDraft {
                 HStack {
-                    Text("Não enviado: «\(draft.text.prefix(60))»").foregroundStyle(.orange)
-                    Button("Tentar de novo") { Task { await model.retryFailedSend() } }.disabled(model.isSending)
+                    Text(model.confirmingReceipt
+                         ? "Confirmando recebimento de «\(draft.text.prefix(60))»…"
+                         : "Não confirmado: «\(draft.text.prefix(60))»")
+                        .foregroundStyle(.orange)
+                    Button("Tentar de novo (mesmo pedido)") { Task { await model.retryFailedSend() } }
+                        .disabled(model.isSending)
+                }
+            }
+            if !model.importResults.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(model.importResults) { r in
+                        Text(r.ok ? "✓ \(r.name)" : "✗ \(r.name): \(r.error ?? "erro")")
+                            .font(.caption).foregroundStyle(r.ok ? Color.secondary : Color.red)
+                    }
+                    Button("Limpar") { model.clearImportResults() }.buttonStyle(.link).font(.caption)
+                }
+            }
+            if let q = model.replyTarget {
+                HStack {
+                    Text("Respondendo à pergunta: «\(q.content.prefix(80))»").font(.caption)
+                    Button { model.clearTargets() } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.borderless).accessibilityLabel("Cancelar resposta")
+                }
+            } else if let t = model.taskTarget {
+                HStack {
+                    Text("Sobre a tarefa: «\(t.objective.prefix(80))»").font(.caption)
+                    Button { model.clearTargets() } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.borderless).accessibilityLabel("Cancelar vínculo com a tarefa")
                 }
             }
             HStack(alignment: .bottom) {
@@ -246,11 +272,23 @@ struct ConversationView: View {
         }
         .overlay(dropTargeted ? RoundedRectangle(cornerRadius: 8).stroke(Color.accentColor, lineWidth: 2) : nil)
         .onDrop(of: [UTType.fileURL], isTargeted: $dropTargeted) { providers in
+            // A3-21: collect EVERY dropped URL, then hand them to the import queue in one go.
+            let group = DispatchGroup()
+            let lock = NSLock()
+            var urls: [URL] = []
             for provider in providers {
+                group.enter()
                 _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                    guard let url else { return }
-                    Task { @MainActor in await model.attach(fileURL: url) }
+                    if let url {
+                        lock.lock()
+                        urls.append(url)
+                        lock.unlock()
+                    }
+                    group.leave()
                 }
+            }
+            group.notify(queue: .main) {
+                Task { @MainActor in await model.attach(fileURLs: urls) }
             }
             return true
         }
@@ -285,7 +323,7 @@ struct ConversationView: View {
                                      UTType(filenameExtension: "pptx") ?? .data]
         guard panel.runModal() == .OK else { return }
         let urls = panel.urls
-        Task { for url in urls { await model.attach(fileURL: url) } }
+        Task { await model.attach(fileURLs: urls) }
     }
 }
 
@@ -319,6 +357,10 @@ struct Bubble: View {
                     if message.kind == "memory", message.memoryId != nil {
                         Button("Confirmar memória") { Task { await model.confirmMemory(message) } }
                     }
+                    if message.kind == "question" {
+                        Button("Responder") { model.reply(to: message) }
+                            .accessibilityLabel("Responder a esta pergunta")
+                    }
                     if let artifact = message.artifactId {
                         Button("Visualizar") { preview(artifact) }
                         Button("Salvar como…") { saveAs(artifact) }
@@ -335,11 +377,20 @@ struct Bubble: View {
     }
 
     private func saveAs(_ artifactId: String) {
-        let panel = NSSavePanel()  // the panel itself asks before replacing an existing file
-        panel.canCreateDirectories = true
-        panel.nameFieldStringValue = "entrega"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        Task { await model.export(artifactId: artifactId, to: url) }
+        Task { @MainActor in
+            // A3-32: start from the artifact's real name and extension; renaming stays possible.
+            let name = await model.suggestedFileName(artifactId: artifactId)
+            let panel = NSSavePanel()  // the panel itself asks before replacing an existing file
+            panel.canCreateDirectories = true
+            panel.nameFieldStringValue = name
+            let ext = (name as NSString).pathExtension
+            if !ext.isEmpty, let type = UTType(filenameExtension: ext) {
+                panel.allowedContentTypes = [type]
+                panel.allowsOtherFileTypes = false
+            }
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            await model.export(artifactId: artifactId, to: url)
+        }
     }
 }
 
@@ -365,9 +416,15 @@ struct TaskRow: View {
             Text(task.objective).font(.headline)
             Text(task.stateText + (task.blockedReason.map { " · \($0)" } ?? "")).font(.caption)
             HStack {
-                Button("Pausar") { Task { await model.control("tasks.pause", task) } }
-                Button("Retomar") { Task { await model.control("tasks.resume", task) } }
-                Button("Cancelar", role: .destructive) { Task { await model.control("tasks.cancel", task) } }
+                // A3-30: exactly the actions the core accepts in this state.
+                ForEach(task.availableActions, id: \.self) { action in
+                    Button(TaskItem.actionLabels[action] ?? action, role: action == "cancel" ? .destructive : nil) {
+                        Task { await model.perform(action, on: task) }
+                    }
+                }
+                if !["COMPLETED", "FAILED", "CANCELLED"].contains(task.state) {
+                    Button("Falar sobre esta tarefa") { model.talk(about: task) }
+                }
             }.buttonStyle(.borderless)
             ForEach(Array(artifacts.enumerated()), id: \.offset) { _, a in
                 Text("\(a["relation"] as? String == "output" ? "Entrega" : "Anexo"): \(a["name"] as? String ?? "") v\(a["version"] as? Int ?? 0)")
