@@ -256,8 +256,10 @@ class AgentRunner:
         row = self.conn.execute(
             "SELECT id FROM plans WHERE task_id = ? ORDER BY version DESC LIMIT 1", (task_id,)
         ).fetchone()
-        if row is None:
-            return self._new_plan(task_id, "initial plan: iterate one verified step at a time"), []
+        if row is None:  # the owner's answers count even before the first plan exists
+            return self._new_plan(task_id, "initial plan: iterate one verified step at a time"), self._owner_messages(
+                task_id
+            )
         self._settle_interrupted_steps(task_id)
         observations: list[Observation] = [
             Observation(

@@ -5,6 +5,8 @@ outbox notification, acknowledgement echo and legacy rows. Asserts on the bytes 
 
 from __future__ import annotations
 
+import pytest
+
 from runtime.tasks.state_machine import TaskState
 from runtime.verification.verifier import DeliverableSpec
 from storage.db import transaction
@@ -54,15 +56,27 @@ def test_sensitive_correction_is_sent_only_under_the_exact_consent(r5: R5World) 
     assert len(r5.provider.calls) == before
 
 
-def test_sensitive_answer_never_reaches_the_provider(r5: R5World) -> None:
+@pytest.mark.parametrize("with_plan", [True, False])
+def test_sensitive_answer_never_reaches_the_provider(r5: R5World, with_plan: bool) -> None:
     sentinel = "SENTINELA_RESPOSTA_8516"
     tid = r5.create("Escreva um relatório de teste sintético.")
+    if with_plan:
+        r5.runner._new_plan(tid, "synthetic")
     q = r5.waiting_question(tid)
     out = r5.send(f"Meu diagnóstico é {sentinel}", reply_to_message_id=q["message_id"])
     assert out["intent"] == "answer" and out["message"]["classification"] == "SENSITIVE"
     r5.runner.run(tid, DeliverableSpec())
     assert sentinel not in r5.provider.sent()
     assert r5.state(tid) == TaskState.WAITING_USER
+
+
+def test_answer_reaches_the_model_even_before_the_first_plan(r5: R5World) -> None:
+    """Positive control: a non-sensitive answer is used (it was silently ignored without a plan)."""
+    tid = r5.create("Escreva um relatório de teste sintético.")
+    q = r5.waiting_question(tid)
+    r5.send("Formato PDF, duas páginas", reply_to_message_id=q["message_id"])
+    r5.runner.run(tid, DeliverableSpec())
+    assert "Formato PDF, duas páginas" in r5.provider.sent()
 
 
 def test_outbox_notification_keeps_the_task_classification(r5: R5World) -> None:
