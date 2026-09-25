@@ -5,7 +5,7 @@ No provider, network, Mac UI, or owner credentials are involved.
 """
 from __future__ import annotations
 
-from decimal import Decimal, ROUND_DOWN, getcontext, localcontext
+from decimal import ROUND_DOWN, Decimal, getcontext, localcontext
 from pathlib import Path
 
 import pytest
