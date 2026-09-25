@@ -39,7 +39,8 @@ from runtime.tasks.engine import TaskEngine
 from runtime.tasks.state_machine import TaskState
 from runtime.verification.criteria import derive_criteria
 from security.broker.broker import Broker
-from security.egress.guard import EgressGuard
+from security.egress.guard import EgressGuard, highest
+from security.egress.lineage import SENSITIVE_PATTERN, classify_text, task_classification
 from shared.actors import Actor
 from shared.canonical import canonical_hash
 from shared.clock import Clock, parse_utc, to_utc_str
@@ -75,15 +76,12 @@ _STORE_ONLY = re.compile(
 _CORRECTION = re.compile(r"^\s*(nao era isso|na verdade|corrigindo|correcao|mudei de ideia)\b", re.IGNORECASE)
 # Conservative detector of sensitive personal data in the owner's own words (spec 9.1). A hit makes
 # the message SENSITIVE: it is stored, but not sent to a cloud model without a scoped consent (A3-02).
-_SENSITIVE = re.compile(
-    r"\b(saude|medic|doenc|diagnost|exame|remedio|cpf|rg\b|passaporte|filh|crianc|endereco|"
-    r"conta bancaria|agencia|salario|renda|religi|sexual|biometr)",
-    re.IGNORECASE,
-)
+# One detector for every path (R5-01): security/egress/lineage.py.
+_SENSITIVE = SENSITIVE_PATTERN
 
 
 def classify_owner_text(text: str) -> str:
-    return "SENSITIVE" if _SENSITIVE.search(normalize(text)) else "INTERNAL"
+    return classify_text(text)
 CHAT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -227,6 +225,8 @@ class ConversationService:
             if existing:
                 return self.get_message(existing[0])
         with transaction(self.conn):
+            if task_id is not None:  # a reply about a task may quote it: at least the task's class (R5-01)
+                classification = highest(classification, task_classification(self.conn, task_id))
             mid = self.post_in_txn(
                 conversation_id,
                 role="employee",
@@ -544,9 +544,10 @@ class ConversationService:
 
         if _STATUS.search(norm):
             self._set_kind(mid, "status")
+            status_text, status_class = self._status_text(employee_id)
             return self._result(
                 mid,
-                self.say(cid, "status", self._status_text(employee_id), reply_marker=marker),
+                self.say(cid, "status", status_text, reply_marker=marker, classification=status_class),
                 "status",
                 None,
             )
@@ -580,6 +581,7 @@ class ConversationService:
                 + titles
                 + "\nUse «Responder» na pergunta certa.",
                 reply_marker=marker,
+                classification=self._tasks_class(q["task_id"] for q in pending[:5]),
             )
             return self._result(mid, reply, "answer_ambiguous", None)
 
@@ -743,6 +745,7 @@ class ConversationService:
                 + titles
                 + "\nUse «Responder nesta tarefa» no trabalho certo e reenvie a correção.",
                 reply_marker=marker,
+                classification=self._tasks_class(c["id"] for c in candidates[:5]),
             )
             return self._result(mid, reply, "correction_ambiguous", None)
         task_id = str(candidates[0]["id"])
@@ -818,9 +821,13 @@ class ConversationService:
                 (kind, task_id, mid),
             )
 
-    def _status_text(self, employee_id: str) -> str:
+    def _tasks_class(self, task_ids: Any) -> str:
+        """A reply that lists task titles is as protected as the most protected one (R5-01)."""
+        return highest("INTERNAL", *(task_classification(self.conn, t) for t in task_ids if t))
+
+    def _status_text(self, employee_id: str) -> tuple[str, str]:
         rows = self.conn.execute(
-            "SELECT objective, state, blocked_reason FROM tasks WHERE employee_id = ? AND state NOT IN"
+            "SELECT objective, state, blocked_reason, id FROM tasks WHERE employee_id = ? AND state NOT IN"
             " ('COMPLETED','FAILED','CANCELLED') ORDER BY updated_at DESC LIMIT 5",
             (employee_id,),
         ).fetchall()
@@ -828,7 +835,7 @@ class ConversationService:
             "SELECT COUNT(*) FROM tasks WHERE employee_id = ? AND state = 'COMPLETED'", (employee_id,)
         ).fetchone()[0]
         if not rows:
-            return f"Não há trabalho em andamento. Tarefas concluídas até agora: {done}."
+            return f"Não há trabalho em andamento. Tarefas concluídas até agora: {done}.", "INTERNAL"
         labels = {
             "CREATED": "na fila",
             "READY": "na fila",
@@ -853,7 +860,8 @@ class ConversationService:
             f"• {r[0][:80]} — {labels.get(r[1], r[1])}" + (f" ({reasons.get(r[2], r[2])})" if r[2] else "")
             for r in rows
         ]
-        return "Trabalho em andamento:\n" + "\n".join(lines) + f"\nConcluídas: {done}."
+        text = "Trabalho em andamento:\n" + "\n".join(lines) + f"\nConcluídas: {done}."
+        return text, self._tasks_class(r[3] for r in rows)
 
     def _answer(
         self, actor: Actor, mid: str, question: dict[str, Any], cid: str, marker: str
@@ -1033,13 +1041,11 @@ class ConversationService:
             if msg["message_id"] == mid or msg["message_id"] in excluded:
                 continue
             who = "owner" if msg["role"] == "owner" else "atlas (earlier reply, may be wrong)"
+            cls = msg["classification"]
+            if msg["role"] == "owner":  # legacy rows had no detector: re-check the owner's words (R5-01)
+                cls = highest(cls, classify_text(msg["content"]))
             items.append(  # earlier turns are context, never instructions or verified facts (A3-18)
-                ContextItem(
-                    Authority.CONVERSATION,
-                    f"{who}: {msg['content']}",
-                    f"message:{msg['message_id']}",
-                    msg["classification"],
-                )
+                ContextItem(Authority.CONVERSATION, f"{who}: {msg['content']}", f"message:{msg['message_id']}", cls)
             )
         items.append(
             ContextItem(

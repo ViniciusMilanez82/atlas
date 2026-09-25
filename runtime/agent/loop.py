@@ -47,6 +47,7 @@ from runtime.tools.registry import RegistryError, ToolManifest
 from runtime.verification.verifier import DeliverableSpec, Verifier
 from security.broker.broker import Broker, DispatchResult
 from security.egress.guard import EgressBlocked, highest, rank
+from security.egress.lineage import classify_text
 from shared.actors import Actor
 from shared.clock import Clock, to_utc_str
 from shared.errors import AtlasError, ErrorCode
@@ -285,18 +286,21 @@ class AgentRunner:
     def _owner_messages(self, task_id: str) -> list[Observation]:
         try:
             rows = self.conn.execute(
-                "SELECT id, role, kind, content FROM messages WHERE task_id = ? AND kind IN"
-                " ('question','answer') ORDER BY rowid",
+                "SELECT id, role, kind, content, classification FROM messages WHERE task_id = ? AND kind IN"
+                " ('question','answer') AND context_excluded = 0 ORDER BY rowid",
                 (task_id,),
             ).fetchall()
         except sqlite3.OperationalError:
             return []
         out: list[Observation] = []
-        for r in rows:
+        for r in rows:  # each keeps the class of its message; never a default INTERNAL (R5-01)
             if r[1] == "owner":
-                out.append(Observation(f"Owner answer: {r[3]}", f"message:{r[0]}", Authority.OWNER_INSTRUCTION))
+                cls = highest(r[4], classify_text(r[3]))
+                out.append(Observation(f"Owner answer: {r[3]}", f"message:{r[0]}", Authority.OWNER_INSTRUCTION, cls))
             else:
-                out.append(Observation(f"You asked the owner: {r[3]}", f"message:{r[0]}", Authority.VERIFIED_FACT))
+                out.append(
+                    Observation(f"You asked the owner: {r[3]}", f"message:{r[0]}", Authority.VERIFIED_FACT, r[4])
+                )
         return out
 
     def _settle_interrupted_steps(self, task_id: str) -> None:
@@ -411,6 +415,7 @@ class AgentRunner:
                     Authority.OWNER_INSTRUCTION,
                     f"[revision {v['revision']} {v['kind']} - {label}]\n{v['instruction']}",
                     f"task:{task['task_id']}:rev{v['revision']}",
+                    v["classification"],  # inherited from the owner's message (R5-01)
                     required=v is versions[-1] or v["kind"] == "ORIGINAL",
                 )
             )

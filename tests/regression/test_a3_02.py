@@ -101,7 +101,8 @@ def test_sensitive_memory_never_reaches_the_provider_without_consent(world: Worl
     tid = runner.tasks.create(
         world.owner,
         employee_id=world.employee.id,
-        objective="Resuma o relatorio medico",
+        # R5-01: the task's own words are classified too ("medico" would make the task SENSITIVE)
+        objective="Resuma o relatorio do proprietario",
         criteria=[("x", True)],
     )
     runner.run(tid, SPEC)

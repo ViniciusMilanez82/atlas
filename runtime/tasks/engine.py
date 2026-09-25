@@ -17,6 +17,8 @@ from typing import Any
 
 from runtime.notifications.outbox import Notice, enqueue_in_txn
 from runtime.tasks.state_machine import TERMINAL, TaskState, check_transition
+from security.egress.guard import highest
+from security.egress.lineage import classify_text, instruction_classification
 from shared.actors import SYSTEM, Actor
 from shared.clock import Clock, parse_utc, to_utc_str
 from shared.contracts import validate
@@ -130,7 +132,13 @@ class TaskEngine:
                 return str(existing[0])
         task_id = new_id()
         now = to_utc_str(self.clock.now())
+        request_text = (original_request or objective)[:32000]
         with transaction(self.conn):
+            # R5-01: the task is at least as protected as the owner's words it was created from.
+            instruction_class = highest(
+                self._message_class(source_message_id), classify_text(request_text), classify_text(objective)
+            )
+            data_policy = highest(data_policy, instruction_class)
             self.conn.execute(
                 "INSERT INTO tasks(id, owner_id, employee_id, objective, constraints_json, priority, data_policy,"
                 " budget_amount_minor, budget_currency, state, parent_task_id, deadline, created_at, updated_at,"
@@ -181,8 +189,9 @@ class TaskEngine:
                 )
             self.conn.execute(
                 "INSERT INTO task_instruction_versions(task_id, revision, kind, instruction, material, author,"
-                " source_message_id, created_at) VALUES (?,1,'ORIGINAL',?,1,?,?,?)",
-                (task_id, (original_request or objective)[:32000], f"{actor.kind}:{actor.id}", source_message_id, now),
+                " source_message_id, created_at, classification) VALUES (?,1,'ORIGINAL',?,1,?,?,?,?)",
+                (task_id, request_text, f"{actor.kind}:{actor.id}", source_message_id, now,
+                 highest(data_policy, instruction_class)),
             )
             journal.append(
                 self.conn,
@@ -195,6 +204,12 @@ class TaskEngine:
             )
         validate("task", self.get(task_id))
         return task_id
+
+    def _message_class(self, message_id: str | None) -> str:
+        if message_id is None:
+            return "INTERNAL"
+        row = self.conn.execute("SELECT classification FROM messages WHERE id = ?", (message_id,)).fetchone()
+        return str(row[0]) if row else "SENSITIVE"  # an unknown origin is never treated as harmless
 
     def _row(self, task_id: str) -> sqlite3.Row:
         row = self.conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
@@ -531,12 +546,21 @@ class TaskEngine:
         return report
 
     def instructions(self, task_id: str) -> list[dict[str, Any]]:
-        """Every instruction revision, oldest first (the last one is in force)."""
+        """Every instruction revision, oldest first (the last one is in force), with its class and origin
+        (R5-01). A legacy revision without a recorded class is re-derived, never assumed INTERNAL."""
+        policy = self._row(task_id)["data_policy"]
         return [
-            {"revision": r["revision"], "kind": r["kind"], "instruction": r["instruction"], "material": bool(r["material"])}
+            {
+                "revision": r["revision"],
+                "kind": r["kind"],
+                "instruction": r["instruction"],
+                "material": bool(r["material"]),
+                "classification": instruction_classification(r["classification"], r["instruction"], policy),
+                "source_message_id": r["source_message_id"],
+            }
             for r in self.conn.execute(
-                "SELECT revision, kind, instruction, material FROM task_instruction_versions WHERE task_id = ?"
-                " ORDER BY revision",
+                "SELECT revision, kind, instruction, material, classification, source_message_id"
+                " FROM task_instruction_versions WHERE task_id = ? ORDER BY revision",
                 (task_id,),
             )
         ]
@@ -550,6 +574,7 @@ class TaskEngine:
         kind: str = "CORRECTION",
         material: bool = True,
         source_message_id: str | None = None,
+        classification: str | None = None,
     ) -> int:
         """Record a new instruction revision durably (A3-03, spec 6.3). Returns the new revision.
 
@@ -568,14 +593,19 @@ class TaskEngine:
             if row["state"] in TERMINAL:
                 raise _err(ErrorCode.INVALID_INPUT, f"task is {row['state']}; start a new task instead")
             rev = int(row["instruction_revision"]) + 1
+            # R5-01: the revision inherits the class of the message it came from (and of its own words);
+            # the task becomes at least that protected - copies are protected by their own lineage too.
+            cls = highest(classification or "INTERNAL", self._message_class(source_message_id), classify_text(text))
             self.conn.execute(
                 "INSERT INTO task_instruction_versions(task_id, revision, kind, instruction, material, author,"
-                " source_message_id, created_at) VALUES (?,?,?,?,?,?,?,?)",
-                (task_id, rev, kind, text[:32000], int(material), f"{actor.kind}:{actor.id}", source_message_id, now),
+                " source_message_id, created_at, classification) VALUES (?,?,?,?,?,?,?,?,?)",
+                (task_id, rev, kind, text[:32000], int(material), f"{actor.kind}:{actor.id}", source_message_id, now,
+                 cls),
             )
             self.conn.execute(
-                "UPDATE tasks SET instruction_revision = ?, version = version + 1, updated_at = ? WHERE id = ?",
-                (rev, now, task_id),
+                "UPDATE tasks SET instruction_revision = ?, version = version + 1, updated_at = ?,"
+                " data_policy = ? WHERE id = ?",
+                (rev, now, highest(row["data_policy"], cls), task_id),
             )
             cancelled = revoked = 0
             if material:
