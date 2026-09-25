@@ -46,6 +46,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>$VERSION</string>
   <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSMicrophoneUsageDescription</key><string>O Atlas usa o microfone somente quando você inicia o ditado. Revise a transcrição antes de enviar.</string>
+  <key>NSSpeechRecognitionUsageDescription</key><string>O Atlas solicita reconhecimento local para transformar sua fala em texto. Se não estiver disponível, use o chat por texto; não há fallback automático para a nuvem.</string>
 </dict></plist>
 PLIST
 codesign --force --deep --sign - "$APP"

@@ -1,0 +1,28 @@
+name: source-evidence
+on:
+  push:
+    branches: ["fix/post-pr6-runtime-guards"]
+permissions:
+  contents: read
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Archive tracked source only (no Git metadata or runtime data)
+        run: |
+          git archive --format=zip --output="$RUNNER_TEMP/atlas-source.zip" HEAD
+          git rev-parse HEAD > "$RUNNER_TEMP/SOURCE_COMMIT.txt"
+          sha256sum "$RUNNER_TEMP/atlas-source.zip" > "$RUNNER_TEMP/SOURCE_SHA256.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Atlas-source-evidence
+          path: |
+            ${{ runner.temp }}/atlas-source.zip
+            ${{ runner.temp }}/SOURCE_COMMIT.txt
+            ${{ runner.temp }}/SOURCE_SHA256.txt
+          retention-days: 7
+          if-no-files-found: error

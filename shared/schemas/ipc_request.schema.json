@@ -65,7 +65,10 @@
         "memories.export",
         "artifacts.all",
         "capabilities.list",
-        "capabilities.decide"
+        "capabilities.decide",
+        "identity.update",
+        "setup.status",
+        "setup.complete"
       ]
     },
     "params": {
@@ -659,6 +662,54 @@
         "properties": {
           "params": {
             "$ref": "#/$defs/p_capability_decide"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "identity.update"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_identity_update"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "setup.status"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_setup_status"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "setup.complete"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_setup_complete"
           }
         }
       }
@@ -1543,6 +1594,99 @@
         "note": {
           "type": "string",
           "maxLength": 1000
+        }
+      }
+    },
+    "p_identity_update": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expected_profile_version",
+        "name",
+        "owner_name",
+        "locale",
+        "timezone",
+        "schema_version",
+        "correlation_id"
+      ],
+      "properties": {
+        "expected_profile_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "owner_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "locale": {
+          "enum": [
+            "pt-BR",
+            "en-US",
+            "es-ES"
+          ]
+        },
+        "timezone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        }
+      }
+    },
+    "p_setup_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        }
+      }
+    },
+    "p_setup_complete": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expected_profile_version",
+        "expected_settings_revision",
+        "allow_limited_mode",
+        "schema_version",
+        "correlation_id"
+      ],
+      "properties": {
+        "expected_profile_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "expected_settings_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "allow_limited_mode": {
+          "type": "boolean"
+        },
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
         }
       }
     }

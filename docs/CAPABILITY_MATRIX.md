@@ -41,3 +41,7 @@ compilado/testado no runner macOS 15; E2E-CI = processos reais (daemon/Superviso
 
 **Estado do produto:** Alpha local em correção (G1 e a parte de G2/G3 sem interface foram fechados com
 regressões). Não é Beta nem V1.
+
+## Incremento local após PR7 (N20/N22)
+
+Onboarding, identidade editável, privacidade/pesquisa e preservação de configurações possuem implementação e testes locais; ver `LOCAL_PRODUCT_INCREMENT.md`. Voz nativa foi implementada como ditado **somente local**, rascunho revisável e síntese explícita. Captura/saída de áudio reais ainda dependem de validação no Mac. Não anunciar reconhecimento local quando o sistema não o oferecer; não há fallback remoto. Este adendo substitui “voz não implementada” e “onboarding não implementado” apenas para esses percursos específicos. Cifra em repouso, login item e demais capacidades continuam pendentes.
