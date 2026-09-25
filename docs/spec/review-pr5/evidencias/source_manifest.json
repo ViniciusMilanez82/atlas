@@ -1,0 +1,67 @@
+{
+  "review_date": "2026-09-25",
+  "pr": 5,
+  "head": "80f357b44663b190a4cacc8038accf27d0c11c13",
+  "base": "d81cece2713ccb5b12e58902e55b05a614467951",
+  "merge_commit": "5a997e3ba7e77c8aa8f58ebb688521e6b31011c0",
+  "ci_checkout": "0bbc90fc813eb19be5216a4a4215fbec3286f4dc",
+  "ci_run": 36128752671,
+  "macos_job": 108050875369,
+  "artifact_id": 10861445580,
+  "artifact_sha256_computed": "ace9d3c1069d7a9ecc295c73588fe2d0125fa123e8e40a0afb15e4ef8083422f",
+  "artifact_digest_matches_github": true,
+  "bundle_version": "0bbc90f",
+  "bundle_minimum_os": "15.0",
+  "cross_checked_files": [
+    {
+      "path": "core/conversation.py",
+      "github_blob_sha1": "24ee83cc2bff4fd89a09e51e48fd5c4ac9b3802f",
+      "local_blob_sha1": "24ee83cc2bff4fd89a09e51e48fd5c4ac9b3802f",
+      "sha256": "54aa5da11b0252f0c9b63c69ca65b777423e894ab51bac67bb1e0d60e6998426",
+      "match": true
+    },
+    {
+      "path": "runtime/verification/criteria.py",
+      "github_blob_sha1": "ea10f13c890e2d83a0de1aa64074c1724dba14a7",
+      "local_blob_sha1": "ea10f13c890e2d83a0de1aa64074c1724dba14a7",
+      "sha256": "22632fc662dc108d25db8159b46714d256c0c8d5df32f569d78acd3d57bbb5ee",
+      "match": true
+    },
+    {
+      "path": "runtime/verification/verifier.py",
+      "github_blob_sha1": "c06d946608ac104a31086aff2041cc29633f25ca",
+      "local_blob_sha1": "c06d946608ac104a31086aff2041cc29633f25ca",
+      "sha256": "e18947443f8f7e25ad9a03a8645d88768d1ddb22ab4f91a4326e22ea964b3abe",
+      "match": true
+    },
+    {
+      "path": "runtime/agent/loop.py",
+      "github_blob_sha1": "c00066b81a028360abeee170b5e0bd32644c11b2",
+      "local_blob_sha1": "c00066b81a028360abeee170b5e0bd32644c11b2",
+      "sha256": "0a410b2bb56dfcd5bb491436eb9d45e794e3b9120859359e283e59e61e55874b",
+      "match": true
+    },
+    {
+      "path": "runtime/notifications/outbox.py",
+      "github_blob_sha1": "f580e4a8a6c3ddc9928813335eba1ed2624e46f2",
+      "local_blob_sha1": "f580e4a8a6c3ddc9928813335eba1ed2624e46f2",
+      "sha256": "2ec7212c4ca6dd89aaeb0f2a7f7a4760b68539be83ff335af8cecaff8afa66c6",
+      "match": true
+    },
+    {
+      "path": "runtime/tasks/engine.py",
+      "github_blob_sha1": "29aeed783c7a1ca90431490463078d7f8038c07e",
+      "local_blob_sha1": "29aeed783c7a1ca90431490463078d7f8038c07e",
+      "sha256": "abde25a5c5b8b20fc4131d955b2a045cf58e54b0e7b851110a16ebf2210cbe31",
+      "match": true
+    },
+    {
+      "path": "runtime/capabilities/requests.py",
+      "github_blob_sha1": "c16c9b6823c4bf50c061c64b20654dc602138344",
+      "local_blob_sha1": "c16c9b6823c4bf50c061c64b20654dc602138344",
+      "sha256": "b6618924ffc13d3e03e16bd8ed8abd4f1d044dfca8136517c38f5e35376343e3",
+      "match": true
+    }
+  ],
+  "note": "Testes locais executaram as classes Python; nao executaram o binario macOS. O commit de checkout do CI e o merge temporario do PR. As sete comparacoes de blobs conferem com o head do PR."
+}
