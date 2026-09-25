@@ -962,16 +962,19 @@ class ConversationService:
             row = self.conn.execute("SELECT employee_id FROM artifacts WHERE id = ?", (aid,)).fetchone()
             if row is None or row[0] != employee_id:
                 raise AtlasError(ErrorCode.INVALID_INPUT, "attachment not found for this employee")
+        # R5-02: ``objective`` is a title for navigation (it may be a model's summary); the canonical
+        # request is the authenticated owner message itself, and criteria/conditions come from it.
+        original = str(self.get_message(mid)["content"])
         tid = self.tasks.create(
             actor,
             employee_id=employee_id,
-            objective=objective[:4000],
-            criteria=[  # derived from the request by code, one check each (A3-07)
-                (c.description, c.required, c.kind, c.params) for c in derive_criteria(objective, bool(artifact_ids))
+            objective=(objective.strip() or original)[:4000],
+            criteria=[  # derived from the FULL request by code, one check each (A3-07, R5-02)
+                (c.description, c.required, c.kind, c.params) for c in derive_criteria(original, bool(artifact_ids))
             ],
             conversation_id=cid,
             client_request_id=mid,
-            original_request=objective,
+            original_request=original,
             source_message_id=mid,
             data_policy=self._message_classification(mid),
             input_artifact_ids=artifact_ids,  # linked in the same commit as the task (A3-12)

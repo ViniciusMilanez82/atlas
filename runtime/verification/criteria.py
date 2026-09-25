@@ -13,7 +13,10 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import Any
 
-KINDS = ("integrity", "coverage", "calculations", "sources", "inputs_read", "required_terms")
+KINDS = ("integrity", "coverage", "calculations", "sources", "inputs_read", "required_terms", "condition")
+# Conditions code can check deterministically block completion; the others are reported as limitations
+# of the automatic verification instead of being silently "verified" (R5-05).
+CHECKED_CONDITIONS = ("DATE", "MONEY_CAP", "EXCLUSION", "SEPARATE")
 _STOP = frozenset(
     "a o as os um uma uns umas de da do das dos e em no na nos nas para por com sem que se ao aos qual quais "
     "meu minha meus minhas seu sua seus suas este esta estes estas esse essa isso isto sobre entre como mais "
@@ -77,6 +80,10 @@ def derive_criteria(request: str, has_inputs: bool) -> list[Criterion]:
     ]
     if has_inputs:
         crit.append(Criterion("Documentos de entrada lidos por completo", True, "inputs_read"))
+    from runtime.verification.conditions import extract_conditions
+
+    for cond in extract_conditions(request):  # each mapped to the owner's sentence (R5-02)
+        crit.append(Criterion(cond.describe(), cond.kind in CHECKED_CONDITIONS, "condition", cond.as_params()))
     quoted = re.findall(r"[\"“«]([^\"”»]{3,120})[\"”»]", request)
     if quoted:
         crit.append(

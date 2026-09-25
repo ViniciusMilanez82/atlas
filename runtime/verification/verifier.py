@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 
 from runtime.artifacts.manager import ArtifactManager
+from runtime.verification.conditions import DATE, MONEY, money_value
 from runtime.verification.criteria import fold, key_terms, stem
 from shared.clock import Clock, to_utc_str
 from shared.errors import AtlasError
@@ -164,6 +165,62 @@ class Verifier:
                 wrong.append(f"{a} {op} {b} = {c} (correto: {got})")
         return f"cálculo incorreto: {'; '.join(wrong)}" if wrong else None
 
+    # ------------------------------------------------------------------ conditions (R5-02, R5-05)
+
+    @staticmethod
+    def _sentences(body: str) -> list[str]:
+        return [s.strip() for s in re.split(r"(?<=[.;!?])\s+|\n+", body) if s.strip()]
+
+    def _condition(self, body: str, params: dict[str, str]) -> str | None:
+        kind, value, span = params.get("kind", ""), params.get("value", ""), params.get("span", "")
+        if kind == "DATE":
+            want = DATE.match(value)
+            dates = {(int(d.group(1)), int(d.group(2))) for d in DATE.finditer(body)}
+            if want and (int(want.group(1)), int(want.group(2))) not in dates:
+                return f"não trata a data pedida ({value}) - «{span[:100]}»"
+            return None
+        if kind == "MONEY_CAP":
+            cap = money_value(value)
+            if cap is None:
+                return None
+            amounts = [(s, money_value(m.group(2))) for s in self._sentences(body) for m in MONEY.finditer(s)]
+            if not amounts:
+                return f"não demonstra valores frente ao teto de {value} - «{span[:100]}»"
+            over = [
+                s for s, v in amounts
+                if v is not None and v > cap and re.search(r"total|final|recomend|escolh|selecion", fold(s))
+                # an option shown as over the cap and discarded respects the condition
+                and not re.search(r"acima do teto|descart|exced|nao atende|fora do|eliminad|rejeitad", fold(s))
+            ]
+            if over:
+                return f"ultrapassa o teto de {value}: «{over[0][:120]}»"
+            return None
+        if kind == "SEPARATE":
+            terms = key_terms(value) or [stem(w) for w in re.findall(r"[a-z0-9]{4,}", fold(value))]
+            hits = [
+                s for s in self._sentences(body)
+                if terms and all(t in {stem(w) for w in re.findall(r"[a-z0-9]+", fold(s))} for t in terms)
+            ]
+            if not hits or not any(re.search(r"\d", s) for s in hits):
+                return f"não apresenta separadamente: {value} - «{span[:100]}»"
+            return None
+        if kind == "EXCLUSION":
+            terms = key_terms(value)
+            if not terms:
+                return None
+            for s in self._sentences(body):
+                words = {stem(w) for w in re.findall(r"[a-z0-9]+", fold(s))}
+                if sum(t in words for t in terms) * 2 < len(terms) or len(terms) == 0:
+                    continue
+                f = fold(s)
+                if re.search(r"recomend|escolh|selecion|indicad|melhor op|vencedor", f) and not re.search(
+                    r"\b(nao|exclu\w*|descart\w*|sem|fora)\b", f
+                ):
+                    return f"usa/recomenda o que foi excluído ({value}): «{s[:120]}»"
+            return None
+        # QUANTITY / PRIORITY: not provable by code here; reported as a limitation, never as verified
+        return "não verificado automaticamente (exige revisão)"
+
     def _inputs(self, task_id: str) -> list[str]:
         return [
             r[0]
@@ -262,8 +319,11 @@ class Verifier:
         if body is None:
             return res
         integrity_ok = all(res.checks.values())
-        task = self.conn.execute("SELECT objective FROM tasks WHERE id = ?", (task_id,)).fetchone()
-        request_terms = key_terms(task[0]) if task else []
+        original = self.conn.execute(  # the owner's full request, not a summary (R5-02)
+            "SELECT instruction FROM task_instruction_versions WHERE task_id = ? ORDER BY revision LIMIT 1",
+            (task_id,),
+        ).fetchone()
+        request_terms = key_terms(original[0]) if original else []
         # Business checks (run once; each criterion maps to one of them).
         checks: dict[str, str | None] = {
             "integrity": None if integrity_ok else "; ".join(res.gaps) or "integrity failed",
@@ -280,6 +340,8 @@ class Verifier:
                 )
             elif kind == "sources":
                 gap = self._sources(task_id, body, int(params.get("min", 0)), spec)
+            elif kind == "condition":
+                gap = self._condition(body, params)
             elif kind == "required_terms":
                 missing = [t for t in params.get("terms", []) if fold(t) not in fold(body)]
                 gap = f"faltou o que foi pedido: {missing}" if missing else None

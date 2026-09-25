@@ -8,6 +8,7 @@ the dispatch transaction).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import time
@@ -29,6 +30,10 @@ from storage import journal
 from storage.db import require_transaction, transaction
 
 DEFAULT_LEASE_TTL = timedelta(seconds=60)
+
+
+def sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 _FORBIDDEN_CHECKPOINT_KEYS = {"reasoning", "chain_of_thought", "thoughts", "scratchpad"}
 
 
@@ -189,9 +194,9 @@ class TaskEngine:
                 )
             self.conn.execute(
                 "INSERT INTO task_instruction_versions(task_id, revision, kind, instruction, material, author,"
-                " source_message_id, created_at, classification) VALUES (?,1,'ORIGINAL',?,1,?,?,?,?)",
+                " source_message_id, created_at, classification, content_sha256) VALUES (?,1,'ORIGINAL',?,1,?,?,?,?,?)",
                 (task_id, request_text, f"{actor.kind}:{actor.id}", source_message_id, now,
-                 highest(data_policy, instruction_class)),
+                 highest(data_policy, instruction_class), sha256_text(request_text)),
             )
             journal.append(
                 self.conn,
@@ -557,9 +562,10 @@ class TaskEngine:
                 "material": bool(r["material"]),
                 "classification": instruction_classification(r["classification"], r["instruction"], policy),
                 "source_message_id": r["source_message_id"],
+                "content_sha256": r["content_sha256"],
             }
             for r in self.conn.execute(
-                "SELECT revision, kind, instruction, material, classification, source_message_id"
+                "SELECT revision, kind, instruction, material, classification, source_message_id, content_sha256"
                 " FROM task_instruction_versions WHERE task_id = ? ORDER BY revision",
                 (task_id,),
             )
@@ -598,9 +604,9 @@ class TaskEngine:
             cls = highest(classification or "INTERNAL", self._message_class(source_message_id), classify_text(text))
             self.conn.execute(
                 "INSERT INTO task_instruction_versions(task_id, revision, kind, instruction, material, author,"
-                " source_message_id, created_at, classification) VALUES (?,?,?,?,?,?,?,?,?)",
+                " source_message_id, created_at, classification, content_sha256) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (task_id, rev, kind, text[:32000], int(material), f"{actor.kind}:{actor.id}", source_message_id, now,
-                 cls),
+                 cls, sha256_text(text[:32000])),
             )
             self.conn.execute(
                 "UPDATE tasks SET instruction_revision = ?, version = version + 1, updated_at = ?,"
