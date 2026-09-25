@@ -6,7 +6,7 @@ import pytest
 
 from security.egress.guard import EgressBlocked, EgressGuard
 from shared.actors import Actor
-from tests.integration.test_alpha2 import Env, base_config, env, ok, save  # noqa: F401
+from tests.integration.test_alpha2 import Env, base_config, ok, save
 
 
 def identity_payload(version: int = 1) -> dict:
