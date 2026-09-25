@@ -9,9 +9,21 @@ próxima tarefa. Testes marcados **NÃO EXECUTADO** indicam a dependência exata
 | --- | --- |
 | READY TO CODE | Atingido (spec 23.1) |
 | G0 (contrato v2) | Atingido — baseline, contrato adotado, matriz e regressões |
-| G1 (contrato v2) | Correções e regressões concluídas no núcleo; validação no Mac do proprietário pendente (D-01) |
+| G1 (contrato v2) | Correções e regressões concluídas no núcleo, incluindo as rotas reabertas pela revisão do PR #5 (R5-01..R5-09); validação no Mac do proprietário pendente (D-01) |
 | READY FOR BETA | **Não atingido** |
 | READY FOR RELEASE | **Não atingido** |
+
+## Revisão independente do PR #5 — 2026-09-25 (branch `impl/review-pr5`)
+
+Entrada em `docs/spec/review-pr5/`; quadro completo em `docs/REVIEW_PR5_REMEDIATION.md`.
+
+- **Etapa 0:** baseline local verde; o script da revisão reproduziu os 12 comportamentos defeituosos e
+  os 2 controles no `5a997e3`.
+- **R5-01..R5-09 corrigidos** em commits pequenos (`b61fb3b` … `a42ea4c`), cada um com regressão na
+  suíte real que falha no código antigo e passa no novo (61 casos de teste novos em `tests/regression/test_r5_*.py`).
+- Migrações `0020`–`0026`; ADR-017 (época de controle e parada).
+- Os A3 cujas rotas foram reabertas estão marcados em `docs/AUDIT_REMEDIATION.md`.
+- **Não executado aqui:** Mac (D-01), modelo real (D-03), VM. Nenhuma alegação de homologação macOS.
 
 ## Contrato v2.0 — sessão de 2026-09-24 (branch `impl/contract-v2`)
 
