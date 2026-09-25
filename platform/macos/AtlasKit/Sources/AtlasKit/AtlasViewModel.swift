@@ -205,6 +205,7 @@ public final class AtlasViewModel: ObservableObject {
     public private(set) var conversationId = ""
     public var restartServices: (() async throws -> Void)?
     public var serviceStatus: (() -> String)?
+    private var savedConfiguration: [String: Any] = [:]
     private var refreshing = false
     private var errorFromRefresh = false
     private var importQueue: [URL] = []
@@ -643,8 +644,13 @@ public final class AtlasViewModel: ObservableObject {
 
     // MARK: settings and intelligence
 
+    public func reloadIdentity() async {
+        await attempt { name = try await api.identity()["name"] as? String ?? name }
+    }
+
     public func loadSettings() async throws {
         let r = try await api.settings()
+        savedConfiguration = r["settings"] as? [String: Any] ?? [:]
         var form = SettingsForm()
         form.revision = r["revision"] as? Int ?? 0
         form.priceTable = r["price_table"] as? String ?? ""
@@ -684,13 +690,16 @@ public final class AtlasViewModel: ObservableObject {
         isSavingSettings = true
         defer { isSavingSettings = false }
         let form = settings
-        let doc = AtlasAPI.settingsDocument(monthlyMinor: form.monthlyMinor, perTaskMinor: form.perTaskMinor,
+        var doc = savedConfiguration
+        let edited = AtlasAPI.settingsDocument(monthlyMinor: form.monthlyMinor, perTaskMinor: form.perTaskMinor,
                                             modelId: form.modelId, currency: form.currency,
                                             acceptReferencePrices: form.acceptReferencePrices, mode: form.mode,
                                             lightModelId: form.lightModelId, deepModelId: form.deepModelId)
+        for (key, value) in edited { doc[key] = value }
         do {
             let revision = try await api.saveSettings(doc, expectedRevision: form.revision)
             settings.revision = revision
+            savedConfiguration = doc
             notice = "Configurações salvas (revisão \(revision))."
             lastError = nil
         } catch {

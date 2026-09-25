@@ -26,6 +26,7 @@ from jsonschema import Draft202012Validator
 from core.intelligence import IntelligenceSetup
 from runtime.memory.knowledge import KnowledgeContextService
 from runtime.memory.manager import MemoryManager
+from runtime.models.identity import identity_context
 from runtime.models.context import (
     Authority,
     ContextBuilder,
@@ -1085,12 +1086,13 @@ class ConversationService:
                 Authority.POLICY,
                 "You are chatting with your owner. Decide if the latest message asks "
                 "you to DO work (intent=delegate, objective=short task statement) or is conversation "
-                "(intent=chat, reply=your answer in Portuguese). Never claim to have started work; "
+                "(intent=chat, reply=your answer in the configured identity language). Never claim to have started work; "
                 "the system creates tasks, not you.",
                 "policy",
                 required=True,
             )
         ]
+        items.append(identity_context(self.conn, self.clock, employee_id))
         excluded = {
             r[0]
             for r in self.conn.execute(

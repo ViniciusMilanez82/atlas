@@ -45,6 +45,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
   <key>CFBundleVersion</key><string>$VERSION</string>
   <key>LSMinimumSystemVersion</key><string>15.0</string>
+  <key>NSMicrophoneUsageDescription</key><string>Transcrever sua fala no Mac, somente quando você tocar em Falar.</string>
+  <key>NSSpeechRecognitionUsageDescription</key><string>Gerar um rascunho revisável com reconhecimento local; sem envio de áudio à nuvem.</string>
   <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 PLIST

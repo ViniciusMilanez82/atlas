@@ -21,6 +21,8 @@ from core.conversation import ConversationService
 from core.health import WorkerMonitor
 from core.intelligence import IntelligenceSetup
 from core.ipc.sessions import Session
+from core.product import METHODS as PRODUCT_METHODS
+from core.product import ProductService
 from runtime.artifacts.manager import ArtifactManager
 from runtime.artifacts.uploads import UploadStore, staging_path
 from runtime.memory.manager import MemoryManager
@@ -136,6 +138,9 @@ class CoreService:
             corr = params.get("correlation_id")
             method = request["method"]
             self._authorize(session, method, params)
+            if method in PRODUCT_METHODS:
+                result = ProductService(self.conn, self.clock).handle(session, method, params)
+                return {"jsonrpc": "2.0", "id": rid, "result": result}
             handler = self.handlers.get(method)
             if handler is None:
                 code = (

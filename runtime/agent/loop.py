@@ -28,6 +28,7 @@ from jsonschema import Draft202012Validator
 
 from runtime.memory.knowledge import KnowledgeContextService
 from runtime.memory.manager import MemoryManager
+from runtime.models.identity import identity_context
 from runtime.models.context import (
     Authority,
     ContextBuilder,
@@ -443,6 +444,7 @@ class AgentRunner:
                 required=True,
             ),
         ]
+        items.append(identity_context(self.conn, self.clock, task["employee_id"]))
         query = " ".join(v["instruction"] for v in versions[-2:])
         for k in KnowledgeContextService(self.conn, self.clock).context_for(task["employee_id"], query):
             items.append(  # the same knowledge path as the conversation (A3-01)
