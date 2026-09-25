@@ -34,6 +34,13 @@ modelo real (REAL) — ver pendências.
 | R5-08 | P2 | Corrigido | `_sources` aceitava qualquer `sources.kind='web'` global | `test_r5_08.py`: 6 falham antes, 6/6 passam | `94b9e0c`, `c47c465` | escopo por tarefa/empregado, reutilização autorizada, validade, captura que sustenta a afirmação | O adaptador de pesquisa real (N16) ainda não existe: hoje nenhuma URL é aceita como fonte, o que é o comportamento correto |
 | R5-09 | P2 | Corrigido | `decide` gravava o status numa transação e instrução/estado em outras; reenvio recusava por "already APPROVED" | `test_r5_09.py`: 7 falham antes, 8/8 passam | `a42ea4c` | falha injetada após cada escrita, no commit, reinício, reenvio, rejeição, expiração, novas condições, cancelamento; nada comprado | Operações externas de contratação seguem inexistentes e exigirão aprovação material própria |
 
+## Evidência de CI
+
+Execução `36156008899` no commit `b3ec253` (todas as correções R5 + docs): **core-linux** 692 passed,
+4 skipped; **core-macos** 695 passed, 1 skipped (o ignorado é a chamada opt-in ao provedor real, D-03);
+**app-evidence** Swift 37 testes, 0 falhas, bundle construído. ruff, segredos e mypy verdes. Local
+(Windows): 688 passed, 8 skipped (os extras dependem de Unix sockets/macOS e rodam no CI).
+
 ## Script da revisão depois das correções
 
 `docs/spec/review-pr5/repro/local_run_after_fixes.log`: nenhum dos 12 cenários defeituosos reproduz

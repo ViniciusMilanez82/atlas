@@ -24,6 +24,16 @@ Entrada em `docs/spec/review-pr5/`; quadro completo em `docs/REVIEW_PR5_REMEDIAT
 - Migrações `0020`–`0026`; ADR-017 (época de controle e parada).
 - Os A3 cujas rotas foram reabertas estão marcados em `docs/AUDIT_REMEDIATION.md`.
 - **Não executado aqui:** Mac (D-01), modelo real (D-03), VM. Nenhuma alegação de homologação macOS.
+- CI `36156008899` (`b3ec253`): Linux 692/4 skipped, macOS 695/1 skipped, Swift 37/0.
+
+### Continuação N14/N16 (parte desbloqueada) — `8c2f335`
+
+- `security/network/mediator.py` (ADR-018): saída web só para endereços públicos com IP fixado após uma
+  resolução, redirecionamento revalidado, URL tratada como dado de saída, limites e recibo por tentativa
+  (migração 0027). VM e transporte vsock seguem pendentes (D-01).
+- `web.fetch` (desligado até `research.web_enabled`): captura vira fonte da tarefa com validade de 24 h,
+  fechando a "recuperação real controlada" do R5-08. Navegador/perfis/takeover: pendentes (D-01).
+- Testes: `tests/integration/test_network_mediation.py` (servidor local, DNS falso, sem Internet real).
 
 ## Contrato v2.0 — sessão de 2026-09-24 (branch `impl/contract-v2`)
 
