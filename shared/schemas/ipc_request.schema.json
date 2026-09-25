@@ -65,7 +65,11 @@
         "memories.export",
         "artifacts.all",
         "capabilities.list",
-        "capabilities.decide"
+        "capabilities.decide",
+        "setup.get",
+        "setup.update",
+        "privacy.get",
+        "privacy.update"
       ]
     },
     "params": {
@@ -659,6 +663,185 @@
         "properties": {
           "params": {
             "$ref": "#/$defs/p_capability_decide"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "setup.get"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "schema_version": {
+                "$ref": "common.schema.json#/$defs/schema_version"
+              },
+              "correlation_id": {
+                "$ref": "common.schema.json#/$defs/correlation_id"
+              }
+            },
+            "required": [
+              "schema_version",
+              "correlation_id"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "setup.update"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "request_id",
+              "expected_revision",
+              "name",
+              "owner_name",
+              "locale",
+              "timezone",
+              "step",
+              "schema_version",
+              "correlation_id"
+            ],
+            "properties": {
+              "request_id": {
+                "$ref": "common.schema.json#/$defs/uuid"
+              },
+              "expected_revision": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "owner_name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "locale": {
+                "type": "string",
+                "enum": [
+                  "pt-BR",
+                  "en-US",
+                  "es-ES"
+                ]
+              },
+              "timezone": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "step": {
+                "enum": [
+                  "welcome",
+                  "identity",
+                  "intelligence",
+                  "privacy",
+                  "done"
+                ]
+              },
+              "schema_version": {
+                "$ref": "common.schema.json#/$defs/schema_version"
+              },
+              "correlation_id": {
+                "$ref": "common.schema.json#/$defs/correlation_id"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "privacy.get"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "schema_version": {
+                "$ref": "common.schema.json#/$defs/schema_version"
+              },
+              "correlation_id": {
+                "$ref": "common.schema.json#/$defs/correlation_id"
+              }
+            },
+            "required": [
+              "schema_version",
+              "correlation_id"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "privacy.update"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "request_id",
+              "expected_revision",
+              "privacy",
+              "research",
+              "schema_version",
+              "correlation_id"
+            ],
+            "properties": {
+              "request_id": {
+                "$ref": "common.schema.json#/$defs/uuid"
+              },
+              "expected_revision": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "privacy": {
+                "$ref": "config.schema.json#/properties/privacy"
+              },
+              "research": {
+                "$ref": "config.schema.json#/properties/research"
+              },
+              "schema_version": {
+                "$ref": "common.schema.json#/$defs/schema_version"
+              },
+              "correlation_id": {
+                "$ref": "common.schema.json#/$defs/correlation_id"
+              }
+            }
           }
         }
       }

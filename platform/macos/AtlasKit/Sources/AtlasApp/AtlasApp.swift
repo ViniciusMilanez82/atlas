@@ -32,6 +32,8 @@ final class AppController: ObservableObject {
     @Published var starting = true
     let supervisor: Supervisor?
     let model: AtlasViewModel
+    let setup: OwnerSetupModel
+    let voice = VoiceController(driver: OnDeviceSpeech())
     private var timer: Timer?
 
     init() {
@@ -47,7 +49,9 @@ final class AppController: ObservableObject {
             guard let sup else { throw SupervisorError.notRunning }
             return try sup.session()
         }
-        model = AtlasViewModel(api: AtlasAPI(transport: connection, control: controlLane))
+        let api = AtlasAPI(transport: connection, control: controlLane)
+        model = AtlasViewModel(api: api)
+        setup = OwnerSetupModel(api: api)
         connection.onStateChange = { [weak model] state in
             Task { @MainActor in model?.setConnectionState(state) }
         }
@@ -92,6 +96,7 @@ final class AppController: ObservableObject {
             }
             bootError = nil
             await model.start()
+            await setup.load()
             timer?.invalidate()
             timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
                 Task { @MainActor in await self?.model.refresh() }
@@ -105,6 +110,7 @@ final class AppController: ObservableObject {
     /// Bounded and off the main actor (A3-31). Says what had to be forced, if anything.
     func shutdown() async {
         timer?.invalidate()
+        voice.suspend()
         guard let supervisor else { return }
         let report = await Task.detached(priority: .userInitiated) { supervisor.stop(grace: 8) }.value
         model.noteShutdown(forced: report.forced)
@@ -119,6 +125,7 @@ struct AtlasApp: App {
     var body: some Scene {
         WindowGroup("Atlas") {
             RootView().environmentObject(controller).environmentObject(controller.model)
+                .environmentObject(controller.setup).environmentObject(controller.voice)
                 .frame(minWidth: 900, minHeight: 600)
                 .task {
                     AppDelegate.onTerminateAsync = { [weak controller] in await controller?.shutdown() }
@@ -136,7 +143,12 @@ struct AtlasApp: App {
     }
 }
 
+@MainActor
+final class AppNavigation: ObservableObject { @Published var tab = "conversation" }
+
 struct RootView: View {
+    @StateObject private var navigation = AppNavigation()
+    @EnvironmentObject var setup: OwnerSetupModel
     @EnvironmentObject var controller: AppController
     @EnvironmentObject var model: AtlasViewModel
 
@@ -161,15 +173,19 @@ struct RootView: View {
             if let note = model.notice {
                 Text(note).foregroundStyle(.secondary).font(.callout).padding(.horizontal)
             }
-            TabView {
-                ConversationView().tabItem { Text("Conversa") }
-                WorkView().tabItem { Text("Trabalho") }
-                MemoryView().tabItem { Text("Memória") }
-                FilesView().tabItem { Text("Arquivos") }
-                ApprovalsView().tabItem { Text("Aprovações") }
-                SettingsView().tabItem { Text("Configurações") }
-                HealthView().tabItem { Text("Saúde") }
-            }.padding()
+            TabView(selection: $navigation.tab) {
+                GettingStartedView().tabItem { Text("Primeiros passos") }.tag("setup")
+                ConversationView().tabItem { Text("Conversa") }.tag("conversation")
+                WorkView().tabItem { Text("Trabalho") }.tag("work")
+                MemoryView().tabItem { Text("Memória") }.tag("memory")
+                FilesView().tabItem { Text("Arquivos") }.tag("files")
+                ApprovalsView().tabItem { Text("Aprovações") }.tag("approvals")
+                SettingsView().tabItem { Text("Configurações") }.tag("settings")
+                HealthView().tabItem { Text("Saúde") }.tag("health")
+            }.padding().environmentObject(navigation)
+        }
+        .onChange(of: setup.loaded) { ready in
+            if ready, setup.step != "done" { navigation.tab = "setup" }
         }
     }
 }
@@ -178,6 +194,7 @@ struct RootView: View {
 
 struct ConversationView: View {
     @EnvironmentObject var model: AtlasViewModel
+    @EnvironmentObject var voice: VoiceController
     @State private var text = ""
     @State private var asTask = false
     @State private var dropTargeted = false
@@ -270,8 +287,11 @@ struct ConversationView: View {
                     .keyboardShortcut(.return, modifiers: [.command])
                     .disabled(model.isSending || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
+            VoicePanel(draft: $text)
             if model.isAttaching { ProgressView("Importando anexo…").controlSize(.small) }
         }
+        .onDisappear { voice.suspend() }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.willSleepNotification)) { _ in voice.suspend() }
         .overlay(dropTargeted ? RoundedRectangle(cornerRadius: 8).stroke(Color.accentColor, lineWidth: 2) : nil)
         .onDrop(of: [UTType.fileURL], isTargeted: $dropTargeted) { providers in
             // A3-21: collect EVERY dropped URL, then hand them to the import queue in one go.
@@ -330,6 +350,8 @@ struct ConversationView: View {
 }
 
 struct Bubble: View {
+    @EnvironmentObject var voice: VoiceController
+    @EnvironmentObject var setup: OwnerSetupModel
     @EnvironmentObject var model: AtlasViewModel
     let message: ChatMessage
     let preview: (String) -> Void
@@ -356,6 +378,9 @@ struct Bubble: View {
                 if let label { Text(label).font(.caption2).bold().foregroundStyle(.secondary) }
                 Text(message.content).textSelection(.enabled)
                 HStack {
+                    if !message.isOwner {
+                        Button("Ouvir") { voice.speak(message.content, locale: setup.locale) }
+                    }
                     if message.kind == "memory", message.memoryId != nil {
                         Button("Confirmar memória") { Task { await model.confirmMemory(message) } }
                     }
@@ -601,6 +626,8 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            Section("Identidade") { IdentityFields() }
+            Section("Privacidade") { PrivacySettingsView() }
             Section("Chave da API (guardada no Keychain)") {
                 SecureField("sk-…", text: $key)
                 Button("Guardar no Keychain") {

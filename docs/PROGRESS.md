@@ -618,3 +618,8 @@ do núcleo. Ele vinha da suíte de testes, que roda antes no mesmo job.
 
 **Isso não prova:** que uma pessoa usou o app, os passos 2 a 10 do cenário visual e o comportamento
 no Mac do proprietário (D-01).
+
+
+## N20/N22 — experiência nativa do proprietário (implementação direta)
+
+Perfil, progresso persistente, privacidade por finalidade, pesquisa mediada configurável, preservação de configurações não editadas e voz nativa com transcrição revisada foram implementados. Evidência e limites em `IMPLEMENTATION_OWNER_EXPERIENCE.md`. Testes locais: 16 de setup/privacidade; 39 no conjunto integrado com regressões. Testes Swift adicionados, aguardando CI. Não marca G4–G10 nem V1.
