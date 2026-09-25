@@ -190,6 +190,34 @@
           }
         }
       }
+    },
+    "research": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Web research through the mediated egress (N14/N16). Absent or web_enabled=false = no web access.",
+      "properties": {
+        "web_enabled": {
+          "type": "boolean"
+        },
+        "allowed_domains": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$",
+            "maxLength": 253
+          }
+        },
+        "blocked_domains": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$",
+            "maxLength": 253
+          }
+        }
+      }
     }
   }
 }

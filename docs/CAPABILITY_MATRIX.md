@@ -28,9 +28,9 @@ compilado/testado no runner macOS 15; E2E-CI = processos reais (daemon/Superviso
 | Uploads e importação (cap. 14.1) | Sim (sessões compartilhadas, cota, TTL, recibo) | — | INT, MAC-CI (VM) | Arrastar real (D-01) |
 | Leitura/exportação de artefatos (cap. 14.2) | Sim (custo linear, nome/extensão reais) | — | INT, MAC-CI (VM) | Painel real (D-01) |
 | Instância única e encerramento com prazo (cap. 22.2) | Sim (daemon e Supervisor) | — | INT, E2E-CI, MAC-CI | Saída do app por pessoa (D-01) |
-| Workspace VM Linux + mediação de rede (cap. 15) | **Não** | — | — | N14; exige Mac com virtualização (D-01) |
+| Workspace VM Linux + mediação de rede (cap. 15) | Mediação **sim** (`security/network/mediator.py`: só endereços públicos com IP fixado, redirecionamento revalidado, URL como dado de saída, limites, recibos — ADR-018); VM **não** | Pesquisa web desligada por padrão (`research.web_enabled`) | INT (servidor local, DNS falso) | VM e transporte vsock→mediador: N14 no Mac (D-01) |
 | Execution Box para código novo (cap. 15.2, 17) | **Não** | — | — | N15 |
-| Navegador, pesquisa com fontes, takeover (cap. 16) | **Não** | — | — | N16 (depende de N14) |
+| Navegador, pesquisa com fontes, takeover (cap. 16) | Busca por API **sim** (`web.fetch`: captura vira fonte da tarefa com validade); navegador/perfis/takeover **não** | Desligado até o dono ativar | INT | Playwright empacotado, perfis, takeover (N16 no Mac, D-01); nenhuma chamada real à Internet feita |
 | Contas e e-mail operacional (cap. 18) | **Não** | — | — | N17 (conta/domínio do proprietário) |
 | Pedido de recurso pago / aprovações materiais (cap. 16.5, 12.3) | Sim: pedido concreto decidido pelo dono numa transação com hash e reenvio idempotente; cotação expira, novas condições substituem, tarefa encerrada cancela (R5-09); aprovação não compra nem libera dados | — | INT, MAC-CI (tela) | Serviço sandbox real e driver de compra (T36, conta do proprietário) |
 | Skills com teste/promoção/rollback (cap. 17) | Tabelas existem; ciclo **não** | — | — | N19 |
