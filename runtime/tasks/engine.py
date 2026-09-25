@@ -637,6 +637,7 @@ class TaskEngine:
         material: bool = True,
         source_message_id: str | None = None,
         classification: str | None = None,
+        derive: bool = True,
     ) -> int:
         """Record a new instruction revision durably (A3-03, spec 6.3). Returns the new revision.
 
@@ -690,7 +691,7 @@ class TaskEngine:
                 fresh = self._row(task_id)
                 if fresh["state"] == TaskState.WAITING_APPROVAL and revoked:
                     self.transition_in_txn(fresh, TaskState.READY, actor, "approval revoked by a correction")
-                criteria_note = self._rederive_criteria_in_txn(task_id, rev, kind, text)
+                criteria_note = self._rederive_criteria_in_txn(task_id, rev, kind if derive else "SYSTEM", text)
             else:
                 criteria_note = "not material: evidence kept (the note does not change what is delivered)"
             journal.append(
@@ -762,6 +763,38 @@ class TaskEngine:
         elif kind == "ATTACHMENT" and not any(c["check_kind"] == "inputs_read" for c in live):
             add("Documentos de entrada lidos por completo", True, "inputs_read", {})
         return f"criteria: {len(live)} re-opened, {superseded} superseded, {added} added for revision {rev}"
+
+    def accept_reduced_scope(self, task_id: str, artifact_id: str, *, actor: Actor, note: str = "") -> int:
+        """The owner accepts that a PARTIAL input is analysed only in its extracted part (R5-06). Recorded
+        per task and document with the exact missing areas, as a material instruction revision the model
+        sees; the deliverable must still state the limitation. Returns the new revision."""
+        row = self._row(task_id)
+        self._owner_check(actor, row)
+        ext = self.conn.execute(
+            "SELECT e.state, e.missing_json, a.name FROM document_extractions e JOIN artifact_links l"
+            " ON l.artifact_id = e.artifact_id AND l.task_id = ? AND l.relation = 'input'"
+            " JOIN artifacts a ON a.id = e.artifact_id WHERE e.artifact_id = ?",
+            (task_id, artifact_id),
+        ).fetchone()
+        if ext is None or ext["state"] != "PARTIAL":
+            raise _err(ErrorCode.INVALID_INPUT, "only a PARTIAL input of this task can have a reduced scope")
+        missing = json.loads(ext["missing_json"])
+        rev = self.update_instruction(
+            task_id,
+            actor=actor,
+            text=f"Escopo reduzido aceito pelo proprietário para «{ext['name']}»: analisar somente o que foi "
+            f"extraído; não analisado: {', '.join(missing)}. Declare essa limitação na entrega."
+            + (f" Observação: {note}" if note.strip() else ""),
+            derive=False,  # system wording: re-opens the evidence, adds no subject to cover
+        )
+        with transaction(self.conn):
+            self.conn.execute(
+                "INSERT OR REPLACE INTO input_scope_acceptances(task_id, artifact_id, instruction_revision,"
+                " missing_json, accepted_by, note, created_at) VALUES (?,?,?,?,?,?,?)",
+                (task_id, artifact_id, rev, json.dumps(missing, ensure_ascii=False), f"{actor.kind}:{actor.id}",
+                 note[:1000] or None, to_utc_str(self.clock.now())),
+            )
+        return rev
 
     def stop_all(self, *, actor: Actor, employee_id: str, origin: str = "local_app") -> StopReport:
         """Authenticated "stop everything": revoke every lease and pause all active tasks (spec 12.3)."""

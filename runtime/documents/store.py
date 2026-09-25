@@ -83,8 +83,8 @@ class DocumentStore:
             else:
                 self.conn.execute(
                     "INSERT INTO document_extractions(artifact_id, state, extractor, extractor_version,"
-                    " segment_count, total_chars, warnings_json, diagnostic, created_at)"
-                    " VALUES (?,?,?,?,?,?,?,?,?)",
+                    " segment_count, total_chars, warnings_json, diagnostic, created_at, units_total, missing_json)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         artifact_id,
                         ex.state,
@@ -95,6 +95,8 @@ class DocumentStore:
                         json.dumps(ex.warnings, ensure_ascii=False),
                         ex.diagnostic,
                         now,
+                        ex.units_total,
+                        json.dumps(ex.missing, ensure_ascii=False),
                     ),
                 )
                 for seq, seg in enumerate(ex.segments):
@@ -202,8 +204,11 @@ class DocumentStore:
         return hits
 
     def coverage(self, task_id: str | None, artifact_id: str) -> dict[str, Any]:
+        """Extraction coverage and reading coverage kept apart (R5-06): reading every extracted segment
+        of a PARTIAL document is ``segments_complete``, never ``complete``."""
         total = self.conn.execute(
-            "SELECT segment_count FROM document_extractions WHERE artifact_id = ?", (artifact_id,)
+            "SELECT segment_count, state, missing_json, units_total FROM document_extractions WHERE artifact_id = ?",
+            (artifact_id,),
         ).fetchone()
         read = 0
         if task_id is not None:
@@ -214,4 +219,14 @@ class DocumentStore:
                 ).fetchone()[0]
             )
         n = int(total[0]) if total else 0
-        return {"read_segments": read, "total_segments": n, "complete": n > 0 and read >= n}
+        segments_complete = n > 0 and read >= n
+        partial = bool(total) and total[1] == "PARTIAL"
+        return {
+            "read_segments": read,
+            "total_segments": n,
+            "segments_complete": segments_complete,
+            "extraction_state": total[1] if total else None,
+            "missing": json.loads(total[2]) if total else [],
+            "units_total": total[3] if total else None,
+            "complete": segments_complete and not partial,
+        }

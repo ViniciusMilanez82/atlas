@@ -28,6 +28,9 @@ _SEPARATE_BEFORE = re.compile(r"\b(?:separe|discrimine|destaque)\s+(?P<obj>[^,.;
 _CLAUSE = re.compile(r",|;|\be\b|\bmas\b")
 QUANTITY = re.compile(r"\b(\d+)\s*(dias?|horas?|semanas?|meses|anos?|paginas?|itens|opcoes|fornecedores)\b")
 _PRIORITY = re.compile(r"\b(priorize|prioridade|priorizar|primeiro|antes de tudo|mais importante)\b")
+_INCLUDE = re.compile(
+    r"\b(?:inclua|incluindo|incluir|considerando|contemple|contemplando)\b\s+(?P<obj>[^.;]{3,160})"
+)
 _VERB_LEAD = re.compile(r"^(?:e\s+)?(?:apresente|mostre|informe|liste|indique|traga|coloque|inclua)\s+")
 
 
@@ -44,7 +47,7 @@ def money_value(raw: str) -> Decimal | None:
 
 @dataclass(frozen=True)
 class Condition:
-    kind: str  # DATE | MONEY_CAP | EXCLUSION | SEPARATE | QUANTITY | PRIORITY
+    kind: str  # DATE | MONEY_CAP | EXCLUSION | SEPARATE | INCLUDE | QUANTITY | PRIORITY
     span: str  # the owner's sentence, verbatim
     value: str  # normalised value the verifier looks for
 
@@ -56,6 +59,7 @@ class Condition:
             "SEPARATE": "Apresenta separadamente",
             "QUANTITY": "Respeita a quantidade",
             "PRIORITY": "Respeita a prioridade",
+            "INCLUDE": "Inclui o que foi pedido",
         }
         return f"{labels[self.kind]}: «{self.span[:160]}»"
 
@@ -90,6 +94,9 @@ def extract_conditions(request: str) -> list[Condition]:
             add("SEPARATE", sentence, _VERB_LEAD.sub("", clause))
         for sp in _SEPARATE_BEFORE.finditer(folded):  # "discrimine o frete"
             add("SEPARATE", sentence, sp.group("obj"))
+        if not _SEPARATE_AFTER.search(folded):
+            for inc in _INCLUDE.finditer(folded):  # "incluindo subtotal, frete e total": every item
+                add("INCLUDE", sentence, inc.group("obj"))
         for q in QUANTITY.finditer(folded):
             add("QUANTITY", sentence, q.group(0))
         if _PRIORITY.search(folded):

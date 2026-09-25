@@ -41,6 +41,7 @@ OWNER_ONLY = {
     "tasks.resume",
     "tasks.cancel",
     "tasks.reevaluate",
+    "tasks.accept_partial_input",
     "capabilities.decide",
     "approvals.decide",
     "memories.propose",
@@ -112,6 +113,7 @@ class CoreService:
             "artifacts.read": self._read,
             "control.stop": self._control_stop,
             "tasks.reevaluate": self._task_reevaluate,
+            "tasks.accept_partial_input": self._task_accept_partial,
             "memories.forget_preview": self._mem_forget_preview,
             "memories.list": self._mem_list,
             "memories.export": self._mem_export,
@@ -339,6 +341,12 @@ class CoreService:
             p["task_id"], actor=s.actor, expected_version=p["expected_version"], budget=self.broker.budget
         )
         return {"task": self.tasks.get(p["task_id"]), "state": str(state), "explanation": why}
+
+    def _task_accept_partial(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
+        """R5-06: the owner accepts analysing only the extracted part of a PARTIAL input."""
+        self._check_task(s, p["task_id"])
+        rev = self.tasks.accept_reduced_scope(p["task_id"], p["artifact_id"], actor=s.actor, note=p.get("note", ""))
+        return {"task": self.tasks.get(p["task_id"]), "instruction_revision": rev}
 
     def _task_cancel(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
         self._check_task(s, p["task_id"])

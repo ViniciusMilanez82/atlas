@@ -41,6 +41,8 @@ class Extraction:
     segments: list[Segment] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     diagnostic: str | None = None
+    missing: list[str] = field(default_factory=list)  # areas NOT extracted, e.g. "página 2" (R5-06)
+    units_total: int | None = None  # pages/sheets/slides the document has, when known
 
 
 def _split(locator: str, kind: str, text: str) -> list[Segment]:
@@ -175,7 +177,14 @@ def _pdf(data: bytes) -> Extraction:
     warnings = []
     if empty:
         warnings.append(f"páginas sem texto extraível (imagem/digitalizadas): {empty}")
-    return Extraction(PARTIAL if empty else READY, extractor, segs, warnings)
+    return Extraction(
+        PARTIAL if empty else READY,
+        extractor,
+        segs,
+        warnings,
+        missing=[f"página {n}" for n in empty],
+        units_total=len(pages),
+    )
 
 
 def _docx(data: bytes) -> Extraction:

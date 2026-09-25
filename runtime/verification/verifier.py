@@ -27,6 +27,7 @@ from decimal import Decimal, InvalidOperation
 from runtime.artifacts.manager import ArtifactManager
 from runtime.verification.conditions import DATE, MONEY, money_value
 from runtime.verification.criteria import fold, key_terms, stem
+from runtime.verification.substance import Expectations, check_substance, check_totals
 from shared.clock import Clock, to_utc_str
 from shared.errors import AtlasError
 from shared.ids import new_id
@@ -135,18 +136,24 @@ class Verifier:
             res.gaps.append(f"missing required content: {missing}")
         return body
 
-    def _coverage(self, task_id: str, body: str, terms: list[str], min_ratio: float) -> str | None:
+    def _coverage(
+        self, task_id: str, body: str, terms: list[str], min_ratio: float, structure_ok: bool = False
+    ) -> str | None:
+        """Auxiliary signal (R5-05): the request's terms, OR the verified structure the request asks for
+        plus at least one of its terms - so a correct paraphrase passes and an unrelated text does not."""
         if not terms:
             return None
         words = {stem(w) for w in re.findall(r"[a-z0-9]+", fold(body))}
         hit = [t for t in terms if t in words]
+        if structure_ok and hit:
+            return None
         if len(hit) < max(1, math.ceil(min_ratio * len(terms))):
             missing = [t for t in terms if t not in words]
             return f"não atende ao pedido: a entrega não trata de {', '.join(missing)}"
         return None
 
     def _calculations(self, body: str) -> str | None:
-        wrong = []
+        wrong = list(check_totals(body)[1])  # labelled totals in prose, tables and cells (R5-05)
         for a, op, b, c in ARITH.findall(body):
             try:
                 x, y, z = _dec(a), _dec(b), _dec(c)
@@ -196,6 +203,11 @@ class Verifier:
             if over:
                 return f"ultrapassa o teto de {value}: «{over[0][:120]}»"
             return None
+        if kind == "INCLUDE":
+            items = [t for t in key_terms(value) if t not in ("total",)] or key_terms(value)
+            words = {stem(w) for w in re.findall(r"[a-z0-9]+", fold(body))}
+            missing = [t for t in items if t not in words]
+            return f"faltou incluir: {', '.join(missing)} - «{span[:100]}»" if missing else None
         if kind == "SEPARATE":
             terms = key_terms(value) or [stem(w) for w in re.findall(r"[a-z0-9]{4,}", fold(value))]
             hits = [
@@ -272,7 +284,7 @@ class Verifier:
             )
         return "; ".join(problems) if problems else None
 
-    def _inputs_read(self, task_id: str) -> str | None:
+    def _inputs_read(self, task_id: str, body: str = "") -> str | None:
         missing = []
         for aid in self._inputs(task_id):
             ext = self.conn.execute(
@@ -291,6 +303,24 @@ class Verifier:
             ).fetchone()[0]
             if read < ext[1]:
                 missing.append(f"{name} (lido {read} de {ext[1]} trechos)")
+            if ext[0] == "PARTIAL":  # R5-06: reading what was extracted is not reading the document
+                gone = self.conn.execute(
+                    "SELECT missing_json FROM document_extractions WHERE artifact_id = ?", (aid,)
+                ).fetchone()[0]
+                accepted = self.conn.execute(
+                    "SELECT 1 FROM input_scope_acceptances WHERE task_id = ? AND artifact_id = ?", (task_id, aid)
+                ).fetchone()
+                areas = json.loads(gone)
+                if accepted is None:
+                    missing.append(
+                        f"{name} (extração PARCIAL, não analisado: {', '.join(areas)}; peça material "
+                        "legível ou que o proprietário aceite o escopo reduzido)"
+                    )
+                elif not (
+                    any(fold(a) in fold(body) for a in areas)
+                    or re.search(r"parcial|nao analisad|ilegive|nao extraid", fold(body))
+                ):  # the accepted limitation must be stated, never hidden
+                    missing.append(f"{name} (escopo reduzido aceito; a entrega precisa declarar: {', '.join(areas)})")
         return (
             f"documentos de entrada não foram lidos por completo: {', '.join(missing)}" if missing else None
         )
@@ -333,16 +363,27 @@ class Verifier:
         checks: dict[str, str | None] = {
             "integrity": None if integrity_ok else "; ".join(res.gaps) or "integrity failed",
             "calculations": self._calculations(body),
-            "inputs_read": self._inputs_read(task_id) if self._inputs(task_id) else None,
+            "inputs_read": self._inputs_read(task_id, body) if self._inputs(task_id) else None,
         }
         results: dict[str, CriterionResult] = {}
+        substance = None
+        for c in criteria:
+            if c["check_kind"] == "substance":
+                params = json.loads(c["params_json"]) if c["params_json"] else {}
+                substance = check_substance(body, Expectations(**params))
         for c in criteria:
             kind = c["check_kind"]
             params = json.loads(c["params_json"]) if c["params_json"] else {}
             if kind == "coverage":
                 gap = self._coverage(
-                    task_id, body, params.get("terms") or request_terms, params.get("min_ratio", 0.5)
+                    task_id,
+                    body,
+                    params.get("terms") or request_terms,
+                    params.get("min_ratio", 0.5),
+                    structure_ok=bool(substance and substance.structure_ok and not substance.gaps),
                 )
+            elif kind == "substance":
+                gap = "; ".join(substance.gaps) if substance and substance.gaps else None
             elif kind == "sources":
                 gap = self._sources(task_id, body, int(params.get("min", 0)), spec)
             elif kind == "condition":
