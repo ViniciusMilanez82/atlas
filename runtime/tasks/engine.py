@@ -103,6 +103,7 @@ class TaskEngine:
         original_request: str | None = None,
         source_message_id: str | None = None,
         input_artifact_ids: list[str] | None = None,
+        control_epoch: int | None = None,
     ) -> str:
         """Persist a task before anything claims work has started (spec 3.3).
 
@@ -115,6 +116,10 @@ class TaskEngine:
 
         ``client_request_id`` makes creation idempotent: resending the same request (after a lost reply or
         a reconnect) returns the task that already exists instead of creating a duplicate.
+
+        ``control_epoch`` is the stop-all epoch in force when the owner's request was RECEIVED (R5-03). If
+        the owner stopped everything since, the task is still published (nothing is lost) but PAUSED:
+        only an explicit resume makes it executable. A subtask inherits its parent's epoch.
         """
         if actor.kind == "owner":
             owner_id = actor.id
@@ -139,6 +144,11 @@ class TaskEngine:
         now = to_utc_str(self.clock.now())
         request_text = (original_request or objective)[:32000]
         with transaction(self.conn):
+            current_epoch = self._epoch(employee_id)
+            if parent_task_id is not None and control_epoch is None:
+                control_epoch = int(self._row(parent_task_id)["control_epoch"])
+            epoch = current_epoch if control_epoch is None else control_epoch
+            stale = epoch < current_epoch
             # R5-01: the task is at least as protected as the owner's words it was created from.
             instruction_class = highest(
                 self._message_class(source_message_id), classify_text(request_text), classify_text(objective)
@@ -147,7 +157,8 @@ class TaskEngine:
             self.conn.execute(
                 "INSERT INTO tasks(id, owner_id, employee_id, objective, constraints_json, priority, data_policy,"
                 " budget_amount_minor, budget_currency, state, parent_task_id, deadline, created_at, updated_at,"
-                " conversation_id, client_request_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " conversation_id, client_request_id, control_epoch, paused_from)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     task_id,
                     owner_id,
@@ -158,13 +169,15 @@ class TaskEngine:
                     data_policy,
                     budget_limit.amount_minor if budget_limit else None,
                     budget_limit.currency if budget_limit else None,
-                    TaskState.CREATED,
+                    TaskState.PAUSED if stale else TaskState.CREATED,
                     parent_task_id,
                     deadline,
                     now,
                     now,
                     conversation_id,
                     client_request_id,
+                    epoch,
+                    TaskState.CREATED if stale else None,
                 ),
             )
             for c in criteria or []:  # (description, required[, check_kind, params]) - A3-07
@@ -205,10 +218,19 @@ class TaskEngine:
                 task_id=task_id,
                 type="task.created",
                 actor=actor,
-                summary=f"task created (priority {priority})",
+                summary=f"task created (priority {priority})"
+                + (
+                    f"; published PAUSED: requested before stop-all (epoch {epoch} < {current_epoch})"
+                    if stale
+                    else ""
+                ),
             )
         validate("task", self.get(task_id))
         return task_id
+
+    def _epoch(self, employee_id: str) -> int:
+        row = self.conn.execute("SELECT control_epoch FROM employees WHERE id = ?", (employee_id,)).fetchone()
+        return int(row[0]) if row else 0
 
     def _message_class(self, message_id: str | None) -> str:
         if message_id is None:
@@ -299,6 +321,11 @@ class TaskEngine:
         )
         if cur.rowcount != 1:
             raise _err(ErrorCode.VERSION_CONFLICT, "task changed concurrently")
+        if actor.kind == "owner" and to != TaskState.PAUSED:  # the owner's own act authorizes it now (R5-03)
+            self.conn.execute(
+                "UPDATE tasks SET control_epoch = (SELECT control_epoch FROM employees WHERE id = ?) WHERE id = ?",
+                (row["employee_id"], row["id"]),
+            )
         journal.append(
             self.conn,
             self.clock,
@@ -339,6 +366,21 @@ class TaskEngine:
         now = self.clock.now()
         with transaction(self.conn):
             row = self._row(task_id)
+            if int(row["control_epoch"]) < self._epoch(row["employee_id"]) and row["state"] == TaskState.READY:
+                # authorized before a stop-all that did not reach it: never executable (R5-03)
+                self.transition_in_txn(row, TaskState.PAUSED, SYSTEM, "authorized before stop-all; owner must resume")
+                stale = True
+            else:
+                stale = False
+        if stale:
+            raise _err(
+                ErrorCode.UNAUTHORIZED,
+                "task was authorized before the owner stopped everything",
+                persisted="task paused",
+                recommended_action="resume the task explicitly",
+            )
+        with transaction(self.conn):
+            row = self._row(task_id)
             expired = row["lease_expires_at"] is not None and parse_utc(row["lease_expires_at"]) <= now
             if row["state"] == TaskState.RUNNING and not expired:
                 raise _err(ErrorCode.VERSION_CONFLICT, "task is leased by another worker")
@@ -373,6 +415,7 @@ class TaskEngine:
             or int(row["fencing_token"]) != fencing_token
             or row["lease_expires_at"] is None
             or parse_utc(row["lease_expires_at"]) <= self.clock.now()
+            or int(row["control_epoch"]) < self._epoch(row["employee_id"])  # stop-all since (R5-03)
         ):
             raise _err(
                 ErrorCode.UNAUTHORIZED,

@@ -107,6 +107,7 @@ class Receipt:
     result: dict[str, Any] | None = None
     decision: dict[str, Any] | None = None
     busy: bool = False
+    control_epoch: int | None = None  # stop-all epoch in force when the request was received (R5-03)
 EMPLOYEE = Actor("runtime", "conversation", "internal")
 # Stable order (rowid) and latest global change of each message (A3-23).
 MSG = (
@@ -131,6 +132,7 @@ class ConversationService:
         self.memory = MemoryManager(conn, clock)
         self._active: tuple[str, str] | None = None  # (employee_id, request key) being processed
         self._decision: dict[str, Any] | None = None
+        self._epoch: int | None = None  # epoch of the request being processed (R5-03)
 
     # ------------------------------------------------------------------ storage
 
@@ -355,6 +357,7 @@ class ConversationService:
                         recommended_action="send the new content with a new request id",
                     )
                 decision = json.loads(row["decision_json"]) if row["decision_json"] else None
+                epoch = row["control_epoch"]
                 if row["state"] == "COMPLETED":
                     return Receipt(key, "COMPLETED", row["message_id"], json.loads(row["result_json"]), decision)
                 if row["state"] == "PROCESSING" and parse_utc(row["lease_expires_at"]) > now_dt:
@@ -365,7 +368,13 @@ class ConversationService:
                         " WHERE employee_id = ? AND operation = ? AND request_key = ?",
                         (lease, now, employee_id, SEND, key),
                     )
-                return Receipt(key, "PROCESSING" if claim else row["state"], row["message_id"], decision=decision)
+                return Receipt(
+                    key,
+                    "PROCESSING" if claim else row["state"],
+                    row["message_id"],
+                    decision=decision,
+                    control_epoch=0 if epoch is None else int(epoch),  # a resumed request keeps its epoch
+                )
             if p.get("intent") == "delegate" and p.get("reply_to_message_id"):
                 target = self.conn.execute(
                     "SELECT id, role, conversation_id FROM messages WHERE id = ?", (p["reply_to_message_id"],)
@@ -392,13 +401,16 @@ class ConversationService:
                     self.conn.execute(
                         "INSERT OR IGNORE INTO message_attachments(message_id, artifact_id) VALUES (?,?)", (mid, aid)
                     )
+            epoch = int(
+                self.conn.execute("SELECT control_epoch FROM employees WHERE id = ?", (employee_id,)).fetchone()[0]
+            )
             self.conn.execute(
                 "INSERT INTO request_receipts(employee_id, operation, request_key, payload_hash, state, message_id,"
-                " lease_expires_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                " lease_expires_at, created_at, updated_at, control_epoch) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (employee_id, SEND, key, digest, "PROCESSING" if claim else "RECEIVED", mid,
-                 lease if claim else None, now, now),
+                 lease if claim else None, now, now, epoch),
             )
-        return Receipt(key, "PROCESSING" if claim else "RECEIVED", mid)
+        return Receipt(key, "PROCESSING" if claim else "RECEIVED", mid, control_epoch=epoch)
 
     def _release(self, employee_id: str, key: str) -> None:
         """The processor failed: the request stays received and is resumed by the next resend."""
@@ -458,14 +470,14 @@ class ConversationService:
                 "duplicate": True,
                 "receipt_state": "PROCESSING",
             }
-        self._active, self._decision = (employee_id, rec.key), rec.decision
+        self._active, self._decision, self._epoch = (employee_id, rec.key), rec.decision, rec.control_epoch
         try:
             return self._route(actor, employee_id, p, rec.message_id)
         except BaseException:
             self._release(employee_id, rec.key)
             raise
         finally:
-            self._active, self._decision = None, None
+            self._active, self._decision, self._epoch = None, None, None
 
     def _route(self, actor: Actor, employee_id: str, p: dict[str, Any], mid: str) -> dict[str, Any]:
         """Intent routing (spec 7.1). Deterministic for exact controls and explicit targets; general
@@ -978,20 +990,27 @@ class ConversationService:
             source_message_id=mid,
             data_policy=self._message_classification(mid),
             input_artifact_ids=artifact_ids,  # linked in the same commit as the task (A3-12)
+            control_epoch=self._epoch,  # a late interpretation after "pare tudo" is published PAUSED (R5-03)
         )
         # Delegating an earlier message keeps its first reply (e.g. "not configured") and adds the ack.
         marker = f"reply:{mid}:delegated" if existing_message else (marker or f"reply:{mid}")
         n = len(artifact_ids)
+        paused = self.tasks.get(tid)["state"] == TaskState.PAUSED
         reply = self.say(
             cid,
             "ack",
-            f"Criei a tarefa: «{objective[:160]}»"
-            + (f" com {n} anexo(s)" if n else "")
-            + ". Vou avisar aqui quando houver resultado ou dúvida.",
+            (
+                f"Registrei a tarefa «{objective[:160]}», mas ela ficou PAUSADA: o pedido chegou antes de você "
+                "mandar parar tudo. Nada foi iniciado; retome a tarefa quando quiser que eu trabalhe nela."
+                if paused
+                else f"Criei a tarefa: «{objective[:160]}»"
+                + (f" com {n} anexo(s)" if n else "")
+                + ". Vou avisar aqui quando houver resultado ou dúvida."
+            ),
             task_id=tid,
             reply_marker=marker,
         )
-        return self._result(mid, reply, "delegate", tid)
+        return self._result(mid, reply, "delegate_paused" if paused else "delegate", tid)
 
     def _message_classification(self, mid: str) -> str:
         row = self.conn.execute("SELECT classification FROM messages WHERE id = ?", (mid,)).fetchone()
