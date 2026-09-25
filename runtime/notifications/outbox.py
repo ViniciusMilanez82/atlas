@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import sqlite3
 
+from security.egress.guard import highest
+from security.egress.lineage import task_classification
 from shared.clock import Clock, to_utc_str
 from shared.ids import new_id
 from storage.db import require_transaction, transaction
@@ -29,15 +31,24 @@ def enqueue_in_txn(
     kind: str,
     content: str,
     artifact_id: str | None = None,
+    classification: str | None = None,
 ) -> str:
+    """Queue a notice. Its class is never below the task it talks about (R5-01): a question or result
+    is written from the task's content, so it carries the task's lineage class and origin."""
     require_transaction(conn)
     if kind not in KINDS:
         raise ValueError(f"unknown notification kind {kind}")
     event_id = new_id()
+    cls = classification or "INTERNAL"
+    source_ref = None
+    if task_id is not None:
+        cls = highest(cls, task_classification(conn, task_id))
+        rev = conn.execute("SELECT instruction_revision FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        source_ref = f"task:{task_id}:rev{rev[0] if rev else 1}"
     conn.execute(
         "INSERT INTO notification_outbox(event_id, employee_id, task_id, channel, kind, content, artifact_id,"
-        " status, created_at) VALUES (?,?,?,'conversation',?,?,?,'PENDING',?)",
-        (event_id, employee_id, task_id, kind, content[:32000], artifact_id, to_utc_str(clock.now())),
+        " status, created_at, classification, source_ref) VALUES (?,?,?,'conversation',?,?,?,'PENDING',?,?,?)",
+        (event_id, employee_id, task_id, kind, content[:32000], artifact_id, to_utc_str(clock.now()), cls, source_ref),
     )
     return event_id
 
@@ -94,8 +105,10 @@ class OutboxDispatcher:
                     mid = new_id()
                     self.conn.execute(
                         "INSERT INTO messages(id, conversation_id, role, origin, client_message_id, content, task_id,"
-                        " kind, artifact_id, created_at) VALUES (?,?,'employee','system',?,?,?,?,?,?)",
-                        (mid, cid, marker, ev["content"], ev["task_id"], ev["kind"], ev["artifact_id"], now),
+                        " kind, artifact_id, created_at, classification, source_ref)"
+                        " VALUES (?,?,'employee','system',?,?,?,?,?,?,?,?)",
+                        (mid, cid, marker, ev["content"], ev["task_id"], ev["kind"], ev["artifact_id"], now,
+                         ev["classification"], ev["source_ref"]),  # class and origin travel (R5-01)
                     )
                 self.conn.execute(
                     "UPDATE notification_outbox SET status = 'DELIVERED', message_id = ?, attempts = attempts + 1,"

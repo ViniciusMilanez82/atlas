@@ -122,7 +122,7 @@ def test_correction_between_decision_and_dispatch(world: World, tmp_path: Path) 
         (tid, state["ids"][0]),
     ).fetchone()[0]
     assert reads == 1  # the effect confirmed before the correction is kept, not repeated
-    assert out.state == "COMPLETED", out.reason
+    assert out.state == "COMPLETED", (out.reason, out.gaps)
     revs = world.conn.execute(
         "SELECT revision, kind, instruction FROM task_instruction_versions WHERE task_id = ? ORDER BY revision",
         (tid,),

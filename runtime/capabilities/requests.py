@@ -12,19 +12,22 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import timedelta
 from typing import Any
 
 from runtime.notifications.outbox import enqueue_in_txn
 from runtime.tasks.engine import TaskEngine
 from runtime.tasks.state_machine import TaskState
 from shared.actors import Actor
-from shared.clock import Clock, to_utc_str
+from shared.canonical import canonical_hash
+from shared.clock import Clock, parse_utc, to_utc_str
 from shared.errors import AtlasError, ErrorCode
 from shared.ids import new_id
 from storage import journal
 from storage.db import transaction
 
 RECURRENCES = ("once", "monthly", "yearly")
+QUOTE_VALIDITY = timedelta(days=7)  # an observed price older than this must be quoted again (R5-09)
 
 
 def render(req: dict[str, Any]) -> str:
@@ -59,10 +62,18 @@ class CapabilityRequests:
         now = to_utc_str(self.clock.now())
         with transaction(self.conn):
             task = self.tasks._row(task_id)
+            # new conditions (price, provider...) supersede a pending request of the same task: the owner
+            # never approves terms that are no longer the ones on the table (R5-09)
             self.conn.execute(
-                "INSERT INTO capability_requests(id, task_id, employee_id, request_json, status, created_at)"
-                " VALUES (?,?,?,?, 'PENDING', ?)",
-                (rid, task_id, task["employee_id"], json.dumps(request, ensure_ascii=False), now),
+                "UPDATE capability_requests SET status = 'SUPERSEDED', decided_at = ? WHERE task_id = ?"
+                " AND status = 'PENDING'",
+                (now, task_id),
+            )
+            self.conn.execute(
+                "INSERT INTO capability_requests(id, task_id, employee_id, request_json, status, created_at,"
+                " request_sha256) VALUES (?,?,?,?, 'PENDING', ?, ?)",
+                (rid, task_id, task["employee_id"], json.dumps(request, ensure_ascii=False), now,
+                 canonical_hash(request)),
             )
             if task["state"] == TaskState.RUNNING:
                 self.tasks.transition_in_txn(task, TaskState.WAITING_USER, worker, "capability request filed")
@@ -86,20 +97,65 @@ class CapabilityRequests:
         return rid
 
     def decide(self, request_id: str, *, actor: Actor, approve: bool, note: str = "") -> dict[str, Any]:
-        """Owner decision. The task resumes with the decision as a new instruction revision; nothing is
-        bought or disclosed by this decision."""
-        row = self.conn.execute("SELECT * FROM capability_requests WHERE id = ?", (request_id,)).fetchone()
-        if row is None:
-            raise AtlasError(ErrorCode.INVALID_INPUT, "unknown capability request")
-        if row["status"] != "PENDING":
-            raise AtlasError(ErrorCode.VERSION_CONFLICT, f"request already {row['status']}")
-        req = json.loads(row["request_json"])
+        """Owner decision (R5-09). One local transaction records the decision with the hash of its
+        content, the instruction revision that tells the worker, the task's return to the queue and the
+        owner notice - or none of them. Resending the SAME decision returns the same result (and completes
+        a decision recorded by an older version without its instruction); a DIFFERENT decision for a
+        decided request is a conflict. Nothing is bought or disclosed by this decision."""
         status = "APPROVED" if approve else "REJECTED"
+        digest = canonical_hash({"request_id": request_id, "status": status, "note": note[:500]})
+        now = self.clock.now()
         with transaction(self.conn):
+            row = self.conn.execute("SELECT * FROM capability_requests WHERE id = ?", (request_id,)).fetchone()
+            if row is None:
+                raise AtlasError(ErrorCode.INVALID_INPUT, "unknown capability request")
+            task = self.tasks._row(row["task_id"])
+            if actor.kind != "owner" or actor.id != task["owner_id"]:
+                raise AtlasError(ErrorCode.UNAUTHORIZED, "only the owner decides capability requests")
+            if row["status"] in ("APPROVED", "REJECTED"):
+                same = row["decision_sha256"] == digest or (row["decision_sha256"] is None and row["status"] == status)
+                if not same:
+                    raise AtlasError(
+                        ErrorCode.VERSION_CONFLICT,
+                        f"request already {row['status']} with a different decision",
+                        recommended_action="file a new request if the conditions changed",
+                    )
+                if row["decision_revision"] is not None:  # idempotent replay: the consolidated result
+                    return {"request_id": request_id, "status": row["status"],
+                            "instruction_revision": int(row["decision_revision"]), "replayed": True}
+                # legacy decision without its local steps: complete them now, in this transaction
+            elif row["status"] != "PENDING":
+                raise AtlasError(
+                    ErrorCode.VERSION_CONFLICT,
+                    {"EXPIRED": "the quote expired; the employee must quote again",
+                     "SUPERSEDED": "superseded by a request with different conditions",
+                     "CANCELLED": "the task ended; nothing to decide"}[row["status"]],
+                )
+            if task["state"] in ("COMPLETED", "FAILED", "CANCELLED"):
+                self.conn.execute(
+                    "UPDATE capability_requests SET status = 'CANCELLED', decided_at = ? WHERE id = ?",
+                    (to_utc_str(now), request_id),
+                )
+                return {"request_id": request_id, "status": "CANCELLED", "instruction_revision": None}
+            if row["status"] == "PENDING" and parse_utc(row["created_at"]) + QUOTE_VALIDITY <= now:
+                self.conn.execute(
+                    "UPDATE capability_requests SET status = 'EXPIRED', decided_at = ? WHERE id = ?",
+                    (to_utc_str(now), request_id),
+                )
+                return {"request_id": request_id, "status": "EXPIRED", "instruction_revision": None}
+            req = json.loads(row["request_json"])
+            rev = self._apply_in_txn(row, req, actor, approve, note)
             self.conn.execute(
-                "UPDATE capability_requests SET status = ?, decided_at = ?, decided_by = ?, note = ? WHERE id = ?",
-                (status, to_utc_str(self.clock.now()), f"{actor.kind}:{actor.id}", note[:500], request_id),
+                "UPDATE capability_requests SET status = ?, decided_at = ?, decided_by = ?, note = ?,"
+                " decision_sha256 = ?, decision_revision = ? WHERE id = ?",
+                (status, to_utc_str(now), f"{actor.kind}:{actor.id}", note[:500], digest, rev, request_id),
             )
+        return {"request_id": request_id, "status": status, "instruction_revision": rev}
+
+    def _apply_in_txn(
+        self, row: sqlite3.Row, req: dict[str, Any], actor: Actor, approve: bool, note: str
+    ) -> int:
+        status = "APPROVED" if approve else "REJECTED"
         text = (
             f"O proprietário APROVOU contratar {req['provider']} para {req['missing_capability']} "
             f"(até {req['price']['amount']} {req['price']['currency']}, {req['price']['recurrence']}). "
@@ -108,19 +164,34 @@ class CapabilityRequests:
             else f"O proprietário RECUSOU {req['provider']}. Continue com uma alternativa legítima "
             "ou entregue o que for possível explicando a limitação; não insista no mesmo pedido."
         ) + (f" Observação do proprietário: {note}" if note else "")
-        rev = self.tasks.update_instruction(
-            row["task_id"], actor=actor, text=text, kind="ANSWER", material=True
+        rev = self.tasks.update_instruction_in_txn(
+            row["task_id"], actor=actor, text=text, kind="ANSWER", material=True, derive=False
         )
-        task = self.tasks.get(row["task_id"])
+        task = self.tasks._row(row["task_id"])
         if task["state"] == TaskState.WAITING_USER:
-            self.tasks.transition(
-                row["task_id"],
-                TaskState.READY,
-                expected_version=task["version"],
-                actor=actor,
-                reason=f"capability request {status.lower()}",
-            )
-        return {"request_id": request_id, "status": status, "instruction_revision": rev}
+            self.tasks.transition_in_txn(task, TaskState.READY, actor, f"capability request {status.lower()}")
+        enqueue_in_txn(
+            self.conn,
+            self.clock,
+            employee_id=row["employee_id"],
+            task_id=row["task_id"],
+            kind="status",
+            content=(
+                f"Registrei sua decisão: {'aprovado' if approve else 'recusado'} — {req['provider']}. "
+                + ("Nada foi comprado; a contratação ainda exigirá sua aprovação exata." if approve
+                   else "Vou seguir com uma alternativa ou explicar a limitação.")
+            ),
+        )
+        journal.append(
+            self.conn,
+            self.clock,
+            employee_id=row["employee_id"],
+            task_id=row["task_id"],
+            type="capability.decided",
+            actor=actor,
+            summary=f"capability request {row['id']} {status.lower()} (instruction revision {rev})",
+        )
+        return rev
 
     def pending(self, employee_id: str) -> list[dict[str, Any]]:
         return [

@@ -82,6 +82,9 @@ class FakeOpenAI:
                     }
                 )
                 status, headers, body = outer.queue.pop(0) if outer.queue else (200, {}, ok_body())
+                if isinstance(body, tuple) and body[0] == "gate":  # answer only when the test opens the gate
+                    body[1].wait(10)
+                    body = body[2]
                 if body == "hang":
                     time.sleep(3)
                     return

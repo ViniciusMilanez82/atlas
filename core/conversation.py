@@ -39,7 +39,8 @@ from runtime.tasks.engine import TaskEngine
 from runtime.tasks.state_machine import TaskState
 from runtime.verification.criteria import derive_criteria
 from security.broker.broker import Broker
-from security.egress.guard import EgressGuard
+from security.egress.guard import EgressGuard, highest
+from security.egress.lineage import SENSITIVE_PATTERN, classify_text, task_classification
 from shared.actors import Actor
 from shared.canonical import canonical_hash
 from shared.clock import Clock, parse_utc, to_utc_str
@@ -75,15 +76,12 @@ _STORE_ONLY = re.compile(
 _CORRECTION = re.compile(r"^\s*(nao era isso|na verdade|corrigindo|correcao|mudei de ideia)\b", re.IGNORECASE)
 # Conservative detector of sensitive personal data in the owner's own words (spec 9.1). A hit makes
 # the message SENSITIVE: it is stored, but not sent to a cloud model without a scoped consent (A3-02).
-_SENSITIVE = re.compile(
-    r"\b(saude|medic|doenc|diagnost|exame|remedio|cpf|rg\b|passaporte|filh|crianc|endereco|"
-    r"conta bancaria|agencia|salario|renda|religi|sexual|biometr)",
-    re.IGNORECASE,
-)
+# One detector for every path (R5-01): security/egress/lineage.py.
+_SENSITIVE = SENSITIVE_PATTERN
 
 
 def classify_owner_text(text: str) -> str:
-    return "SENSITIVE" if _SENSITIVE.search(normalize(text)) else "INTERNAL"
+    return classify_text(text)
 CHAT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -109,6 +107,7 @@ class Receipt:
     result: dict[str, Any] | None = None
     decision: dict[str, Any] | None = None
     busy: bool = False
+    control_epoch: int | None = None  # stop-all epoch in force when the request was received (R5-03)
 EMPLOYEE = Actor("runtime", "conversation", "internal")
 # Stable order (rowid) and latest global change of each message (A3-23).
 MSG = (
@@ -133,6 +132,7 @@ class ConversationService:
         self.memory = MemoryManager(conn, clock)
         self._active: tuple[str, str] | None = None  # (employee_id, request key) being processed
         self._decision: dict[str, Any] | None = None
+        self._epoch: int | None = None  # epoch of the request being processed (R5-03)
 
     # ------------------------------------------------------------------ storage
 
@@ -227,6 +227,8 @@ class ConversationService:
             if existing:
                 return self.get_message(existing[0])
         with transaction(self.conn):
+            if task_id is not None:  # a reply about a task may quote it: at least the task's class (R5-01)
+                classification = highest(classification, task_classification(self.conn, task_id))
             mid = self.post_in_txn(
                 conversation_id,
                 role="employee",
@@ -355,6 +357,7 @@ class ConversationService:
                         recommended_action="send the new content with a new request id",
                     )
                 decision = json.loads(row["decision_json"]) if row["decision_json"] else None
+                epoch = row["control_epoch"]
                 if row["state"] == "COMPLETED":
                     return Receipt(key, "COMPLETED", row["message_id"], json.loads(row["result_json"]), decision)
                 if row["state"] == "PROCESSING" and parse_utc(row["lease_expires_at"]) > now_dt:
@@ -365,7 +368,13 @@ class ConversationService:
                         " WHERE employee_id = ? AND operation = ? AND request_key = ?",
                         (lease, now, employee_id, SEND, key),
                     )
-                return Receipt(key, "PROCESSING" if claim else row["state"], row["message_id"], decision=decision)
+                return Receipt(
+                    key,
+                    "PROCESSING" if claim else row["state"],
+                    row["message_id"],
+                    decision=decision,
+                    control_epoch=0 if epoch is None else int(epoch),  # a resumed request keeps its epoch
+                )
             if p.get("intent") == "delegate" and p.get("reply_to_message_id"):
                 target = self.conn.execute(
                     "SELECT id, role, conversation_id FROM messages WHERE id = ?", (p["reply_to_message_id"],)
@@ -392,13 +401,16 @@ class ConversationService:
                     self.conn.execute(
                         "INSERT OR IGNORE INTO message_attachments(message_id, artifact_id) VALUES (?,?)", (mid, aid)
                     )
+            epoch = int(
+                self.conn.execute("SELECT control_epoch FROM employees WHERE id = ?", (employee_id,)).fetchone()[0]
+            )
             self.conn.execute(
                 "INSERT INTO request_receipts(employee_id, operation, request_key, payload_hash, state, message_id,"
-                " lease_expires_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                " lease_expires_at, created_at, updated_at, control_epoch) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (employee_id, SEND, key, digest, "PROCESSING" if claim else "RECEIVED", mid,
-                 lease if claim else None, now, now),
+                 lease if claim else None, now, now, epoch),
             )
-        return Receipt(key, "PROCESSING" if claim else "RECEIVED", mid)
+        return Receipt(key, "PROCESSING" if claim else "RECEIVED", mid, control_epoch=epoch)
 
     def _release(self, employee_id: str, key: str) -> None:
         """The processor failed: the request stays received and is resumed by the next resend."""
@@ -458,14 +470,14 @@ class ConversationService:
                 "duplicate": True,
                 "receipt_state": "PROCESSING",
             }
-        self._active, self._decision = (employee_id, rec.key), rec.decision
+        self._active, self._decision, self._epoch = (employee_id, rec.key), rec.decision, rec.control_epoch
         try:
             return self._route(actor, employee_id, p, rec.message_id)
         except BaseException:
             self._release(employee_id, rec.key)
             raise
         finally:
-            self._active, self._decision = None, None
+            self._active, self._decision, self._epoch = None, None, None
 
     def _route(self, actor: Actor, employee_id: str, p: dict[str, Any], mid: str) -> dict[str, Any]:
         """Intent routing (spec 7.1). Deterministic for exact controls and explicit targets; general
@@ -522,6 +534,11 @@ class ConversationService:
                 (p["reply_to_message_id"], cid),
             ).fetchone()
             if q is not None:
+                if p.get("task_id") and p["task_id"] != q["task_id"]:
+                    raise AtlasError(ErrorCode.INVALID_INPUT, "this question belongs to another task")
+                mine = self.conn.execute("SELECT kind, task_id FROM messages WHERE id = ?", (mid,)).fetchone()
+                if mine is not None and mine["kind"] == "answer" and mine["task_id"] == q["task_id"]:
+                    return self._answer_ack(mid, q["task_id"], cid, marker)  # resumed request: done already
                 if not self._question_open(q["id"], q["task_id"]):
                     self._set_kind(mid, "answer", q["task_id"])
                     reply = self.say(
@@ -544,9 +561,10 @@ class ConversationService:
 
         if _STATUS.search(norm):
             self._set_kind(mid, "status")
+            status_text, status_class = self._status_text(employee_id)
             return self._result(
                 mid,
-                self.say(cid, "status", self._status_text(employee_id), reply_marker=marker),
+                self.say(cid, "status", status_text, reply_marker=marker, classification=status_class),
                 "status",
                 None,
             )
@@ -580,6 +598,7 @@ class ConversationService:
                 + titles
                 + "\nUse «Responder» na pergunta certa.",
                 reply_marker=marker,
+                classification=self._tasks_class(q["task_id"] for q in pending[:5]),
             )
             return self._result(mid, reply, "answer_ambiguous", None)
 
@@ -669,19 +688,19 @@ class ConversationService:
             (task_id, mid),
         ).fetchone()
         if prior is None:
-            with transaction(self.conn):
+            with transaction(self.conn):  # links and the revision naming them commit together (R5-07)
                 for aid in attachments:
                     self.conn.execute(
                         "INSERT OR IGNORE INTO artifact_links(artifact_id, task_id, relation) VALUES (?,?,'input')",
                         (aid, task_id),
                     )
-            rev = self.tasks.update_instruction(
-                task_id,
-                actor=actor,
-                text=f"{text}\n[anexos: {', '.join(attachments)}]",
-                kind="ATTACHMENT",
-                source_message_id=mid,
-            )
+                rev = self.tasks.update_instruction_in_txn(
+                    task_id,
+                    actor=actor,
+                    text=f"{text}\n[anexos: {', '.join(attachments)}]",
+                    kind="ATTACHMENT",
+                    source_message_id=mid,
+                )
         else:
             rev = int(prior[0])
         self._set_kind(mid, "correction", task_id)
@@ -743,6 +762,7 @@ class ConversationService:
                 + titles
                 + "\nUse «Responder nesta tarefa» no trabalho certo e reenvie a correção.",
                 reply_marker=marker,
+                classification=self._tasks_class(c["id"] for c in candidates[:5]),
             )
             return self._result(mid, reply, "correction_ambiguous", None)
         task_id = str(candidates[0]["id"])
@@ -818,9 +838,13 @@ class ConversationService:
                 (kind, task_id, mid),
             )
 
-    def _status_text(self, employee_id: str) -> str:
+    def _tasks_class(self, task_ids: Any) -> str:
+        """A reply that lists task titles is as protected as the most protected one (R5-01)."""
+        return highest("INTERNAL", *(task_classification(self.conn, t) for t in task_ids if t))
+
+    def _status_text(self, employee_id: str) -> tuple[str, str]:
         rows = self.conn.execute(
-            "SELECT objective, state, blocked_reason FROM tasks WHERE employee_id = ? AND state NOT IN"
+            "SELECT objective, state, blocked_reason, id FROM tasks WHERE employee_id = ? AND state NOT IN"
             " ('COMPLETED','FAILED','CANCELLED') ORDER BY updated_at DESC LIMIT 5",
             (employee_id,),
         ).fetchall()
@@ -828,7 +852,7 @@ class ConversationService:
             "SELECT COUNT(*) FROM tasks WHERE employee_id = ? AND state = 'COMPLETED'", (employee_id,)
         ).fetchone()[0]
         if not rows:
-            return f"Não há trabalho em andamento. Tarefas concluídas até agora: {done}."
+            return f"Não há trabalho em andamento. Tarefas concluídas até agora: {done}.", "INTERNAL"
         labels = {
             "CREATED": "na fila",
             "READY": "na fila",
@@ -853,30 +877,64 @@ class ConversationService:
             f"• {r[0][:80]} — {labels.get(r[1], r[1])}" + (f" ({reasons.get(r[2], r[2])})" if r[2] else "")
             for r in rows
         ]
-        return "Trabalho em andamento:\n" + "\n".join(lines) + f"\nConcluídas: {done}."
+        text = "Trabalho em andamento:\n" + "\n".join(lines) + f"\nConcluídas: {done}."
+        return text, self._tasks_class(r[3] for r in rows)
 
     def _answer(
         self, actor: Actor, mid: str, question: dict[str, Any], cid: str, marker: str
     ) -> dict[str, Any]:
+        """ANSWER_QUESTION (R5-07): the answer, its attachments as inputs of THAT task, a new instruction
+        revision naming them and the return to READY commit together - a worker can never resume the
+        task without the files the owner sent."""
         tid = question["task_id"]
-        self._set_kind(mid, "answer", tid)
+        attachments = self._attachments_of(mid)
+        with transaction(self.conn):
+            row = self.conn.execute("SELECT employee_id, state FROM tasks WHERE id = ?", (tid,)).fetchone()
+            owner_msg = self.conn.execute(
+                "SELECT c.employee_id FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.id = ?",
+                (mid,),
+            ).fetchone()
+            if row is None or owner_msg is None or row["employee_id"] != owner_msg[0]:
+                raise AtlasError(ErrorCode.INVALID_INPUT, "task not found for this employee")
+            self.conn.execute("UPDATE messages SET kind = 'answer', task_id = ? WHERE id = ?", (tid, mid))
+            for aid in attachments:
+                art = self.conn.execute("SELECT employee_id FROM artifacts WHERE id = ?", (aid,)).fetchone()
+                if art is None or art[0] != row["employee_id"]:
+                    raise AtlasError(ErrorCode.INVALID_INPUT, "attachment not found for this employee")
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO artifact_links(artifact_id, task_id, relation) VALUES (?,?,'input')",
+                    (aid, tid),
+                )
+            if attachments:
+                names = []
+                for a in attachments:
+                    name = self.conn.execute("SELECT name FROM artifacts WHERE id = ?", (a,)).fetchone()[0]
+                    names.append(f"{name} (artifact_id {a})")
+                text = str(self.conn.execute("SELECT content FROM messages WHERE id = ?", (mid,)).fetchone()[0])
+                self.tasks.update_instruction_in_txn(
+                    tid,
+                    actor=actor,
+                    text=(text.strip() or "Arquivo enviado em resposta à pergunta.") + f"\n[anexos: {', '.join(names)}]",
+                    kind="ATTACHMENT",
+                    source_message_id=mid,
+                )
+            fresh = self.tasks._row(tid)
+            if fresh["state"] == TaskState.WAITING_USER:
+                self.tasks.transition_in_txn(fresh, TaskState.READY, actor, "owner answered the question")
+        return self._answer_ack(mid, tid, cid, marker)
+
+    def _answer_ack(self, mid: str, tid: str, cid: str, marker: str) -> dict[str, Any]:
         task = self.tasks.get(tid)
-        if task["state"] == TaskState.WAITING_USER:
-            self.tasks.transition(
-                tid,
-                TaskState.READY,
-                expected_version=task["version"],
-                actor=actor,
-                reason="owner answered the question",
-            )
+        n = len(self._attachments_of(mid))
         reply = self.say(
             cid,
             "ack",
-            f"Obrigado. Vou retomar «{task['objective'][:120]}» com a sua resposta.",
+            f"Obrigado. Vou retomar «{task['objective'][:120]}» com a sua resposta"
+            + (f" e {n} arquivo(s) anexado(s) à tarefa." if n else "."),
             task_id=tid,
             reply_marker=marker,
         )
-        return self._result(mid, reply, "answer", tid)
+        return self._result(mid, reply, "answer", tid, attachments=n)
 
     def _remember(
         self, actor: Actor, employee_id: str, mid: str, content: str, cid: str, marker: str
@@ -954,33 +1012,43 @@ class ConversationService:
             row = self.conn.execute("SELECT employee_id FROM artifacts WHERE id = ?", (aid,)).fetchone()
             if row is None or row[0] != employee_id:
                 raise AtlasError(ErrorCode.INVALID_INPUT, "attachment not found for this employee")
+        # R5-02: ``objective`` is a title for navigation (it may be a model's summary); the canonical
+        # request is the authenticated owner message itself, and criteria/conditions come from it.
+        original = str(self.get_message(mid)["content"])
         tid = self.tasks.create(
             actor,
             employee_id=employee_id,
-            objective=objective[:4000],
-            criteria=[  # derived from the request by code, one check each (A3-07)
-                (c.description, c.required, c.kind, c.params) for c in derive_criteria(objective, bool(artifact_ids))
+            objective=(objective.strip() or original)[:4000],
+            criteria=[  # derived from the FULL request by code, one check each (A3-07, R5-02)
+                (c.description, c.required, c.kind, c.params) for c in derive_criteria(original, bool(artifact_ids))
             ],
             conversation_id=cid,
             client_request_id=mid,
-            original_request=objective,
+            original_request=original,
             source_message_id=mid,
             data_policy=self._message_classification(mid),
             input_artifact_ids=artifact_ids,  # linked in the same commit as the task (A3-12)
+            control_epoch=self._epoch,  # a late interpretation after "pare tudo" is published PAUSED (R5-03)
         )
         # Delegating an earlier message keeps its first reply (e.g. "not configured") and adds the ack.
         marker = f"reply:{mid}:delegated" if existing_message else (marker or f"reply:{mid}")
         n = len(artifact_ids)
+        paused = self.tasks.get(tid)["state"] == TaskState.PAUSED
         reply = self.say(
             cid,
             "ack",
-            f"Criei a tarefa: «{objective[:160]}»"
-            + (f" com {n} anexo(s)" if n else "")
-            + ". Vou avisar aqui quando houver resultado ou dúvida.",
+            (
+                f"Registrei a tarefa «{objective[:160]}», mas ela ficou PAUSADA: o pedido chegou antes de você "
+                "mandar parar tudo. Nada foi iniciado; retome a tarefa quando quiser que eu trabalhe nela."
+                if paused
+                else f"Criei a tarefa: «{objective[:160]}»"
+                + (f" com {n} anexo(s)" if n else "")
+                + ". Vou avisar aqui quando houver resultado ou dúvida."
+            ),
             task_id=tid,
             reply_marker=marker,
         )
-        return self._result(mid, reply, "delegate", tid)
+        return self._result(mid, reply, "delegate_paused" if paused else "delegate", tid)
 
     def _message_classification(self, mid: str) -> str:
         row = self.conn.execute("SELECT classification FROM messages WHERE id = ?", (mid,)).fetchone()
@@ -1033,13 +1101,11 @@ class ConversationService:
             if msg["message_id"] == mid or msg["message_id"] in excluded:
                 continue
             who = "owner" if msg["role"] == "owner" else "atlas (earlier reply, may be wrong)"
+            cls = msg["classification"]
+            if msg["role"] == "owner":  # legacy rows had no detector: re-check the owner's words (R5-01)
+                cls = highest(cls, classify_text(msg["content"]))
             items.append(  # earlier turns are context, never instructions or verified facts (A3-18)
-                ContextItem(
-                    Authority.CONVERSATION,
-                    f"{who}: {msg['content']}",
-                    f"message:{msg['message_id']}",
-                    msg["classification"],
-                )
+                ContextItem(Authority.CONVERSATION, f"{who}: {msg['content']}", f"message:{msg['message_id']}", cls)
             )
         items.append(
             ContextItem(

@@ -13,7 +13,12 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import Any
 
-KINDS = ("integrity", "coverage", "calculations", "sources", "inputs_read", "required_terms")
+KINDS = (
+    "integrity", "coverage", "calculations", "sources", "inputs_read", "required_terms", "condition", "substance"
+)
+# Conditions code can check deterministically block completion; the others are reported as limitations
+# of the automatic verification instead of being silently "verified" (R5-05).
+CHECKED_CONDITIONS = ("DATE", "MONEY_CAP", "EXCLUSION", "SEPARATE", "INCLUDE")
 _STOP = frozenset(
     "a o as os um uma uns umas de da do das dos e em no na nos nas para por com sem que se ao aos qual quais "
     "meu minha meus minhas seu sua seus suas este esta estes estas esse essa isso isto sobre entre como mais "
@@ -25,7 +30,9 @@ _VERBS = frozenset(
     "recomende recomendar resuma resumir escreva escrever prepare preparar monte montar elabore elaborar "
     "revise revisar verifique verificar pesquise pesquisar procure procurar calcule calcular organize "
     "organizar liste listar mande mandar envie enviar traduza traduzir explique explicar diga dizer "
-    "indique indicar mostre mostrar produza produzir redija redigir leia ler use usar".split()
+    "indique indicar mostre mostrar produza produzir redija redigir leia ler use usar priorize priorizar "
+    "considere considerar inclua incluir mude mudar troque trocar substitua substituir abandone abandonar "
+    "apresente apresentar mantenha manter incluindo considerando contemple contemplando".split()
 )
 
 
@@ -58,7 +65,21 @@ class Criterion:
 
 
 def derive_criteria(request: str, has_inputs: bool) -> list[Criterion]:
+    from runtime.verification.substance import expectations
+
     terms = key_terms(request)
+    exp = expectations(request)
+    what = [
+        label
+        for flag, label in (
+            (exp.comparison, "compara ao menos duas opções com valores"),
+            (exp.recommendation, "faz a recomendação"),
+            (exp.calculation, "mostra componentes e total conferíveis"),
+            (exp.objective == "min_price", "recomenda o menor preço válido"),
+            (exp.objective == "min_deadline", "recomenda o menor prazo válido"),
+        )
+        if flag
+    ]
     crit = [
         Criterion("Arquivo de entrega íntegro, legível e sem marcadores pendentes", True, "integrity"),
         Criterion(
@@ -68,6 +89,12 @@ def derive_criteria(request: str, has_inputs: bool) -> list[Criterion]:
             {"terms": terms, "min_ratio": 0.5},
         ),
         Criterion("Cálculos apresentados conferem", True, "calculations"),
+        Criterion(  # R5-05: keywords are only a signal; this is what the request actually asks for
+            "Faz o que foi pedido, sem negar o trabalho" + (f" ({', '.join(what)})" if what else ""),
+            True,
+            "substance",
+            exp.as_params(),
+        ),
         Criterion(
             "Fontes citadas existem e foram consultadas nesta tarefa",
             True,
@@ -77,6 +104,10 @@ def derive_criteria(request: str, has_inputs: bool) -> list[Criterion]:
     ]
     if has_inputs:
         crit.append(Criterion("Documentos de entrada lidos por completo", True, "inputs_read"))
+    from runtime.verification.conditions import extract_conditions
+
+    for cond in extract_conditions(request):  # each mapped to the owner's sentence (R5-02)
+        crit.append(Criterion(cond.describe(), cond.kind in CHECKED_CONDITIONS, "condition", cond.as_params()))
     quoted = re.findall(r"[\"“«]([^\"”»]{3,120})[\"”»]", request)
     if quoted:
         crit.append(

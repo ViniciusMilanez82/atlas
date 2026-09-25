@@ -25,7 +25,9 @@ from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 
 from runtime.artifacts.manager import ArtifactManager
+from runtime.verification.conditions import DATE, MONEY, money_value
 from runtime.verification.criteria import fold, key_terms, stem
+from runtime.verification.substance import Expectations, check_substance, check_totals
 from shared.clock import Clock, to_utc_str
 from shared.errors import AtlasError
 from shared.ids import new_id
@@ -72,6 +74,7 @@ class VerificationResult:
     gaps: list[str] = field(default_factory=list)
     evidence_id: str | None = None  # integrity evidence (kept for callers of the Alpha API)
     criteria: dict[str, CriterionResult] = field(default_factory=dict)  # criterion_id -> result
+    instruction_revision: int = 1  # the revision this verification evaluated (R5-04)
 
 
 class Verifier:
@@ -133,18 +136,24 @@ class Verifier:
             res.gaps.append(f"missing required content: {missing}")
         return body
 
-    def _coverage(self, task_id: str, body: str, terms: list[str], min_ratio: float) -> str | None:
+    def _coverage(
+        self, task_id: str, body: str, terms: list[str], min_ratio: float, structure_ok: bool = False
+    ) -> str | None:
+        """Auxiliary signal (R5-05): the request's terms, OR the verified structure the request asks for
+        plus at least one of its terms - so a correct paraphrase passes and an unrelated text does not."""
         if not terms:
             return None
         words = {stem(w) for w in re.findall(r"[a-z0-9]+", fold(body))}
         hit = [t for t in terms if t in words]
+        if structure_ok and hit:
+            return None
         if len(hit) < max(1, math.ceil(min_ratio * len(terms))):
             missing = [t for t in terms if t not in words]
             return f"não atende ao pedido: a entrega não trata de {', '.join(missing)}"
         return None
 
     def _calculations(self, body: str) -> str | None:
-        wrong = []
+        wrong = list(check_totals(body)[1])  # labelled totals in prose, tables and cells (R5-05)
         for a, op, b, c in ARITH.findall(body):
             try:
                 x, y, z = _dec(a), _dec(b), _dec(c)
@@ -163,6 +172,67 @@ class Verifier:
             if got is None or abs(got - z) > Decimal("0.01"):
                 wrong.append(f"{a} {op} {b} = {c} (correto: {got})")
         return f"cálculo incorreto: {'; '.join(wrong)}" if wrong else None
+
+    # ------------------------------------------------------------------ conditions (R5-02, R5-05)
+
+    @staticmethod
+    def _sentences(body: str) -> list[str]:
+        return [s.strip() for s in re.split(r"(?<=[.;!?])\s+|\n+", body) if s.strip()]
+
+    def _condition(self, body: str, params: dict[str, str]) -> str | None:
+        kind, value, span = params.get("kind", ""), params.get("value", ""), params.get("span", "")
+        if kind == "DATE":
+            want = DATE.match(value)
+            dates = {(int(d.group(1)), int(d.group(2))) for d in DATE.finditer(body)}
+            if want and (int(want.group(1)), int(want.group(2))) not in dates:
+                return f"não trata a data pedida ({value}) - «{span[:100]}»"
+            return None
+        if kind == "MONEY_CAP":
+            cap = money_value(value)
+            if cap is None:
+                return None
+            amounts = [(s, money_value(m.group(2))) for s in self._sentences(body) for m in MONEY.finditer(s)]
+            if not amounts:
+                return f"não demonstra valores frente ao teto de {value} - «{span[:100]}»"
+            over = [
+                s for s, v in amounts
+                if v is not None and v > cap and re.search(r"total|final|recomend|escolh|selecion", fold(s))
+                # an option shown as over the cap and discarded respects the condition
+                and not re.search(r"acima do teto|descart|exced|nao atende|fora do|eliminad|rejeitad", fold(s))
+            ]
+            if over:
+                return f"ultrapassa o teto de {value}: «{over[0][:120]}»"
+            return None
+        if kind == "INCLUDE":
+            items = [t for t in key_terms(value) if t not in ("total",)] or key_terms(value)
+            words = {stem(w) for w in re.findall(r"[a-z0-9]+", fold(body))}
+            missing = [t for t in items if t not in words]
+            return f"faltou incluir: {', '.join(missing)} - «{span[:100]}»" if missing else None
+        if kind == "SEPARATE":
+            terms = key_terms(value) or [stem(w) for w in re.findall(r"[a-z0-9]{4,}", fold(value))]
+            hits = [
+                s for s in self._sentences(body)
+                if terms and all(t in {stem(w) for w in re.findall(r"[a-z0-9]+", fold(s))} for t in terms)
+            ]
+            if not hits or not any(re.search(r"\d", s) for s in hits):
+                return f"não apresenta separadamente: {value} - «{span[:100]}»"
+            return None
+        if kind == "EXCLUSION":
+            terms = key_terms(value)
+            if not terms:
+                return None
+            for s in self._sentences(body):
+                words = {stem(w) for w in re.findall(r"[a-z0-9]+", fold(s))}
+                if sum(t in words for t in terms) * 2 < len(terms) or len(terms) == 0:
+                    continue
+                f = fold(s)
+                if re.search(r"recomend|escolh|selecion|indicad|melhor op|vencedor", f) and not re.search(
+                    r"\b(nao|exclu\w*|descart\w*|sem|fora)\b", f
+                ):
+                    return f"usa/recomenda o que foi excluído ({value}): «{s[:120]}»"
+            return None
+        # QUANTITY / PRIORITY: not provable by code here; reported as a limitation, never as verified
+        return "não verificado automaticamente (exige revisão)"
 
     def _inputs(self, task_id: str) -> list[str]:
         return [
@@ -187,7 +257,7 @@ class Verifier:
     def _sources(self, task_id: str, body: str, minimum: int, spec: DeliverableSpec) -> str | None:
         inputs = set(self._inputs(task_id))
         cited_arts = sorted(set(ARTIFACT_REF.findall(body)))
-        urls = sorted(set(URL.findall(body)))
+        urls = sorted({u.rstrip(".,;:") for u in URL.findall(body)})  # "Fonte: https://x/a." cites x/a
         if spec.allowed_source_prefixes:
             urls = [u for u in urls if u.startswith(spec.allowed_source_prefixes)]
         problems = []
@@ -199,14 +269,23 @@ class Verifier:
                 problems.append(f"fonte citada não foi consultada nesta tarefa: artifact:{aid}")
             else:
                 valid += 1
-        for u in urls:  # no research tool has retrieved any page for this task yet
-            retrieved = self.conn.execute(
-                "SELECT 1 FROM sources WHERE kind = 'web' AND ref = ?", (u,)
-            ).fetchone()
-            if retrieved:
-                valid += 1
-            else:
+        from runtime.research.sources import SourceRetrievals
+
+        retrievals = SourceRetrievals(self.conn, self.clock, self.artifacts)
+        for u in urls:  # R5-08: registered is not retrieved; only a retrieval scoped to THIS task counts
+            rows = retrievals.for_task(task_id, u)
+            if not rows:
                 problems.append(f"fonte citada não foi recuperada nesta tarefa: {u}")
+                continue
+            fresh = [r for r in rows if retrievals.valid(r)]
+            if not fresh:
+                problems.append(f"a consulta a {u} expirou para um dado que muda com o tempo; consulte de novo")
+                continue
+            unsupported = self._unsupported_claim(body, u, fresh[0]["artifact_id"])
+            if unsupported:
+                problems.append(f"a fonte {u} não sustenta a afirmação: «{unsupported[:120]}»")
+                continue
+            valid += 1
         need = max(minimum, spec.min_sources)
         if valid < need:
             problems.append(
@@ -214,7 +293,29 @@ class Verifier:
             )
         return "; ".join(problems) if problems else None
 
-    def _inputs_read(self, task_id: str) -> str | None:
+    def _unsupported_claim(self, body: str, url: str, artifact_id: str) -> str | None:
+        """The sentence citing ``url`` must be backed by the captured content: every number it states
+        appears there, or (without numbers) at least one of its significant terms does."""
+        captured = fold(self.artifacts.read_bytes(artifact_id).decode("utf-8", errors="replace"))
+        numbers_in_capture = set(re.findall(r"\d+(?:[.,]\d+)*", captured))
+        words = {stem(w) for w in re.findall(r"[a-z0-9]+", captured)}
+        parts = self._sentences(body)
+        for i, sentence in enumerate(parts):
+            if url not in sentence:
+                continue
+            claim = re.sub(r"(?i)\b(fontes?|refer[eê]ncias?|dispon[ií]vel em|acesso em|consultad[oa] em)\b", " ",
+                           sentence.replace(url, " "))
+            if not key_terms(claim) and not re.search(r"\d", claim) and i > 0:
+                claim = parts[i - 1]  # "Fonte: <url>" on its own backs the previous statement
+            numbers = set(re.findall(r"\d+(?:[.,]\d+)*", claim))
+            if numbers and not numbers <= numbers_in_capture:
+                return claim
+            terms = key_terms(claim)
+            if not numbers and terms and not any(t in words for t in terms):
+                return claim
+        return None
+
+    def _inputs_read(self, task_id: str, body: str = "") -> str | None:
         missing = []
         for aid in self._inputs(task_id):
             ext = self.conn.execute(
@@ -233,17 +334,37 @@ class Verifier:
             ).fetchone()[0]
             if read < ext[1]:
                 missing.append(f"{name} (lido {read} de {ext[1]} trechos)")
+            if ext[0] == "PARTIAL":  # R5-06: reading what was extracted is not reading the document
+                gone = self.conn.execute(
+                    "SELECT missing_json FROM document_extractions WHERE artifact_id = ?", (aid,)
+                ).fetchone()[0]
+                accepted = self.conn.execute(
+                    "SELECT 1 FROM input_scope_acceptances WHERE task_id = ? AND artifact_id = ?", (task_id, aid)
+                ).fetchone()
+                areas = json.loads(gone)
+                if accepted is None:
+                    missing.append(
+                        f"{name} (extração PARCIAL, não analisado: {', '.join(areas)}; peça material "
+                        "legível ou que o proprietário aceite o escopo reduzido)"
+                    )
+                elif not (
+                    any(fold(a) in fold(body) for a in areas)
+                    or re.search(r"parcial|nao analisad|ilegive|nao extraid", fold(body))
+                ):  # the accepted limitation must be stated, never hidden
+                    missing.append(f"{name} (escopo reduzido aceito; a entrega precisa declarar: {', '.join(areas)})")
         return (
             f"documentos de entrada não foram lidos por completo: {', '.join(missing)}" if missing else None
         )
 
     # ------------------------------------------------------------------ evidence
 
-    def _evidence(self, task_id: str, artifact_id: str, kind: str, summary: str) -> str:
+    def _evidence(self, task_id: str, artifact_id: str, kind: str, summary: str, revision: int) -> str:
         eid = new_id()
         self.conn.execute(
-            "INSERT INTO evidence(id, task_id, artifact_id, kind, summary, created_at) VALUES (?,?,?,?,?,?)",
-            (eid, task_id, artifact_id, kind, summary[:1000], to_utc_str(self.clock.now())),
+            "INSERT INTO evidence(id, task_id, artifact_id, kind, summary, created_at, instruction_revision)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (eid, task_id, artifact_id, kind, f"[revision {revision}] {summary}"[:1000], to_utc_str(self.clock.now()),
+             revision),
         )
         return eid
 
@@ -253,33 +374,51 @@ class Verifier:
         self, task_id: str, artifact_id: str, spec: DeliverableSpec
     ) -> VerificationResult:
         res = VerificationResult(artifact_id, passed=False)
+        rev = self.conn.execute("SELECT instruction_revision FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        res.instruction_revision = int(rev[0]) if rev else 1
         body = self._integrity(task_id, artifact_id, spec, res)
-        criteria = self.conn.execute(
+        criteria = self.conn.execute(  # superseded criteria are history, not requirements (R5-04)
             "SELECT id, description, required, check_kind, params_json FROM task_criteria WHERE task_id = ?"
-            " ORDER BY rowid",
+            " AND superseded_revision IS NULL ORDER BY rowid",
             (task_id,),
         ).fetchall()
         if body is None:
             return res
         integrity_ok = all(res.checks.values())
-        task = self.conn.execute("SELECT objective FROM tasks WHERE id = ?", (task_id,)).fetchone()
-        request_terms = key_terms(task[0]) if task else []
+        original = self.conn.execute(  # the owner's full request, not a summary (R5-02)
+            "SELECT instruction FROM task_instruction_versions WHERE task_id = ? ORDER BY revision LIMIT 1",
+            (task_id,),
+        ).fetchone()
+        request_terms = key_terms(original[0]) if original else []
         # Business checks (run once; each criterion maps to one of them).
         checks: dict[str, str | None] = {
             "integrity": None if integrity_ok else "; ".join(res.gaps) or "integrity failed",
             "calculations": self._calculations(body),
-            "inputs_read": self._inputs_read(task_id) if self._inputs(task_id) else None,
+            "inputs_read": self._inputs_read(task_id, body) if self._inputs(task_id) else None,
         }
         results: dict[str, CriterionResult] = {}
+        substance = None
+        for c in criteria:
+            if c["check_kind"] == "substance":
+                params = json.loads(c["params_json"]) if c["params_json"] else {}
+                substance = check_substance(body, Expectations(**params))
         for c in criteria:
             kind = c["check_kind"]
             params = json.loads(c["params_json"]) if c["params_json"] else {}
             if kind == "coverage":
                 gap = self._coverage(
-                    task_id, body, params.get("terms") or request_terms, params.get("min_ratio", 0.5)
+                    task_id,
+                    body,
+                    params.get("terms") or request_terms,
+                    params.get("min_ratio", 0.5),
+                    structure_ok=bool(substance and substance.structure_ok and not substance.gaps),
                 )
+            elif kind == "substance":
+                gap = "; ".join(substance.gaps) if substance and substance.gaps else None
             elif kind == "sources":
                 gap = self._sources(task_id, body, int(params.get("min", 0)), spec)
+            elif kind == "condition":
+                gap = self._condition(body, params)
             elif kind == "required_terms":
                 missing = [t for t in params.get("terms", []) if fold(t) not in fold(body)]
                 gap = f"faltou o que foi pedido: {missing}" if missing else None
@@ -315,6 +454,7 @@ class Verifier:
                     artifact_id,
                     "file_opens",
                     f"'{art.name}' v{art.version} sha256 {art.sha256[:12]}: opens, {len(body)} chars, no placeholders",
+                    res.instruction_revision,
                 )
                 for c in criteria:
                     kind = c["check_kind"] or "all"
@@ -325,6 +465,6 @@ class Verifier:
                     results[c["id"]].evidence_id = (
                         res.evidence_id
                         if kind == "integrity"
-                        else self._evidence(task_id, artifact_id, ev_kind, summary)
+                        else self._evidence(task_id, artifact_id, ev_kind, summary, res.instruction_revision)
                     )
         return res

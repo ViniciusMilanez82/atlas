@@ -1,0 +1,156 @@
+{
+  "environment": {
+    "python": "3.14.2 (tags/v3.14.2:df79316, Dec  5 2025, 17:18:21) [MSC v.1944 64 bit (AMD64)]",
+    "os": "win32",
+    "source": "C:\\Users\\vinic\\OneDrive\\PROJETOS\\APPS\\Atlas"
+  },
+  "results": [
+    {
+      "case": "irrelevant_report",
+      "result": "DEFECT_REPRODUCED",
+      "detail": {
+        "passed_by_verifier": true,
+        "gaps": [],
+        "text": "Fornecedores, preço, prazo, máximo e entrega são as palavras que constam neste relatório. Não comparei nenhuma opção e não fiz recomendação. As condições solicitadas não foram verificadas. Não comparei nenhuma opção e não fiz recomendação. As condições solicitadas não foram verificadas. Não comparei nenhuma opção e não fiz recomendação. As condições solicitadas não foram verificadas. "
+      }
+    },
+    {
+      "case": "bad_total",
+      "result": "DEFECT_REPRODUCED",
+      "detail": {
+        "bad_total_accepted": true,
+        "explicit_equation_control": "rejected"
+      }
+    },
+    {
+      "case": "lost_original",
+      "result": "DEFECT_REPRODUCED",
+      "detail": {
+        "original_in_message": true,
+        "instructions": [
+          {
+            "revision": 1,
+            "kind": "ORIGINAL",
+            "instruction": "Compare fornecedores de módulos.",
+            "material": true
+          }
+        ],
+        "date_lost_from_task": true
+      }
+    },
+    {
+      "case": "sensitive_correction",
+      "result": "DEFECT_REPRODUCED",
+      "detail": {
+        "message_classification": "SENSITIVE",
+        "task_classification": "INTERNAL",
+        "payload_classification": "INTERNAL",
+        "sentinel_reached_local_recording_provider": true,
+        "real_egress_guard": true
+      }
+    },
+    {
+      "case": "sensitive_answer",
+      "result": "DEFECT_REPRODUCED",
+      "detail": {
+        "message_classification": "SENSITIVE",
+        "payload_classification": "INTERNAL",
+        "sentinel_reached_local_recording_provider": true
+      }
+    },
+    {
+      "case": "old_finish_after_correction",
+      "result": "DEFECT_REPRODUCED",
+      "detail": {
+        "state": "COMPLETED",
+        "instruction_revision": 2,
+        "delivered_old_artifact": true
+      }
+    },
+    {
+      "case": "answered_attachment",
+      "result": "DEFECT_REPRODUCED",
+      "detail": {
+        "reply_intent": "answer",
+        "task_state": "READY",
+        "input_links": 0,
+        "attachment_stored_in_message": 1
+      }
+    },
+    {
+      "case": "partial_coverage",
+      "result": "DEFECT_REPRODUCED",
+      "detail": {
+        "extraction_state": "PARTIAL",
+        "warning": "essential page not extracted",
+        "verifier_passed": true
+      }
+    },
+    {
+      "case": "source_scope",
+      "result": "DEFECT_REPRODUCED",
+      "detail": {
+        "other_owner_source_id": "222f43f2-1abb-4c1d-9562-994cd1330bdf",
+        "current_task_accepts_unfetched_foreign_source": true
+      }
+    },
+    {
+      "case": "stop_during_interpretation",
+      "result": "DEFECT_REPRODUCED",
+      "detail": {
+        "epoch": 1,
+        "paused_at_stop": 0,
+        "new_user_request_after_stop": false,
+        "task_created_after_stop": true,
+        "lease_granted": true
+      }
+    },
+    {
+      "case": "positive_long_reading",
+      "result": "CONTROL_PASSED",
+      "detail": {
+        "control_passed": true,
+        "state": "COMPLETED",
+        "reason": "completed with verified deliverable",
+        "steps": 30,
+        "steps_without_progress": 0,
+        "coverage": {
+          "read_segments": 85,
+          "total_segments": 85,
+          "complete": true
+        }
+      }
+    },
+    {
+      "case": "sensitive_outbox",
+      "result": "DEFECT_REPRODUCED",
+      "detail": {
+        "sensitive_task": true,
+        "outbox_message_classification": "INTERNAL",
+        "sentinel_reached_local_recording_provider": true,
+        "egress_guard_active": true
+      }
+    },
+    {
+      "case": "positive_sensitive_original_blocked",
+      "result": "CONTROL_PASSED",
+      "detail": {
+        "control_passed": true,
+        "provider_calls": 0,
+        "intent": "chat_blocked_sensitive"
+      }
+    },
+    {
+      "case": "capability_crash",
+      "result": "DEFECT_REPRODUCED",
+      "detail": {
+        "decision_persisted": "APPROVED",
+        "task_state": "WAITING_USER",
+        "revision": 1,
+        "replay_error": "VERSION_CONFLICT: request already APPROVED"
+      }
+    }
+  ],
+  "external_calls": 0,
+  "real_credentials_used": false
+}

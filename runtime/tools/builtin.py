@@ -3,12 +3,15 @@
 Production adapters that operate only on Atlas-owned state: the artifact store and memory. They are
 registered like any tool (disabled until enabled, dispatched only by the broker) and each call opens
 its own database connection because adapters run in the broker's execution thread. Content read from
-artifacts is returned as untrusted data. No network, no host filesystem outside the store.
+artifacts is returned as untrusted data. No host filesystem outside the store. The only network access
+is ``web.fetch``, through the mediated egress (security/network/mediator.py) and only when the owner
+enabled web research; every capture is recorded as a source retrieval of the task (R5-08, N16).
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -216,6 +219,22 @@ CALENDAR = ToolManifest(
     timeout_s=10,
     verification="deterministic_check",
 )
+WEB_FETCH = ToolManifest(
+    tool_id="web.fetch",
+    version="1.0.0",
+    description="Fetch ONE public web page (http/https) and return its readable text (untrusted data) with "
+    "final_url and retrieval_id. Cite it by final_url; only fetched pages count as sources. Works only if the "
+    "owner enabled web research; private/internal addresses, credentials or personal data in the URL are refused.",
+    input_schema=_closed({"url": {"type": "string", "minLength": 8, "maxLength": 2000, "pattern": "^https?://"}}),
+    effect_class="READ_ONLY",
+    base_risk="R1",
+    network_policy="public",
+    timeout_s=60,
+    verification="deterministic_check",
+)
+WEB_CAPTURE_VALIDITY = timedelta(hours=24)  # time-sensitive facts must be fetched again after this
+WEB_TEXT_LIMIT = 20_000
+
 BUILTIN_MANIFESTS = (
     READ_ARTIFACT,
     WRITE_ARTIFACT,
@@ -225,6 +244,7 @@ BUILTIN_MANIFESTS = (
     WRITE_DOCUMENT,
     CALC,
     CALENDAR,
+    WEB_FETCH,
 )
 
 
@@ -394,6 +414,48 @@ class BuiltinTools:
                     "method": "Decimal arithmetic by code"},
         )
 
+    def web_fetch(self, tool_input: dict[str, Any], ctx: Any) -> AdapterOutcome:
+        """N16 (API before free clicks): one page through the mediated egress, recorded as a retrieval."""
+        from runtime.research.html_text import html_to_text
+        from runtime.research.sources import SourceRetrievals
+        from security.network.mediator import NetworkMediator, NetworkRefused
+
+        conn = connect(self.db_path)
+        try:
+            task_id, _ = self._task(conn, ctx.action_id)
+            try:
+                page = NetworkMediator(conn, self.clock).fetch(tool_input["url"], task_id=task_id)
+            except NetworkRefused as exc:
+                return AdapterOutcome("FAILED", error_message=f"refused: {exc.reason}")
+            raw = page.text()
+            title, text = html_to_text(raw) if "html" in page.content_type else ("", raw)
+            rid = SourceRetrievals(conn, self.clock, ArtifactManager(conn, self.clock, self.store_root)).record_retrieval(
+                task_id=task_id,
+                url=page.url,
+                final_url=page.final_url,
+                content=(f"{title}\n\n" if title else "") + text,
+                adapter="web.fetch@1.0.0",
+                receipt={"status": page.status, "sha256": page.sha256, "network_receipts": page.receipts},
+                valid_for=WEB_CAPTURE_VALIDITY,
+            )
+            return AdapterOutcome(
+                "SUCCEEDED",
+                external_reference=page.final_url,
+                output={
+                    "final_url": page.final_url,
+                    "retrieval_id": rid,
+                    "title": title[:300],
+                    "text": text[:WEB_TEXT_LIMIT],
+                    "truncated": len(text) > WEB_TEXT_LIMIT,
+                    "classification": "PUBLIC",
+                    "note": "untrusted web content; cite as the final_url",
+                },
+            )
+        except AtlasError as exc:
+            return AdapterOutcome("FAILED", error_message=exc.message)
+        finally:
+            conn.close()
+
     def calendar(self, tool_input: dict[str, Any], ctx: Any) -> AdapterOutcome:
         try:
             out = analyze_calendar(tool_input["events"], tool_input["window"])
@@ -441,6 +503,7 @@ class BuiltinTools:
             WRITE_DOCUMENT.tool_id: self.write_document,
             CALC.tool_id: self.calc,
             CALENDAR.tool_id: self.calendar,
+            WEB_FETCH.tool_id: self.web_fetch,
         }
         for m in BUILTIN_MANIFESTS:
             registry.register(m, bindings[m.tool_id])

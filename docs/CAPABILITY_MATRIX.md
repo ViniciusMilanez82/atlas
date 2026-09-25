@@ -1,7 +1,7 @@
 # ATLAS — Matriz de capacidades (contrato v2, cap. 27.4)
 
 O que funciona de verdade, separado em **implementado**, **configurado**, **autorizado**, **validado** e
-**indisponível**. Atualizado em 2026-09-24 no commit final da sessão (`impl/contract-v2`). Nada aqui foi
+**indisponível**. Atualizado em 2026-09-25 (`impl/review-pr5`, correções R5-01..R5-09). Nada aqui foi
 validado por uma pessoa usando o app num Mac (D-01) nem com modelo real (D-03).
 
 Legenda da coluna "Validado": INT = testes de integração com classes reais e IPC real; MAC-CI = Swift
@@ -11,15 +11,15 @@ compilado/testado no runner macOS 15; E2E-CI = processos reais (daemon/Superviso
 | --- | --- | --- | --- | --- |
 | Conversa com intenções (cap. 7) | Sim: controle, resposta com alvo, memória, status, correção, anexar, guardar, delegar, chat | Chat livre só com inteligência configurada | INT, MAC-CI (VM) | Modelo real (D-03); UI por pessoa (D-01) |
 | Recibo durável e reenvio idempotente (cap. 5) | Sim (`request_receipts`, envelope imutável no app) | — | INT, MAC-CI (VM) | — |
-| Parada prioritária (cap. 6.2) | Sim (`control.stop`, conexão própria no app, botão e ⌘.) | — | INT, MAC-CI (VM) | Latência no Mac de referência (D-01) |
-| Correção durante o trabalho (cap. 6.3) | Sim (revisões de instrução, broker recusa proposta obsoleta) | — | INT | — |
+| Parada prioritária (cap. 6.2) | Sim (`control.stop`, conexão própria no app, botão e ⌘.); época de controle no recibo e na tarefa: interpretação tardia publica PAUSADA (R5-03, ADR-017) | — | INT (4 intercalações, 2 conexões IPC), MAC-CI (VM) | Latência no Mac de referência (D-01) |
+| Correção durante o trabalho (cap. 6.3) | Sim (revisões de instrução; decisão, evidência e COMPLETED presos à revisão com CAS; critérios reabertos/re-derivados — R5-04) | — | INT | Reaproveitar evidência só dos critérios não afetados |
 | Heartbeat, watchdog, agenda independentes (cap. 6.4) | Sim | — | INT, E2E-CI | — |
-| Outbox de notificações (cap. 5.3) | Sim (canal conversa) | E-mail/companion não existem | INT | Canais externos (N17, N21) |
+| Outbox de notificações (cap. 5.3) | Sim (canal conversa), com classificação e origem da tarefa até a mensagem (R5-01) | E-mail/companion não existem | INT | Canais externos (N17, N21) |
 | Memória comum a chat e tarefas (cap. 8.2) | Sim (FTS + radicais + equivalências pt-BR) | — | INT | Índice semântico local (embeddings) ainda não existe |
 | Vigência, correção e esquecimento (cap. 8.3-8.4) | Sim (tombstones reaplicados no restore); tela Memória com prévia do alcance e exportação | — | INT, MAC-CI (VM) | Uso interativo (D-01) |
-| Classificação e Egress Guard (cap. 9) | Sim (consentimento escopado por provedor/finalidade) | Consentimento sensível: nenhum por padrão | INT | Tela de privacidade no app (N22) |
-| Documentos: TXT/MD/CSV/JSON/PDF/DOCX/XLSX/PPTX (cap. 10) | Sim, com localizador e cobertura | — | INT; bundle com libs gerado no CI | OCR/visão (PDF digitalizado, imagens): indisponível |
-| Verificação por critério (cap. 13.3) | Sim (integridade, pedido, cálculos, fontes, leitura completa) | — | INT | Revisão de qualidade subjetiva; pesquisa web para fontes URL |
+| Classificação e Egress Guard (cap. 9) | Sim (consentimento escopado por provedor/finalidade; classe herdada em correção, resposta, outbox, eco e legado — R5-01) | Consentimento sensível: nenhum por padrão | INT (payload do provedor) | Tela de privacidade no app (N22); modelo real (D-03) |
+| Documentos: TXT/MD/CSV/JSON/PDF/DOCX/XLSX/PPTX (cap. 10) | Sim, com localizador e cobertura; PARCIAL registra áreas ausentes e só conclui com escopo reduzido aceito e declarado (R5-06) | — | INT; bundle com libs gerado no CI | OCR/visão (PDF digitalizado, imagens): indisponível; botão de aceitar escopo no app |
+| Verificação por critério (cap. 13.3) | Sim: integridade; pedido integral como fonte dos critérios (R5-02); condições por trecho; substância (negação, comparação, recomendação, totais em prosa/tabela/planilha, critério invertido — R5-05); fontes com recuperação escopada (R5-08); leitura completa | — | INT | Julgamento semântico amplo (declarado como limitação); adaptador de pesquisa real (N16) |
 | Geração de entregáveis (cap. 14.3) | TXT/MD/JSON/CSV/HTML e PDF/DOCX/XLSX/PPTX validados por releitura | — | INT | Revisão visual de layout (renderização) |
 | Cálculo e datas por código (cap. 8.3, 13.3) | Sim: aritmética Decimal; agenda com fusos IANA, DST, dia inteiro, recorrência com exceções, sobreposições | — | INT | — |
 | Orçamento vigente e ledger global (cap. 12) | Sim | Tetos: definidos pelo proprietário | INT | Preços verificados com o provedor (D-03) |
@@ -28,11 +28,11 @@ compilado/testado no runner macOS 15; E2E-CI = processos reais (daemon/Superviso
 | Uploads e importação (cap. 14.1) | Sim (sessões compartilhadas, cota, TTL, recibo) | — | INT, MAC-CI (VM) | Arrastar real (D-01) |
 | Leitura/exportação de artefatos (cap. 14.2) | Sim (custo linear, nome/extensão reais) | — | INT, MAC-CI (VM) | Painel real (D-01) |
 | Instância única e encerramento com prazo (cap. 22.2) | Sim (daemon e Supervisor) | — | INT, E2E-CI, MAC-CI | Saída do app por pessoa (D-01) |
-| Workspace VM Linux + mediação de rede (cap. 15) | **Não** | — | — | N14; exige Mac com virtualização (D-01) |
+| Workspace VM Linux + mediação de rede (cap. 15) | Mediação **sim** (`security/network/mediator.py`: só endereços públicos com IP fixado, redirecionamento revalidado, URL como dado de saída, limites, recibos — ADR-018); VM **não** | Pesquisa web desligada por padrão (`research.web_enabled`) | INT (servidor local, DNS falso) | VM e transporte vsock→mediador: N14 no Mac (D-01) |
 | Execution Box para código novo (cap. 15.2, 17) | **Não** | — | — | N15 |
-| Navegador, pesquisa com fontes, takeover (cap. 16) | **Não** | — | — | N16 (depende de N14) |
+| Navegador, pesquisa com fontes, takeover (cap. 16) | Busca por API **sim** (`web.fetch`: captura vira fonte da tarefa com validade); navegador/perfis/takeover **não** | Desligado até o dono ativar | INT | Playwright empacotado, perfis, takeover (N16 no Mac, D-01); nenhuma chamada real à Internet feita |
 | Contas e e-mail operacional (cap. 18) | **Não** | — | — | N17 (conta/domínio do proprietário) |
-| Pedido de recurso pago / aprovações materiais (cap. 16.5, 12.3) | Sim: pedido concreto (preço, renovação, dados, alternativas) decidido pelo dono; aprovação não compra nem libera dados | — | INT, MAC-CI (tela) | Serviço sandbox real e driver de compra (T36, conta do proprietário) |
+| Pedido de recurso pago / aprovações materiais (cap. 16.5, 12.3) | Sim: pedido concreto decidido pelo dono numa transação com hash e reenvio idempotente; cotação expira, novas condições substituem, tarefa encerrada cancela (R5-09); aprovação não compra nem libera dados | — | INT, MAC-CI (tela) | Serviço sandbox real e driver de compra (T36, conta do proprietário) |
 | Skills com teste/promoção/rollback (cap. 17) | Tabelas existem; ciclo **não** | — | — | N19 |
 | Voz (cap. 20) | **Não** | — | — | N20 (modelo de voz e custo a validar) |
 | Companion remoto com E2EE (cap. 19) | **Não** | — | — | N21 (relay/domínio) |

@@ -211,7 +211,8 @@ def test_task_is_completed_with_a_verified_deliverable(world: World, tmp_path: P
         == 4
     )
     cps = [json.loads(r[0]) for r in world.conn.execute("SELECT state_json FROM checkpoints")]
-    assert all(set(cp) == {"step", "decision", "summary"} for cp in cps)  # no private reasoning stored
+    # no private reasoning stored; the decision names the instruction revision it was made for (R5-04)
+    assert all(set(cp) == {"step", "decision", "summary", "instruction_revision"} for cp in cps)
 
 
 def test_false_completion_is_never_accepted(world: World, tmp_path: Path) -> None:

@@ -1,0 +1,111 @@
+ATLAS — CONTINUAÇÃO OBRIGATÓRIA APÓS A REVISÃO DO PR #5
+
+Trabalhe no repositório existente ViniciusMilanez82/atlas. O PR #5 já foi integrado. Não reverta todo o PR, não crie outro produto e não substitua o contrato integral v2 por este prompt. Este texto acrescenta os achados R5-01…R5-09 e refina as condições de aceite das capacidades afetadas.
+
+VISÃO QUE DEVE SER PRESERVADA
+Um funcionário digital generalista, persistente, conversacional, com memória, arquivos, contas e computador de trabalho próprios. O proprietário delega objetivos, não cliques; o Atlas planeja, executa dentro das autorizações, pede decisões indispensáveis e entrega resultados com evidências. Não importar automaticamente contas pessoais. Calendário, propostas e viagens são exemplos, não módulos fixos. A correção da Alpha local não encerra a V1: workspace, pesquisa, voz, canal remoto, contas, habilidades e instalação simples continuam no contrato.
+
+DOCUMENTOS DE ENTRADA
+1. Contrato adotado em docs/spec/v2/ATLAS_CONTRATO_IMPLEMENTACAO_v2.md, incluindo anexos e cenários.
+2. Atlas_Revisao_PR5_80f357b.md desta revisão independente.
+3. repro/test_pr5_review.py, repro/results.json, repro/run.log e evidencias/source_manifest.json.
+4. docs/AUDIT_REMEDIATION.md, CAPABILITY_MATRIX.md, REQUIREMENTS_TRACEABILITY.md e os ADRs atuais.
+
+BASE REVISADA
+Head do PR: 80f357b44663b190a4cacc8038accf27d0c11c13.
+Base: d81cece2713ccb5b12e58902e55b05a614467951.
+Merge definitivo: 5a997e3ba7e77c8aa8f58ebb688521e6b31011c0.
+Bundle de CI: run 36128752671, artifact 10861445580; checkout temporário 0bbc90fc813eb19be5216a4a4215fbec3286f4dc.
+A revisão executou classes reais do núcleo Python em Linux com provedor local controlado e SQLite. Foram 14 cenários: 12 comportamentos defeituosos, agrupados em nove achados, e dois controles positivos. Não foi uma execução do Atlas.app, da suíte completa ou de um modelo real. Não transforme essa evidência em alegação de homologação macOS.
+
+ETAPA 0 — DIAGNÓSTICO, RASTREABILIDADE E REPRODUÇÃO
+- Confira HEAD, alterações locais, branches e commits posteriores à base. Preserve mudanças do proprietário. Use branch de trabalho. Não faça force-push, merge, publicação, envio de mensagens ou contratação sem autorização correspondente.
+- Execute a baseline disponível. Diferencie Python, Swift, UI, pacote, VM e provedores. Não declare aprovado o que foi ignorado ou não pôde rodar.
+- Crie docs/REVIEW_PR5_REMEDIATION.md com uma linha por R5-01…R5-09: estado, reprodução, causa, teste, commit, evidência e pendência. Relacione aos A3 originais e ao contrato; “32 corrigidos” deve informar a cobertura real, não esconder rotas reabertas.
+- Rode as reproduções no código compatível e depois construa regressões dentro da suíte real. O script fornecido demonstra a existência do defeito: DEFECT_REPRODUCED NÃO É PASS de qualidade. Ele possui asserts do comportamento antigo. A regressão de aceite deve afirmar a propriedade correta, falhando antes da correção e passando depois.
+- Caso uma reprodução deixe de ser válida no HEAD novo, prove o reparo com teste equivalente; não descarte o achado apenas porque um nome de função mudou. Inclua controles positivos para impedir uma correção que bloqueie tudo.
+
+BLOCO 1 — R5-01: PRIVACIDADE EM TODAS AS TRANSFORMAÇÕES
+Arquivos centrais: runtime/agent/loop.py, runtime/tasks/engine.py, runtime/notifications/outbox.py, core/conversation.py, runtime/models/context.py, security/egress/guard.py e migrações pertinentes.
+
+Implementar:
+a) Registro tipado de conteúdo/instrução/notificação com classification, source_ref/source_message_id, lineage, finalidade, owner/employee e revision. Metadados devem ser propagados por código confiável; o LLM não escolhe uma classificação mais baixa.
+b) Instruções originais, correções e respostas herdam a classificação da mensagem/fonte; _owner_messages e _context não podem atribuir INTERNAL por omissão. Consultas SQL, dataclasses e serializações devem conservar os campos.
+c) Outbox persiste classificação e origem no mesmo commit do estado/notificação; dispatcher copia esses atributos para a conversa. O contexto futuro respeita consentimento e esquecimento das fontes originais.
+d) Egress Guard checa o payload efetivo imediatamente antes da chamada, considerando finalidade e provedor. Guardar memória, aprovar recurso ou estar logado não é consentimento de divulgação.
+e) Migração segura de registros antigos: tratamento explícito e conservador de metadados ausentes, sem baixar sensibilidade silenciosamente. Não basta elevar task.data_policy, pois cópias podem reaparecer em outros contextos.
+
+Aceite: sentinela em correção, resposta e outbox não chega ao provedor sem consentimento. O bloqueio positivo da mensagem inicial permanece. Com consentimento restrito, somente o escopo concedido é transmitido; revogar, resumir, retomar ou trocar de provedor não amplia poderes. Testar payload, não apenas banco.
+
+BLOCO 2 — R5-02: PRESERVAR O PEDIDO INTEGRAL
+Arquivos centrais: core/conversation.py::_act_on_chat/_delegate; TaskEngine.create; derivação de critérios.
+
+- objective/title é resumo para navegação; original_request é o texto autenticado do proprietário, recuperado de source_message_id e versionado. Nunca atribuir decision.objective ao campo original_request.
+- Publicar atomicamente pedido integral, condições, anexos, fontes e critérios antes de elegibilidade. Preservar cláusulas numéricas, proibições, datas, moedas, prioridades e correções.
+- Mapear cada condição ao trecho de origem; um classificador probabilístico não é autorizado a apagar restrições.
+- Atualizar contexto para conter o pedido integral pertinente ou referências efetivamente recuperáveis. Contexto limitado não autoriza apagar o original.
+
+Aceite: forçar o interpretador a resumir um pedido longo omitindo data/teto/renovação/impostos; as condições continuam presentes no estado e governam as ações. Repetir com paráfrases, delegação explícita e reenviada.
+
+BLOCO 3 — R5-03: PARADA TAMBÉM INVALIDA INTERPRETAÇÕES PENDENTES
+Arquivos centrais: recebimento durável da conversa, TaskEngine.stop_all/create/acquire_lease, scheduler e broker.
+
+- Capturar control_epoch no recebimento do pedido. Na publicação transacional da tarefa e antes do lease/despacho, comparar a época com a política vigente.
+- Um resultado tardio originado antes de STOP não publica trabalho executável. Persistir o pedido suspenso/cancelado e a explicação.
+- Diferenciar pedido realmente novo após STOP, comando explícito de retomada e retorno tardio de inferência antiga. Definir semântica na ADR; não tornar parada irreversível e não liberar toda a fila com qualquer saudação.
+- Estender a verificação a subtarefas e execução agendada, além de ferramentas já em andamento.
+
+Aceite: intercalar STOP em quatro pontos (antes/depois da inferência, antes da publicação, antes do lease/despacho). Nenhuma ação nova do pedido antigo acontece depois da parada aplicada; pedidos posteriores legitimamente autorizados funcionam. Testar duas conexões reais, reinício e UI.
+
+BLOCO 4 — R5-04: CONCLUSÃO E EVIDÊNCIA PRESAS À REVISÃO CERTA
+Arquivos centrais: runtime/agent/loop.py, runtime/tasks/engine.py, runtime/verification e schema de evidências.
+
+- Toda decisão carrega instruction_revision; plano, critérios e evidências registram a revisão de validade.
+- Revalidar após a inferência e antes de tool/finish/ask_owner/request_capability. Resposta velha não pode operar sobre revisão nova.
+- Mudança material invalida/reconstrói os critérios afetados. Uma mudança de critério não pode manter uma aprovação sem avaliar impacto.
+- Fazer compare-and-set da revisão dentro da transação final de verificação/conclusão; não buscar a versão nova apenas para preencher expected_version e “passar”.
+- Preservar os efeitos já confirmados e reaproveitar partes não afetadas com evidência vinculada.
+
+Aceite: mudança maçãs→bananas durante inferência impede COMPLETED com maçãs. Repetir entre verificação e commit; verificar destinatário, valor, anexos e prazos. Conclusão e outbox referenciam a mesma revisão avaliada.
+
+BLOCO 5 — R5-05 E R5-06: QUALIDADE REAL, CÁLCULOS E COBERTURA
+Arquivos: criteria.py, verifier.py, documents/extract/store, generators e contratos de entregáveis.
+
+- Presença de metade de palavras não prova cumprimento. Tratar palavras-chave apenas como sinal auxiliar. Manter integridade, cobertura do pedido, condições, cálculo, fontes e extração como verificações distintas.
+- Derivar resultados esperados do pedido integral. Criar representação estruturada apropriada à tarefa (alternativas, comparações, valores, unidades, condições e recomendação), vinculada às fontes.
+- Usar os cálculos determinísticos para produzir/verificar os valores que alimentam prosa e arquivos. Não depender de regex “a + b = c”. Ausência de equação reconhecida não é prova de exatidão.
+- Revisão semântica complementar pode ajudar; não substituir prova por “outro modelo disse que está certo”. Quando o julgamento não puder ser confirmado, declarar revisão/limitação, não um selo de verificação completa.
+- PARTIAL na extração não equivale a leitura integral. Distinguir páginas/segmentos totais, recuperados e legíveis; manter avisos, cobertura e áreas ausentes. Oferecer nova extração, intervenção ou entrega parcial aceita, nunca ignorar avisos.
+- Critério de conclusão deve verificar também as revisões vigentes de instrução e anexos (BLOCO 4).
+
+Aceite: rejeitar relatório que nega ter feito o trabalho mesmo contendo as palavras-chave; aceitar texto correto parafraseado. Subtotal 100 + frete 20 não pode terminar como total 500 em prosa, tabela ou planilha. Fonte fictícia, imposto omitido, opção excluída e condição invertida impedem conclusão total. Documento PARTIAL com página essencial ausente não passa como leitura completa. Manter o controle positivo de leitura longa e o de equação explícita.
+
+BLOCO 6 — R5-07: RESPOSTA COM ANEXO COMPLETA A MESMA TAREFA
+- Validar question_id/reply_to, proprietário, tarefa, revisão e todos os anexos.
+- Vincular message_attachments a artifact_links/input da tarefa na mesma operação que grava a resposta e libera READY. Atualizar escopo, classificação e critérios afetados.
+- Reenvio é idempotente; não cria tarefa extra ou cópia órfã. Resposta de uma pergunta não se vincula a outra tarefa.
+- O teste deve mostrar que o worker leu o arquivo recebido, não apenas que apareceu um clipe na UI.
+
+BLOCO 7 — R5-08: FONTES COM ESCOPO E EVIDÊNCIA
+- _sources não pode aceitar apenas SELECT por kind e URL global.
+- Registrar aquisição e uso por owner/employee/task, fonte/version/hash, data, destino final e recibo. Citação deve ligar afirmação ao trecho recuperado.
+- Fonte cadastrada não é fonte obtida. Fonte de outro empregado nunca valida esta tarefa. Reutilizar captura anterior só mediante autorização, evidência e validade adequada.
+- Testar URL fictícia cadastrada, escopo cruzado, fonte antiga, recuperação real controlada e citação que não sustenta a afirmação. Nenhuma chamada externa real necessária para esses testes.
+
+BLOCO 8 — R5-09: DECISÃO DE RECURSO ATÔMICA E RECUPERÁVEL
+- CapabilityRequests.decide deve persistir decisão, nova instrução, invalidações, estado resultante e outbox numa transação local coerente, ou usar estados intermediários recuperáveis.
+- Associar recibo/idempotency_key/hash ao conteúdo da decisão. Mesmo pedido reenviado devolve o resultado consolidado ou termina o processamento incompleto, sem rejeição permanente porque apenas status já está APPROVED.
+- Operações externas continuam independentes e exigem aprovação material. Não resolver a falha passando a comprar automaticamente.
+- Injetar falhas após cada escrita, no commit, na notificação e após reinício. Testar aprovação, rejeição, alteração de condições e cancelamento.
+
+BLOCO 9 — EVIDÊNCIA E CONTINUIDADE DO PRODUTO
+1. Para cada R5: teste na propriedade correta, reprodução antes do reparo, patch pequeno, teste depois, regressão geral e evidência. Não reduzir a severidade sem justificativa rastreável.
+2. Atualizar os A3 cuja cobertura foi reaberta: uma rota corrigida não prova todas. Conservar o histórico de evidência e as melhorias já comprovadas.
+3. Validar no Mac o mesmo bundle que será distribuído: conversar, guardar informação, anexar como resposta, corrigir durante trabalho, parar durante interpretação, abrir/salvar e recuperar falhas. Registrar hardware/macOS/commit/hash.
+4. Executar a validação com modelo real somente com credencial e teto autorizados. Não usar o custo zero dos testes locais como estimativa de produção. Sem acesso, registrar a dependência precisa e continuar as outras tarefas.
+5. Não encerrar no reparo destes nove: continuar os pacotes N14–N23 do contrato, em ordem de dependências. VM/rede antes de browser/código não confiável; conta dedicada antes de canal operacional; voz/companion com mesmas autoridades; cifra e onboarding antes da distribuição final.
+6. Não substituir VM por shell/browser pessoal. Não permitir que nova skill leia Vault, aumente limite, aprove gasto ou altere política.
+7. Produto só recebe READY FOR BETA/V1 conforme critérios do contrato. Alpha intermediária pode ser entregue com suas limitações verdadeiras; “37+634 testes” não equivale a V1 completa.
+
+SAÍDA ESPERADA DA IA
+Comece pela baseline factual e reprodução do primeiro bloco disponível; implemente de fato, não devolva apenas esta lista resumida. Ao terminar uma etapa, apresente arquivos, commits, comandos, resultados, itens resolvidos/restantes e bloqueios materiais. Não prometa trabalho futuro que o ambiente não executa. Não peça ao proprietário decisões de biblioteca, SQL ou concorrência que cabem à engenharia. Peça somente acesso, orçamento, aceitação material ou autorização realmente indispensáveis.

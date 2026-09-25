@@ -47,6 +47,7 @@ from runtime.tools.registry import RegistryError, ToolManifest
 from runtime.verification.verifier import DeliverableSpec, Verifier
 from security.broker.broker import Broker, DispatchResult
 from security.egress.guard import EgressBlocked, highest, rank
+from security.egress.lineage import classify_text
 from shared.actors import Actor
 from shared.clock import Clock, to_utc_str
 from shared.errors import AtlasError, ErrorCode
@@ -255,8 +256,10 @@ class AgentRunner:
         row = self.conn.execute(
             "SELECT id FROM plans WHERE task_id = ? ORDER BY version DESC LIMIT 1", (task_id,)
         ).fetchone()
-        if row is None:
-            return self._new_plan(task_id, "initial plan: iterate one verified step at a time"), []
+        if row is None:  # the owner's answers count even before the first plan exists
+            return self._new_plan(task_id, "initial plan: iterate one verified step at a time"), self._owner_messages(
+                task_id
+            )
         self._settle_interrupted_steps(task_id)
         observations: list[Observation] = [
             Observation(
@@ -285,18 +288,30 @@ class AgentRunner:
     def _owner_messages(self, task_id: str) -> list[Observation]:
         try:
             rows = self.conn.execute(
-                "SELECT id, role, kind, content FROM messages WHERE task_id = ? AND kind IN"
-                " ('question','answer') ORDER BY rowid",
+                "SELECT id, role, kind, content, classification FROM messages WHERE task_id = ? AND kind IN"
+                " ('question','answer') AND context_excluded = 0 ORDER BY rowid",
                 (task_id,),
             ).fetchall()
         except sqlite3.OperationalError:
             return []
         out: list[Observation] = []
-        for r in rows:
+        for r in rows:  # each keeps the class of its message; never a default INTERNAL (R5-01)
             if r[1] == "owner":
-                out.append(Observation(f"Owner answer: {r[3]}", f"message:{r[0]}", Authority.OWNER_INSTRUCTION))
+                cls = highest(r[4], classify_text(r[3]))
+                files = [
+                    f"{a[1]} (artifact_id {a[0]})"
+                    for a in self.conn.execute(
+                        "SELECT a.id, a.name FROM message_attachments ma JOIN artifacts a ON a.id = ma.artifact_id"
+                        " WHERE ma.message_id = ? ORDER BY ma.rowid",
+                        (r[0],),
+                    )
+                ]  # the files sent WITH the answer are named, so the worker reads them (R5-07)
+                text = f"Owner answer: {r[3]}" + (f" [files sent with this answer: {', '.join(files)}]" if files else "")
+                out.append(Observation(text, f"message:{r[0]}", Authority.OWNER_INSTRUCTION, cls))
             else:
-                out.append(Observation(f"You asked the owner: {r[3]}", f"message:{r[0]}", Authority.VERIFIED_FACT))
+                out.append(
+                    Observation(f"You asked the owner: {r[3]}", f"message:{r[0]}", Authority.VERIFIED_FACT, r[4])
+                )
         return out
 
     def _settle_interrupted_steps(self, task_id: str) -> None:
@@ -411,6 +426,7 @@ class AgentRunner:
                     Authority.OWNER_INSTRUCTION,
                     f"[revision {v['revision']} {v['kind']} - {label}]\n{v['instruction']}",
                     f"task:{task['task_id']}:rev{v['revision']}",
+                    v["classification"],  # inherited from the owner's message (R5-01)
                     required=v is versions[-1] or v["kind"] == "ORIGINAL",
                 )
             )
@@ -521,6 +537,7 @@ class AgentRunner:
                         Authority.VERIFIED_FACT,
                     )
                 )
+            decided_for = int(task["instruction_revision"])
             try:
                 decision = self._decide(task, observations)
             except (RequiredContextWithheld, EgressBlocked) as exc:  # A3-02: ask, never leak or guess
@@ -580,12 +597,29 @@ class AgentRunner:
                 if state != TaskState.RUNNING:
                     return self._outcome(task_id, reason, steps)
                 continue
+            current = int(self.tasks.get(task_id)["instruction_revision"])
+            if current != decided_for:  # R5-04: a decision about an older revision never acts
+                self._journal(
+                    task_id,
+                    "task.decision_discarded",
+                    f"{decision['decision']} decided under revision {decided_for}; revision {current} is in force",
+                )
+                observations.append(
+                    Observation(
+                        f"Your last decision ({decision['decision']}) was made before instruction revision "
+                        f"{current} and was discarded. Decide again under the CURRENT instructions.",
+                        "system",
+                        Authority.VERIFIED_FACT,
+                    )
+                )
+                continue  # the loop re-plans for the new revision; not a lack of progress
             self.tasks.checkpoint(
                 task_id,
                 {
                     "step": steps,
                     "decision": decision["decision"],
                     "summary": decision["summary"],
+                    "instruction_revision": decided_for,
                 },
             )
             verdict = self._validate(decision)
@@ -620,8 +654,12 @@ class AgentRunner:
             if decision["decision"] == "finish":
                 result = self.verifier.verify_text_artifact(task_id, decision.get("artifact_id", ""), spec)
                 self._last_verification = result
-                if result.passed:
-                    return self._complete(task_id, lease, result.evidence_id, decision["artifact_id"], steps)
+                if result.passed and result.instruction_revision == decided_for:
+                    return self._complete(
+                        task_id, lease, result.evidence_id, decision["artifact_id"], steps, decided_for
+                    )
+                if result.passed:  # verified, but for a newer revision than the decision: decide again
+                    continue
                 gaps = result.gaps
                 observations.append(
                     Observation(
@@ -714,7 +752,10 @@ class AgentRunner:
             # page by page is progress, not a loop).
             wrote = tool_id in ("artifact.write_text", "artifact.write_document")
             read_more = tool_id in ("artifact.read_text", "documents.read") and bool((res.output or {}).get("segments"))
-            self.guard.record(lease, StepOutcome.VERIFIED_RESULT if wrote or read_more else StepOutcome.NO_NEW_RESULT)
+            fetched = tool_id == "web.fetch" and bool((res.output or {}).get("retrieval_id"))  # a new source (N16)
+            self.guard.record(
+                lease, StepOutcome.VERIFIED_RESULT if wrote or read_more or fetched else StepOutcome.NO_NEW_RESULT
+            )
             return None
         self._finish_step(step_id, "FAILED")
         if res.status in ("APPROVAL_REQUIRED", "UNKNOWN", "BUDGET_EXCEEDED"):
@@ -733,7 +774,7 @@ class AgentRunner:
         return None if state == TaskState.RUNNING else f"stopped after {res.status}"
 
     def _complete(
-        self, task_id: str, lease: Lease, evidence_id: str | None, artifact_id: str, steps: int
+        self, task_id: str, lease: Lease, evidence_id: str | None, artifact_id: str, steps: int, revision: int
     ) -> RunOutcome:
         assert evidence_id is not None
         per = self._last_verification.criteria if self._last_verification else {}
@@ -741,18 +782,52 @@ class AgentRunner:
             own = per.get(c["criterion_id"])
             if own is not None and own.passed and own.evidence_id:  # its OWN evidence (A3-07)
                 self.tasks.satisfy_criterion(task_id, c["criterion_id"], own.evidence_id)
-        self.tasks.release(lease, TaskState.VERIFYING, "deliverable verified")
+        try:
+            version = self.tasks.release(lease, TaskState.VERIFYING, "deliverable verified")
+        except AtlasError:
+            return self._outcome(task_id, "lease revoked (paused, stopped or cancelled)", steps)
         name = self.conn.execute("SELECT name FROM artifacts WHERE id = ?", (artifact_id,)).fetchone()
-        self.tasks.complete(
-            task_id,
-            actor=self.actor,
-            expected_version=self.tasks.get(task_id)["version"],
-            notice=("result", f"Concluí a tarefa. Entrega verificada: {name[0] if name else artifact_id}.", artifact_id),
-        )
+        limits = self._limitations()
+        try:
+            self.tasks.complete(  # compare-and-set: the version we left RUNNING with and the verified revision
+                task_id,
+                actor=self.actor,
+                expected_version=version,
+                expected_revision=revision,
+                notice=(
+                    "result",
+                    f"Concluí a tarefa. Entrega verificada: {name[0] if name else artifact_id}." + limits,
+                    artifact_id,
+                ),
+            )
+        except AtlasError as exc:  # a correction landed between verification and commit (R5-04)
+            self._back_to_ready(task_id, exc.message)
+            return self._outcome(task_id, f"not completed: {exc.message}", steps)
         self._journal(task_id, "task.delivered", f"deliverable artifact {artifact_id} verified")
         out = self._outcome(task_id, "completed with verified deliverable", steps)
         out.deliverable_id = artifact_id
         return out
+
+    def _limitations(self) -> str:
+        """Non-required checks that did not pass are limitations, stated - never a silent 'verified'."""
+        res = self._last_verification
+        if res is None:
+            return ""
+        gaps = [g for g in res.gaps if "exige revisão" in g]
+        return (" Não verificado automaticamente (revise): " + "; ".join(gaps)[:600] + ".") if gaps else ""
+
+    def _back_to_ready(self, task_id: str, reason: str) -> None:
+        try:
+            task = self.tasks.get(task_id)
+            if task["state"] == TaskState.VERIFYING:
+                v = self.tasks.transition(
+                    task_id, TaskState.PLANNING, expected_version=task["version"], actor=self.actor, reason=reason[:300]
+                )
+                self.tasks.transition(
+                    task_id, TaskState.READY, expected_version=v, actor=self.actor, reason="re-plan for the new revision"
+                )
+        except AtlasError:
+            pass  # the owner paused/cancelled meanwhile: nothing to requeue
 
     def _safe_release(
         self,
