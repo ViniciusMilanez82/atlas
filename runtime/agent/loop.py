@@ -298,7 +298,16 @@ class AgentRunner:
         for r in rows:  # each keeps the class of its message; never a default INTERNAL (R5-01)
             if r[1] == "owner":
                 cls = highest(r[4], classify_text(r[3]))
-                out.append(Observation(f"Owner answer: {r[3]}", f"message:{r[0]}", Authority.OWNER_INSTRUCTION, cls))
+                files = [
+                    f"{a[1]} (artifact_id {a[0]})"
+                    for a in self.conn.execute(
+                        "SELECT a.id, a.name FROM message_attachments ma JOIN artifacts a ON a.id = ma.artifact_id"
+                        " WHERE ma.message_id = ? ORDER BY ma.rowid",
+                        (r[0],),
+                    )
+                ]  # the files sent WITH the answer are named, so the worker reads them (R5-07)
+                text = f"Owner answer: {r[3]}" + (f" [files sent with this answer: {', '.join(files)}]" if files else "")
+                out.append(Observation(text, f"message:{r[0]}", Authority.OWNER_INSTRUCTION, cls))
             else:
                 out.append(
                     Observation(f"You asked the owner: {r[3]}", f"message:{r[0]}", Authority.VERIFIED_FACT, r[4])

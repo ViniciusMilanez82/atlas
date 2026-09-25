@@ -534,6 +534,11 @@ class ConversationService:
                 (p["reply_to_message_id"], cid),
             ).fetchone()
             if q is not None:
+                if p.get("task_id") and p["task_id"] != q["task_id"]:
+                    raise AtlasError(ErrorCode.INVALID_INPUT, "this question belongs to another task")
+                mine = self.conn.execute("SELECT kind, task_id FROM messages WHERE id = ?", (mid,)).fetchone()
+                if mine is not None and mine["kind"] == "answer" and mine["task_id"] == q["task_id"]:
+                    return self._answer_ack(mid, q["task_id"], cid, marker)  # resumed request: done already
                 if not self._question_open(q["id"], q["task_id"]):
                     self._set_kind(mid, "answer", q["task_id"])
                     reply = self.say(
@@ -683,19 +688,19 @@ class ConversationService:
             (task_id, mid),
         ).fetchone()
         if prior is None:
-            with transaction(self.conn):
+            with transaction(self.conn):  # links and the revision naming them commit together (R5-07)
                 for aid in attachments:
                     self.conn.execute(
                         "INSERT OR IGNORE INTO artifact_links(artifact_id, task_id, relation) VALUES (?,?,'input')",
                         (aid, task_id),
                     )
-            rev = self.tasks.update_instruction(
-                task_id,
-                actor=actor,
-                text=f"{text}\n[anexos: {', '.join(attachments)}]",
-                kind="ATTACHMENT",
-                source_message_id=mid,
-            )
+                rev = self.tasks.update_instruction_in_txn(
+                    task_id,
+                    actor=actor,
+                    text=f"{text}\n[anexos: {', '.join(attachments)}]",
+                    kind="ATTACHMENT",
+                    source_message_id=mid,
+                )
         else:
             rev = int(prior[0])
         self._set_kind(mid, "correction", task_id)
@@ -878,25 +883,58 @@ class ConversationService:
     def _answer(
         self, actor: Actor, mid: str, question: dict[str, Any], cid: str, marker: str
     ) -> dict[str, Any]:
+        """ANSWER_QUESTION (R5-07): the answer, its attachments as inputs of THAT task, a new instruction
+        revision naming them and the return to READY commit together - a worker can never resume the
+        task without the files the owner sent."""
         tid = question["task_id"]
-        self._set_kind(mid, "answer", tid)
+        attachments = self._attachments_of(mid)
+        with transaction(self.conn):
+            row = self.conn.execute("SELECT employee_id, state FROM tasks WHERE id = ?", (tid,)).fetchone()
+            owner_msg = self.conn.execute(
+                "SELECT c.employee_id FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.id = ?",
+                (mid,),
+            ).fetchone()
+            if row is None or owner_msg is None or row["employee_id"] != owner_msg[0]:
+                raise AtlasError(ErrorCode.INVALID_INPUT, "task not found for this employee")
+            self.conn.execute("UPDATE messages SET kind = 'answer', task_id = ? WHERE id = ?", (tid, mid))
+            for aid in attachments:
+                art = self.conn.execute("SELECT employee_id FROM artifacts WHERE id = ?", (aid,)).fetchone()
+                if art is None or art[0] != row["employee_id"]:
+                    raise AtlasError(ErrorCode.INVALID_INPUT, "attachment not found for this employee")
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO artifact_links(artifact_id, task_id, relation) VALUES (?,?,'input')",
+                    (aid, tid),
+                )
+            if attachments:
+                names = []
+                for a in attachments:
+                    name = self.conn.execute("SELECT name FROM artifacts WHERE id = ?", (a,)).fetchone()[0]
+                    names.append(f"{name} (artifact_id {a})")
+                text = str(self.conn.execute("SELECT content FROM messages WHERE id = ?", (mid,)).fetchone()[0])
+                self.tasks.update_instruction_in_txn(
+                    tid,
+                    actor=actor,
+                    text=(text.strip() or "Arquivo enviado em resposta à pergunta.") + f"\n[anexos: {', '.join(names)}]",
+                    kind="ATTACHMENT",
+                    source_message_id=mid,
+                )
+            fresh = self.tasks._row(tid)
+            if fresh["state"] == TaskState.WAITING_USER:
+                self.tasks.transition_in_txn(fresh, TaskState.READY, actor, "owner answered the question")
+        return self._answer_ack(mid, tid, cid, marker)
+
+    def _answer_ack(self, mid: str, tid: str, cid: str, marker: str) -> dict[str, Any]:
         task = self.tasks.get(tid)
-        if task["state"] == TaskState.WAITING_USER:
-            self.tasks.transition(
-                tid,
-                TaskState.READY,
-                expected_version=task["version"],
-                actor=actor,
-                reason="owner answered the question",
-            )
+        n = len(self._attachments_of(mid))
         reply = self.say(
             cid,
             "ack",
-            f"Obrigado. Vou retomar «{task['objective'][:120]}» com a sua resposta.",
+            f"Obrigado. Vou retomar «{task['objective'][:120]}» com a sua resposta"
+            + (f" e {n} arquivo(s) anexado(s) à tarefa." if n else "."),
             task_id=tid,
             reply_marker=marker,
         )
-        return self._result(mid, reply, "answer", tid)
+        return self._result(mid, reply, "answer", tid, attachments=n)
 
     def _remember(
         self, actor: Actor, employee_id: str, mid: str, content: str, cid: str, marker: str

@@ -645,65 +645,91 @@ class TaskEngine:
         instructions; the broker refuses any proposal decided under an older revision. Effects already
         dispatched are kept and reported, never undone. A correction grants no capability or budget.
         """
+        with transaction(self.conn):
+            return self.update_instruction_in_txn(
+                task_id,
+                actor=actor,
+                text=text,
+                kind=kind,
+                material=material,
+                source_message_id=source_message_id,
+                classification=classification,
+                derive=derive,
+            )
+
+    def update_instruction_in_txn(
+        self,
+        task_id: str,
+        *,
+        actor: Actor,
+        text: str,
+        kind: str = "CORRECTION",
+        material: bool = True,
+        source_message_id: str | None = None,
+        classification: str | None = None,
+        derive: bool = True,
+    ) -> int:
+        """``update_instruction`` inside the caller's transaction, so an answer, its attachments and the
+        return to READY commit together (R5-07) and a decision applies atomically (R5-09)."""
+        require_transaction(self.conn)
         if kind not in ("CORRECTION", "ANSWER", "ATTACHMENT"):
             raise _err(ErrorCode.INVALID_INPUT, f"unknown instruction kind {kind}")
         if not text.strip():
             raise _err(ErrorCode.INVALID_INPUT, "empty instruction")
         now = to_utc_str(self.clock.now())
-        with transaction(self.conn):
-            row = self._row(task_id)
-            self._owner_check(actor, row)
-            if row["state"] in TERMINAL:
-                raise _err(ErrorCode.INVALID_INPUT, f"task is {row['state']}; start a new task instead")
-            rev = int(row["instruction_revision"]) + 1
-            # R5-01: the revision inherits the class of the message it came from (and of its own words);
-            # the task becomes at least that protected - copies are protected by their own lineage too.
-            cls = highest(classification or "INTERNAL", self._message_class(source_message_id), classify_text(text))
-            self.conn.execute(
-                "INSERT INTO task_instruction_versions(task_id, revision, kind, instruction, material, author,"
-                " source_message_id, created_at, classification, content_sha256) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (task_id, rev, kind, text[:32000], int(material), f"{actor.kind}:{actor.id}", source_message_id, now,
-                 cls, sha256_text(text[:32000])),
-            )
-            self.conn.execute(
-                "UPDATE tasks SET instruction_revision = ?, version = version + 1, updated_at = ?,"
-                " data_policy = ? WHERE id = ?",
-                (rev, now, highest(row["data_policy"], cls), task_id),
-            )
-            cancelled = revoked = 0
-            if material:
-                for a in self.conn.execute(
-                    "SELECT id FROM actions WHERE task_id = ? AND status IN ('PROPOSED','AUTHORIZED')", (task_id,)
-                ).fetchall():
-                    self.conn.execute(
-                        "UPDATE actions SET status = 'CANCELLED_BEFORE_DISPATCH', status_reason = 'INSTRUCTION_CHANGED',"
-                        " updated_at = ? WHERE id = ?",
-                        (now, a["id"]),
-                    )
-                    cancelled += 1
-                for ap in self.conn.execute(
-                    "SELECT id FROM approvals WHERE task_id = ? AND status IN ('PENDING','APPROVED')", (task_id,)
-                ).fetchall():
-                    self.conn.execute(
-                        "UPDATE approvals SET status = 'REVOKED', decided_at = ? WHERE id = ?", (now, ap["id"])
-                    )
-                    revoked += 1
-                fresh = self._row(task_id)
-                if fresh["state"] == TaskState.WAITING_APPROVAL and revoked:
-                    self.transition_in_txn(fresh, TaskState.READY, actor, "approval revoked by a correction")
-                criteria_note = self._rederive_criteria_in_txn(task_id, rev, kind if derive else "SYSTEM", text)
-            else:
-                criteria_note = "not material: evidence kept (the note does not change what is delivered)"
-            journal.append(
-                self.conn,
-                self.clock,
-                employee_id=row["employee_id"],
-                task_id=task_id,
-                type="task.instruction_updated",
-                actor=actor,
-                summary=f"instruction revision {rev} ({kind}{', material' if material else ''}); "
-                f"{cancelled} proposal(s) cancelled, {revoked} approval(s) revoked; {criteria_note}",
-            )
+        row = self._row(task_id)
+        self._owner_check(actor, row)
+        if row["state"] in TERMINAL:
+            raise _err(ErrorCode.INVALID_INPUT, f"task is {row['state']}; start a new task instead")
+        rev = int(row["instruction_revision"]) + 1
+        # R5-01: the revision inherits the class of the message it came from (and of its own words);
+        # the task becomes at least that protected - copies are protected by their own lineage too.
+        cls = highest(classification or "INTERNAL", self._message_class(source_message_id), classify_text(text))
+        self.conn.execute(
+            "INSERT INTO task_instruction_versions(task_id, revision, kind, instruction, material, author,"
+            " source_message_id, created_at, classification, content_sha256) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (task_id, rev, kind, text[:32000], int(material), f"{actor.kind}:{actor.id}", source_message_id, now,
+             cls, sha256_text(text[:32000])),
+        )
+        self.conn.execute(
+            "UPDATE tasks SET instruction_revision = ?, version = version + 1, updated_at = ?,"
+            " data_policy = ? WHERE id = ?",
+            (rev, now, highest(row["data_policy"], cls), task_id),
+        )
+        cancelled = revoked = 0
+        if material:
+            for a in self.conn.execute(
+                "SELECT id FROM actions WHERE task_id = ? AND status IN ('PROPOSED','AUTHORIZED')", (task_id,)
+            ).fetchall():
+                self.conn.execute(
+                    "UPDATE actions SET status = 'CANCELLED_BEFORE_DISPATCH', status_reason = 'INSTRUCTION_CHANGED',"
+                    " updated_at = ? WHERE id = ?",
+                    (now, a["id"]),
+                )
+                cancelled += 1
+            for ap in self.conn.execute(
+                "SELECT id FROM approvals WHERE task_id = ? AND status IN ('PENDING','APPROVED')", (task_id,)
+            ).fetchall():
+                self.conn.execute(
+                    "UPDATE approvals SET status = 'REVOKED', decided_at = ? WHERE id = ?", (now, ap["id"])
+                )
+                revoked += 1
+            fresh = self._row(task_id)
+            if fresh["state"] == TaskState.WAITING_APPROVAL and revoked:
+                self.transition_in_txn(fresh, TaskState.READY, actor, "approval revoked by a correction")
+            criteria_note = self._rederive_criteria_in_txn(task_id, rev, kind if derive else "SYSTEM", text)
+        else:
+            criteria_note = "not material: evidence kept (the note does not change what is delivered)"
+        journal.append(
+            self.conn,
+            self.clock,
+            employee_id=row["employee_id"],
+            task_id=task_id,
+            type="task.instruction_updated",
+            actor=actor,
+            summary=f"instruction revision {rev} ({kind}{', material' if material else ''}); "
+            f"{cancelled} proposal(s) cancelled, {revoked} approval(s) revoked; {criteria_note}",
+        )
         return rev
 
     def _rederive_criteria_in_txn(self, task_id: str, rev: int, kind: str, text: str) -> str:
