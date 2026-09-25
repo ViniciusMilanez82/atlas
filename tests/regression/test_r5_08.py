@@ -11,7 +11,6 @@ from datetime import timedelta
 import pytest
 
 from runtime.memory.manager import MemoryManager
-from runtime.research.sources import SourceRetrievals
 from runtime.verification.verifier import DeliverableSpec
 from shared.actors import Actor
 from shared.errors import AtlasError
@@ -27,6 +26,8 @@ def _gap(r5: R5World, tid: str, body: str) -> str | None:
 
 
 def _retrieve(r5: R5World, tid: str, **kw: object) -> str:
+    from runtime.research.sources import SourceRetrievals  # local: the pre-fix code has no such module
+
     return SourceRetrievals(r5.conn, r5.clock, r5.artifacts).record_retrieval(
         task_id=tid, url=URL, final_url=URL, content=CAPTURE, adapter="test-adapter",
         receipt={"status": 200, "bytes": len(CAPTURE)}, **kw,  # type: ignore[arg-type]
@@ -70,6 +71,8 @@ def test_capture_of_another_task_needs_explicit_reuse_and_other_employee_never(r
     second = r5.create("Relatório de teste sobre fornecedores.")
     body = f"O módulo solar custa R$ 1.250,00. Fonte: {URL}"
     assert _gap(r5, second, body) is not None  # not consulted in THIS task
+    from runtime.research.sources import SourceRetrievals
+
     retrievals = SourceRetrievals(r5.conn, r5.clock, r5.artifacts)
     with pytest.raises(AtlasError):
         retrievals.authorize_reuse(task_id=second, retrieval_id=rid, actor=Actor("runtime", "x", "internal"))
