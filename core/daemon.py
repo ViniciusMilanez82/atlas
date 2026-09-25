@@ -21,27 +21,32 @@ from pathlib import Path
 from types import FrameType
 
 from core.conversation import ConversationService
+from core.health import WorkerMonitor
+from core.instance_lock import InstanceBusy, InstanceLock
 from core.intelligence import IntelligenceSetup
 from core.ipc.server import UnixSocketServer
 from core.ipc.sessions import SessionRegistry
 from core.service import CoreService
-from runtime.agent.loop import AgentRunner
+from runtime.agent.loop import AgentRunner, RunOutcome
 from runtime.artifacts.manager import ArtifactManager
 from runtime.memory.manager import MemoryManager
 from runtime.models.openai_responses import DEFAULT_BASE_URL
 from runtime.tasks.engine import TaskEngine
 from runtime.tasks.limits import ProgressGuard
 from runtime.tasks.scheduler import Scheduler
+from runtime.tasks.watchdog import Watchdog
 from runtime.tools.builtin import BUILTIN_MANIFESTS, BuiltinTools
 from runtime.tools.registry import ToolRegistry
 from runtime.verification.verifier import DeliverableSpec, Verifier
 from security.broker.broker import Broker
-from security.budget.budget import BudgetLimits, BudgetManager
+from security.budget.budget import BudgetManager
 from security.policy.engine import PolicyEngine
 from security.vault.vault import Vault, VaultBackend, VaultUnavailable, platform_backend
 from shared.actors import Actor
 from shared.clock import Clock, SystemClock
 from shared.errors import AtlasError
+from storage import journal
+from storage.db import transaction
 from storage.repositories.identity import create_employee, create_owner
 from storage.store import open_store
 
@@ -57,6 +62,7 @@ class Core:
         self.db_path = data_dir / "atlas.sqlite"
         self.store_root = data_dir / "artifacts"
         self.stop = threading.Event()
+        self.monitor = WorkerMonitor(self.clock)
         data_dir.mkdir(parents=True, exist_ok=True)
         self.vault_backend: VaultBackend | None
         try:
@@ -74,21 +80,21 @@ class Core:
         BuiltinTools(self.db_path, self.store_root, self.clock).register(registry, enabled_by=SUPERVISOR)
         vault = Vault(conn, self.vault_backend, self.clock) if self.vault_backend else None
         intel = IntelligenceSetup(conn, self.clock, vault, self.base_url)
-        cfg = intel.latest_config()
-        limits = BudgetLimits.from_config(cfg) if cfg else BudgetLimits("USD", None, None)
         broker = Broker(
             conn,
             self.clock,
             registry=registry,
             policy=PolicyEngine(),
-            budget=BudgetManager(conn, self.clock, limits),
+            budget=BudgetManager.live(conn, self.clock),  # current revision in every reservation (A3-19)
             vault=vault,
         )
         return conn, broker, intel, ArtifactManager(conn, self.clock, self.store_root)
 
     def service(self) -> CoreService:
         _, broker, intel, artifacts = self._components()
-        return CoreService(broker.conn, self.clock, broker, intelligence=intel, artifacts=artifacts)
+        return CoreService(
+            broker.conn, self.clock, broker, intelligence=intel, artifacts=artifacts, worker=self.monitor
+        )
 
     # ---------------------------------------------------------------- lifecycle
 
@@ -103,6 +109,9 @@ class Core:
                 )
                 return owner_id, emp.id
             TaskEngine(conn, self.clock).recover_after_restart()
+            conn.execute(  # A3-11: nobody is processing a request right after a restart
+                "UPDATE request_receipts SET state = 'RECEIVED', lease_expires_at = NULL WHERE state = 'PROCESSING'"
+            )
             return str(row[1]), str(row[0])
         finally:
             conn.close()
@@ -135,11 +144,31 @@ class Core:
         conversation = ConversationService(broker.conn, self.clock, broker, intel)
         guard = ProgressGuard(broker.tasks)
         scheduler = Scheduler(broker.tasks)
+        self.monitor.started()
+        try:
+            self._loop(employee_id, interval, broker, intel, memory, verifier, tools, conversation, guard, scheduler)
+        except BaseException as exc:  # the thread ends: say so instead of leaving health green
+            self.monitor.stopped(f"{type(exc).__name__}: worker loop ended")
+            raise
+        self.monitor.stopped()
+
+    def _loop(
+        self,
+        employee_id: str,
+        interval: float,
+        broker: Broker,
+        intel: IntelligenceSetup,
+        memory: MemoryManager,
+        verifier: Verifier,
+        tools: list[str],
+        conversation: ConversationService,
+        guard: ProgressGuard,
+        scheduler: Scheduler,
+    ) -> None:
         recovered = False
         while not self.stop.is_set():
+            self.monitor.beat()
             broker.collect_late_results()
-            guard.promote_due_retries()  # RETRYING -> READY after backoff (review A7)
-            scheduler.run_due()  # scheduled jobs create their tasks even while intelligence is off
             try:
                 client = intel.build_client()
             except AtlasError:
@@ -157,10 +186,7 @@ class Core:
             if row is None:
                 self.stop.wait(interval)
                 continue
-            inputs = broker.conn.execute(
-                "SELECT COUNT(*) FROM artifact_links WHERE task_id = ? AND relation = 'input'", (row[0],)
-            ).fetchone()[0]
-            spec = DeliverableSpec(min_chars=200, min_sources=min(int(inputs), 5))
+            spec = DeliverableSpec(min_chars=200)  # business criteria live with the task (A3-07)
             runner = AgentRunner(
                 broker.conn,
                 self.clock,
@@ -170,12 +196,52 @@ class Core:
                 verifier=verifier,
                 tools=tools,
                 worker_id=f"worker-{os.getpid()}",
-                notify=conversation.notify,
             )
-            try:
-                runner.run(row[0], spec)
-            except AtlasError:
+            outcome = Core.run_one(runner, row[0], spec, self.monitor, broker.tasks)
+            if outcome is None:
                 self.stop.wait(interval)
+
+    def watchdog(self, interval: float) -> None:
+        """Independent housekeeping thread (A3-05, T21): reclaims expired leases, promotes retries and
+        runs due scheduled jobs with its own connection, so a long task never stalls them."""
+        wd = Watchdog(open_store(self.db_path, self.clock), self.clock, self.store_root)
+        while not self.stop.wait(interval):
+            try:
+                wd.sweep()
+            except Exception as exc:  # visible, never silent; the next sweep retries
+                self.monitor.error(f"watchdog: {type(exc).__name__}")
+
+    @staticmethod
+    def run_one(
+        runner: AgentRunner, task_id: str, spec: DeliverableSpec, monitor: WorkerMonitor, tasks: TaskEngine
+    ) -> RunOutcome | None:
+        """Run one task under a guard (A3-06). An unexpected error never ends the worker silently: it is
+        journaled, shown by ``system.health`` and the task is reclaimed (fencing bumped) for recovery."""
+        try:
+            return runner.run(task_id, spec)
+        except AtlasError:
+            return None
+        except Exception as exc:
+            what = f"{type(exc).__name__} while running task {task_id}"
+            monitor.error(what)
+            try:
+                state = ProgressGuard(tasks).reclaim_after_worker_loss(
+                    task_id, f"worker error: {type(exc).__name__}"
+                )
+                emp = tasks.get(task_id)["employee_id"]
+                with transaction(tasks.conn):
+                    journal.append(
+                        tasks.conn,
+                        tasks.clock,
+                        employee_id=emp,
+                        task_id=task_id,
+                        type="worker.error",
+                        actor=Actor("system", "watchdog"),
+                        summary=f"{what}; task reclaimed as {state or 'unchanged'}",
+                    )
+            except Exception as inner:  # diagnostics must not kill the worker either
+                monitor.error(f"{what}; recovery failed with {type(inner).__name__}")
+            return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -192,13 +258,20 @@ def main(argv: list[str] | None = None) -> int:
     if sys.platform == "win32":
         print("atlas-core requires macOS or Linux (Unix domain sockets)", file=sys.stderr)
         return 2
+    try:  # A3-28: own the data directory BEFORE recovery, token or socket are touched
+        lock = InstanceLock(args.data_dir).acquire()
+    except InstanceBusy as exc:
+        print(json.dumps({"event": "refused", "reason": str(exc), "holder": exc.holder}), flush=True)
+        return 3
     core = Core(args.data_dir, args.ipc_dir, args.openai_base_url)
     owner_id, employee_id = core.bootstrap(args.owner_name, args.employee_name, args.locale, args.timezone)
     sessions = SessionRegistry()
     server = UnixSocketServer(args.ipc_dir, sessions, core.service)
     core.write_session(sessions, owner_id, employee_id, server.path)
     worker = threading.Thread(target=core.worker, args=(employee_id, args.worker_interval), daemon=True)
+    core.monitor.starting()
     worker.start()
+    threading.Thread(target=core.watchdog, args=(max(args.worker_interval, 1.0),), daemon=True).start()
 
     def shutdown(signum: int, frame: FrameType | None) -> None:
         core.stop.set()
@@ -210,4 +283,5 @@ def main(argv: list[str] | None = None) -> int:
     server.serve_forever()
     worker.join(timeout=5)
     (args.ipc_dir / "session.json").unlink(missing_ok=True)
+    lock.release()
     return 0

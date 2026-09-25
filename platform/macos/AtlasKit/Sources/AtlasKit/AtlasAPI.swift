@@ -4,13 +4,17 @@ import Foundation
 /// `AtlasAPIError`; retry safety is declared per method, next to the call.
 public final class AtlasAPI {
     public let transport: AtlasTransport
+    /// Priority control lane (A3-04, spec 6.2): its own connection and serial queue, so "stop" is never
+    /// queued behind a send, an upload, a reconnect or a slow model call on `transport`.
+    public let control: AtlasTransport
     /// Upload chunk: 512 KiB -> ~699 KB of base64, under the core's 700 000 character limit.
     public static let uploadChunk = 512 * 1024
     public static let readChunk = 512 * 1024
     public static let maxAttachmentBytes = 50 * 1024 * 1024
 
-    public init(transport: AtlasTransport) {
+    public init(transport: AtlasTransport, control: AtlasTransport? = nil) {
         self.transport = transport
+        self.control = control ?? transport
     }
 
     private var employeeId: String { transport.employeeId ?? "" }
@@ -45,11 +49,14 @@ public final class AtlasAPI {
         try await read("conversations.current")["conversation_id"] as? String ?? ""
     }
 
-    public func history(conversationId: String, before: String? = nil, limit: Int = 50) async throws
+    public func history(conversationId: String, before: String? = nil, afterSequence: Int? = nil,
+                        changedSinceRevision: Int? = nil, limit: Int = 50) async throws
         -> (messages: [[String: Any]], hasMore: Bool)
     {
         var p: [String: Any] = ["conversation_id": conversationId, "limit": limit]
         if let before { p["before_message_id"] = before }
+        if let afterSequence { p["after_sequence"] = afterSequence }  // A3-23: gap-free catch-up
+        if let changedSinceRevision { p["changed_since_revision"] = changedSinceRevision }  // A3-23: upserts
         let r = try await read("conversations.history", p)
         return (r["messages"] as? [[String: Any]] ?? [], r["has_more"] as? Bool ?? false)
     }
@@ -57,7 +64,8 @@ public final class AtlasAPI {
     /// Retry-safe: the core deduplicates by `clientMessageId`, so a resend after a reconnect returns
     /// what already happened instead of doing it twice.
     public func send(conversationId: String, text: String, clientMessageId: String, delegate: Bool = false,
-                     artifactIds: [String] = [], replyTo: String? = nil) async throws -> [String: Any]
+                     artifactIds: [String] = [], replyTo: String? = nil, taskId: String? = nil) async throws
+        -> [String: Any]
     {
         var p: [String: Any] = [
             "employee_id": employeeId, "conversation_id": conversationId, "client_message_id": clientMessageId,
@@ -65,7 +73,47 @@ public final class AtlasAPI {
         ]
         if !artifactIds.isEmpty { p["artifact_ids"] = artifactIds }
         if let replyTo { p["reply_to_message_id"] = replyTo }
+        if let taskId { p["task_id"] = taskId }
         return try await transport.call("conversations.send", p, retrySafe: true)
+    }
+
+    /// "Pare tudo" through the control lane. Repeating it is harmless (nothing more to pause).
+    public func stopAll() async throws -> [String: Any] {
+        try await control.call("control.stop", ["employee_id": control.employeeId ?? employeeId], retrySafe: true)
+    }
+
+    // MARK: memory and files screens (N06/N12)
+
+    public func memories(statuses: [String] = ["proposed", "confirmed", "disputed"]) async throws -> [[String: Any]] {
+        try await read("memories.list", ["statuses": statuses, "limit": 300])["memories"] as? [[String: Any]] ?? []
+    }
+
+    public func forgetPreview(_ memoryId: String) async throws -> [String: Any] {
+        try await read("memories.forget_preview", ["memory_id": memoryId])
+    }
+
+    public func forget(_ memoryId: String, scope: String) async throws -> [String: Any] {
+        try await write("memories.delete", ["memory_id": memoryId, "scope": scope])
+    }
+
+    public func correctMemory(_ memoryId: String, version: Int, content: String) async throws {
+        try await write("memories.correct", ["memory_id": memoryId, "expected_version": version, "content": content])
+    }
+
+    public func exportMemories() async throws -> [String: Any] { try await read("memories.export") }
+
+    public func capabilityRequests() async throws -> [[String: Any]] {
+        try await read("capabilities.list")["requests"] as? [[String: Any]] ?? []
+    }
+
+    public func decideCapability(_ requestId: String, approve: Bool, note: String = "") async throws {
+        var p: [String: Any] = ["request_id": requestId, "decision": approve ? "APPROVE" : "REJECT"]
+        if !note.isEmpty { p["note"] = note }
+        try await write("capabilities.decide", p)
+    }
+
+    public func files() async throws -> [[String: Any]] {
+        try await read("artifacts.all", ["limit": 300])["artifacts"] as? [[String: Any]] ?? []
     }
 
     public func confirmMemory(_ memoryId: String) async throws {
@@ -74,7 +122,8 @@ public final class AtlasAPI {
 
     // MARK: work
 
-    public func control(_ method: String, taskId: String, version: Int) async throws {
+    @discardableResult
+    public func control(_ method: String, taskId: String, version: Int) async throws -> [String: Any] {
         try await write(method, ["task_id": taskId, "expected_version": version])
     }
 
@@ -111,8 +160,18 @@ public final class AtlasAPI {
             ], retrySafe: true)
             offset = end
         } while offset < data.count
-        return try await write("artifacts.import", ["employee_id": employeeId, "upload_ref": ref,
-                                                    "declared_name": name])
+        // A3-22: the import is a receipt per upload_ref, so a lost reply is recovered by asking again with
+        // the same ref (the core returns the artifact it already created; never a duplicate).
+        return try await transport.call("artifacts.import", [
+            "employee_id": employeeId, "upload_ref": ref, "declared_name": name,
+            "expected_sha256": Hashing.sha256Hex(data),
+        ], retrySafe: true)
+    }
+
+    /// Name (with extension) of a stored artifact, for the save panel (A3-32).
+    public func artifactName(_ artifactId: String) async throws -> String {
+        let r = try await read("artifacts.read", ["artifact_id": artifactId, "offset": 0, "length": 1])
+        return r["name"] as? String ?? ""
     }
 
     /// Reads a whole artifact in chunks and verifies each chunk and the final SHA-256.
@@ -160,13 +219,19 @@ public final class AtlasAPI {
 
     /// Reference configuration with the owner's ceilings (minor units).
     public static func settingsDocument(monthlyMinor: Int, perTaskMinor: Int, modelId: String, currency: String = "USD",
-                                        acceptReferencePrices: Bool) -> [String: Any]
+                                        acceptReferencePrices: Bool, mode: String = "automatic",
+                                        lightModelId: String? = nil, deepModelId: String? = nil) -> [String: Any]
     {
-        [
+        // N13: the mode chosen in plain words (Automático/Econômico/Máxima qualidade) is a real setting;
+        // model ids stay in "Avançado". Unvalidated profiles are never used by the core.
+        var profiles: [String: Any] = ["general": ["provider": "openai", "model_id": modelId]]
+        if let lightModelId, !lightModelId.isEmpty { profiles["light"] = ["provider": "openai", "model_id": lightModelId] }
+        if let deepModelId, !deepModelId.isEmpty { profiles["deep"] = ["provider": "openai", "model_id": deepModelId] }
+        return [
             "schema_version": "1.0",
             "intelligence": [
-                "mode": "manual", "default_profile": "general",
-                "profiles": ["general": ["provider": "openai", "model_id": modelId]],
+                "mode": mode, "default_profile": "general",
+                "profiles": profiles,
                 "allow_cross_provider_fallback": false, "max_parallel_research_workers": 2,
                 "max_external_effect_workers": 1,
             ] as [String: Any],

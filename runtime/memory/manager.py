@@ -14,10 +14,13 @@ and is not required for correctness.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from shared.actors import Actor
 from shared.clock import Clock, parse_utc, to_utc_str
@@ -31,6 +34,14 @@ TYPES = ("IDENTITY", "PREFERENCE", "FACT", "EPISODE", "PROCEDURE")
 OWNER_ONLY_TYPES = ("IDENTITY", "PREFERENCE", "PROCEDURE")
 SOURCE_KINDS = ("owner_message", "document", "web", "tool", "system")
 _SECRETISH = Redactor()
+_UNSET: Any = object()
+REDACTED = "[conteúdo apagado a pedido do proprietário]"
+FORGET_SCOPES = ("stop_using", "erase")
+
+
+def content_hash(text: str) -> str:
+    """Hash of the normalized content: what a tombstone keeps instead of the content itself."""
+    return hashlib.sha256(" ".join(text.lower().split()).encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -45,6 +56,7 @@ class MemoryHit:
     source_trust: str
     valid_from: str | None
     valid_until: str | None
+    sensitivity: str = "INTERNAL"
 
 
 STOPWORDS = frozenset(
@@ -74,7 +86,7 @@ class MemoryManager:
 
     # ------------------------------------------------------------------ sources
 
-    def add_source(self, *, actor: Actor, kind: str, ref: str) -> str:
+    def add_source(self, *, actor: Actor, kind: str, ref: str, employee_id: str | None = None) -> str:
         """Register provenance. Trust is derived from who/what produced it, never from the text."""
         if kind not in SOURCE_KINDS:
             raise AtlasError(ErrorCode.INVALID_INPUT, f"unknown source kind {kind}")
@@ -91,17 +103,35 @@ class MemoryManager:
         sid = new_id()
         with transaction(self.conn):
             self.conn.execute(
-                "INSERT INTO sources(id, kind, trust, ref, captured_at) VALUES (?,?,?,?,?)",
-                (sid, kind, trust, ref[:512], to_utc_str(self.clock.now())),
+                "INSERT INTO sources(id, kind, trust, ref, captured_at, employee_id) VALUES (?,?,?,?,?,?)",
+                (sid, kind, trust, ref[:512], to_utc_str(self.clock.now()), employee_id),
             )
         return sid
 
-    def _source(self, source_id: str) -> sqlite3.Row:
+    def _source(self, source_id: str, employee_id: str | None = None) -> sqlite3.Row:
         row: sqlite3.Row | None = self.conn.execute(
             "SELECT * FROM sources WHERE id = ?", (source_id,)
         ).fetchone()
-        if row is None:
-            raise AtlasError(ErrorCode.INVALID_INPUT, "unknown source")
+        if row is None or (employee_id is not None and row["employee_id"] not in (None, employee_id)):
+            raise AtlasError(ErrorCode.INVALID_INPUT, "unknown source")  # same answer: reveals nothing (A3-26)
+        return row
+
+    def _is_forgotten(self, employee_id: str, content: str) -> bool:
+        h = content_hash(content)
+        for row in self.conn.execute(
+            "SELECT content_hashes_json FROM forget_tombstones WHERE employee_id = ?", (employee_id,)
+        ):
+            if h in json.loads(row[0]):
+                return True
+        return False
+
+    def require_owned(self, memory_id: str, employee_id: str) -> sqlite3.Row:
+        """The memory exists AND belongs to this employee; otherwise the same 'not found' (A3-26)."""
+        row: sqlite3.Row | None = self.conn.execute(
+            "SELECT * FROM memories WHERE id = ?", (memory_id,)
+        ).fetchone()
+        if row is None or row["employee_id"] != employee_id:
+            raise AtlasError(ErrorCode.INVALID_INPUT, "memory not found for this employee")
         return row
 
     # ------------------------------------------------------------------ writes
@@ -142,7 +172,10 @@ class MemoryManager:
         self._check_content(content, sensitivity)
         if valid_from and valid_until and parse_utc(valid_until) <= parse_utc(valid_from):
             raise AtlasError(ErrorCode.INVALID_INPUT, "valid_until must be after valid_from")
-        src = self._source(source_id)
+        src = self._source(source_id, employee_id)
+        if src["kind"] != "owner_message" and self._is_forgotten(employee_id, content):
+            # A3-17: a summary, document or tool output cannot bring back what the owner forgot.
+            raise AtlasError(ErrorCode.POLICY_DENIED, "this content was forgotten by the owner; not stored again")
         # Only an owner statement on an authenticated channel may be stored as confirmed directly.
         owner_statement = src["trust"] == "owner_authenticated" and actor.kind == "owner"
         status = "confirmed" if owner_statement and not require_confirmation else "proposed"
@@ -223,16 +256,31 @@ class MemoryManager:
             )
 
     def correct(
-        self, memory_id: str, *, actor: Actor, expected_version: int, content: str, source_id: str
+        self,
+        memory_id: str,
+        *,
+        actor: Actor,
+        expected_version: int,
+        content: str,
+        source_id: str,
+        employee_id: str | None = None,
+        valid_from: Any = _UNSET,
+        valid_until: Any = _UNSET,
+        change_validity: bool = False,
     ) -> int:
-        """New version supersedes the old one; history stays traceable (spec 8.3)."""
-        row = self._row(memory_id)
+        """New version supersedes the old one; history stays traceable (spec 8.3).
+
+        The validity window of the previous version is KEPT unless ``change_validity`` is set with the
+        new window (A3-16): correcting the text never silently changes when a fact is valid."""
+        row = self._row(memory_id) if employee_id is None else self.require_owned(memory_id, employee_id)
+        if actor.kind == "owner" and actor.id != self._owner_of(row["employee_id"]):
+            raise AtlasError(ErrorCode.INVALID_INPUT, "memory not found for this employee")
         if row["status"] == "deleted":
             raise AtlasError(ErrorCode.VERSION_CONFLICT, "memory was deleted")
         if row["current_version"] != expected_version:
             raise AtlasError(ErrorCode.VERSION_CONFLICT, "memory changed; refresh and retry")
         self._check_content(content, row["sensitivity"])
-        src = self._source(source_id)
+        src = self._source(source_id, row["employee_id"])
         owner_statement = src["trust"] == "owner_authenticated" and actor.kind == "owner"
         if row["type"] in OWNER_ONLY_TYPES and not owner_statement:
             raise AtlasError(
@@ -241,11 +289,22 @@ class MemoryManager:
         status = "confirmed" if owner_statement else "proposed"
         new_version = expected_version + 1
         now = to_utc_str(self.clock.now())
+        prev = self.conn.execute(
+            "SELECT valid_from, valid_until FROM memory_versions WHERE memory_id = ? AND version = ?",
+            (memory_id, expected_version),
+        ).fetchone()
+        if change_validity:
+            new_from = None if valid_from is _UNSET else valid_from
+            new_until = None if valid_until is _UNSET else valid_until
+        else:
+            new_from, new_until = (prev[0], prev[1]) if prev else (None, None)
+        if new_from and new_until and parse_utc(new_until) <= parse_utc(new_from):
+            raise AtlasError(ErrorCode.INVALID_INPUT, "valid_until must be after valid_from")
         with transaction(self.conn):
             self.conn.execute(
-                "INSERT INTO memory_versions(memory_id, version, content, source_id, recorded_at)"
-                " VALUES (?,?,?,?,?)",
-                (memory_id, new_version, content, source_id, now),
+                "INSERT INTO memory_versions(memory_id, version, content, source_id, valid_from, valid_until,"
+                " recorded_at) VALUES (?,?,?,?,?,?,?)",
+                (memory_id, new_version, content, source_id, new_from, new_until, now),
             )
             cur = self.conn.execute(
                 "UPDATE memories SET current_version = ?, status = ?, updated_at = ? WHERE id = ? AND current_version = ?",
@@ -264,20 +323,111 @@ class MemoryManager:
             )
         return new_version
 
-    def delete(self, memory_id: str, *, actor: Actor) -> None:
-        """Remove content and derived index entries under Atlas control (spec 16.3).
-
-        External backups are not touched; the UI must say so (see OPERATIONS.md).
-        """
+    def _forget_targets(self, memory_id: str) -> tuple[sqlite3.Row, list[str], list[str], list[str]]:
+        """What forgetting this memory reaches under Atlas control (A3-17, spec 8.4): its versions, the
+        owner message it came from, the confirmation echo, and messages/observations of the same employee
+        that contain the exact content. Copies outside Atlas (provider logs, exports) are NOT reachable."""
         row = self._row(memory_id)
-        if actor.kind != "owner" or actor.id != self._owner_of(row["employee_id"]):
-            raise AtlasError(ErrorCode.UNAUTHORIZED, "only the owner deletes memories")
-        with transaction(self.conn):
-            self.conn.execute("UPDATE memory_versions SET content = '' WHERE memory_id = ?", (memory_id,))
+        contents = [
+            r[0] for r in self.conn.execute(
+                "SELECT content FROM memory_versions WHERE memory_id = ? AND content <> ''", (memory_id,)
+            )
+        ]
+        refs = [
+            r[0][len("message:"):]
+            for r in self.conn.execute(
+                "SELECT s.ref FROM memory_versions v JOIN sources s ON s.id = v.source_id WHERE v.memory_id = ?",
+                (memory_id,),
+            )
+            if r[0].startswith("message:")
+        ]
+        msgs = {r[0] for r in self.conn.execute("SELECT id FROM messages WHERE memory_id = ?", (memory_id,))}
+        for ref in refs:  # the owner message the memory came from, only inside this employee's scope
+            hit = self.conn.execute(
+                "SELECT m.id FROM messages m JOIN conversations c ON c.id = m.conversation_id"
+                " WHERE m.id = ? AND c.employee_id = ?",
+                (ref, row["employee_id"]),
+            ).fetchone()
+            if hit:
+                msgs.add(str(hit[0]))
+        obs: set[str] = set()
+        for text in contents:
+            for r in self.conn.execute(
+                "SELECT m.id FROM messages m JOIN conversations c ON c.id = m.conversation_id"
+                " WHERE c.employee_id = ? AND instr(m.content, ?) > 0",
+                (row["employee_id"], text),
+            ):
+                msgs.add(r[0])
+            for r in self.conn.execute(
+                "SELECT o.step_id FROM step_observations o JOIN tasks t ON t.id = o.task_id"
+                " WHERE t.employee_id = ? AND instr(o.content, ?) > 0",
+                (row["employee_id"], text),
+            ):
+                obs.add(r[0])
+        return row, contents, sorted(msgs), sorted(obs)
+
+    def forget_preview(self, memory_id: str) -> dict[str, Any]:
+        _, contents, msgs, obs = self._forget_targets(memory_id)
+        return {
+            "memory_versions": len(contents),
+            "messages": len(msgs),
+            "observations": len(obs),
+            "outside_atlas": "cópias fora do Atlas (provedor de IA, arquivos exportados, backups antigos) "
+            "não são apagadas por aqui; backups restaurados reaplicam esta exclusão",
+        }
+
+    def _apply_forget_in_txn(
+        self, scope: str, memory_id: str | None, msgs: list[str], obs: list[str]
+    ) -> None:
+        require_transaction(self.conn)
+        if memory_id is not None:
             self.conn.execute("DELETE FROM memory_fts WHERE memory_id = ?", (memory_id,))
             self.conn.execute(
                 "UPDATE memories SET status = 'deleted', updated_at = ? WHERE id = ?",
                 (to_utc_str(self.clock.now()), memory_id),
+            )
+            if scope == "erase":
+                self.conn.execute("UPDATE memory_versions SET content = '' WHERE memory_id = ?", (memory_id,))
+        for mid in msgs:
+            if scope == "erase":
+                self.conn.execute(
+                    "UPDATE messages SET content = ?, classification = 'INTERNAL', context_excluded = 1 WHERE id = ?",
+                    (REDACTED, mid),
+                )
+            else:
+                self.conn.execute("UPDATE messages SET context_excluded = 1 WHERE id = ?", (mid,))
+        if scope == "erase":
+            for sid in obs:
+                self.conn.execute("UPDATE step_observations SET content = ? WHERE step_id = ?", (REDACTED, sid))
+
+    def delete(self, memory_id: str, *, actor: Actor, scope: str = "erase") -> dict[str, Any]:
+        """Forget a memory (spec 8.4, A3-17).
+
+        ``stop_using``: never retrieved nor sent to a model again; history stays visible to the owner.
+        ``erase``: content removed from the memory, its index, the source message, the confirmation echo
+        and every message/observation of this employee containing it. A tombstone (ids + content hashes,
+        never the content) blocks reintroduction by derived sources and is re-applied after a restore.
+        """
+        if scope not in FORGET_SCOPES:
+            raise AtlasError(ErrorCode.INVALID_INPUT, f"unknown forget scope {scope}")
+        row, contents, msgs, obs = self._forget_targets(memory_id)
+        if actor.kind != "owner" or actor.id != self._owner_of(row["employee_id"]):
+            raise AtlasError(ErrorCode.UNAUTHORIZED, "only the owner deletes memories")
+        with transaction(self.conn):
+            self._apply_forget_in_txn(scope, memory_id, msgs, obs)
+            self.conn.execute(
+                "INSERT INTO forget_tombstones(id, employee_id, memory_id, scope, content_hashes_json,"
+                " message_ids_json, observation_ids_json, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    new_id(),
+                    row["employee_id"],
+                    memory_id,
+                    scope,
+                    json.dumps(sorted({content_hash(c) for c in contents})),
+                    json.dumps(msgs),
+                    json.dumps(obs if scope == "erase" else []),
+                    to_utc_str(self.clock.now()),
+                ),
             )
             journal.append(
                 self.conn,
@@ -285,8 +435,46 @@ class MemoryManager:
                 employee_id=row["employee_id"],
                 type="memory.deleted",
                 actor=actor,
-                summary=f"memory {memory_id} deleted (content and index removed)",
+                summary=f"memory {memory_id} forgotten ({scope}): {len(msgs)} message(s), "
+                f"{len(obs)} observation(s) under Atlas control",
             )
+        return {"scope": scope, "messages": len(msgs), "observations": len(obs)}
+
+    def reapply_tombstones(self, tombstones: list[dict[str, Any]]) -> int:
+        """After a backup restore: bring back every forget decision taken after the backup (A3-17)."""
+        applied = 0
+        with transaction(self.conn):
+            for t in tombstones:
+                known = self.conn.execute("SELECT 1 FROM forget_tombstones WHERE id = ?", (t["id"],)).fetchone()
+                memory_exists = t["memory_id"] and self.conn.execute(
+                    "SELECT 1 FROM memories WHERE id = ?", (t["memory_id"],)
+                ).fetchone()
+                msgs = [
+                    m for m in json.loads(t["message_ids_json"])
+                    if self.conn.execute("SELECT 1 FROM messages WHERE id = ?", (m,)).fetchone()
+                ]
+                obs = [
+                    o for o in json.loads(t["observation_ids_json"])
+                    if self.conn.execute("SELECT 1 FROM step_observations WHERE step_id = ?", (o,)).fetchone()
+                ]
+                self._apply_forget_in_txn(t["scope"], t["memory_id"] if memory_exists else None, msgs, obs)
+                if not known:
+                    self.conn.execute(
+                        "INSERT INTO forget_tombstones(id, employee_id, memory_id, scope, content_hashes_json,"
+                        " message_ids_json, observation_ids_json, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                        (
+                            t["id"],
+                            t["employee_id"],
+                            t["memory_id"] if memory_exists else None,
+                            t["scope"],
+                            t["content_hashes_json"],
+                            t["message_ids_json"],
+                            t["observation_ids_json"],
+                            t["created_at"],
+                        ),
+                    )
+                applied += 1
+        return applied
 
     # ------------------------------------------------------------------ reads
 
@@ -309,7 +497,7 @@ class MemoryManager:
         when = at or self.clock.now()
         rows = self.conn.execute(
             "SELECT m.id, m.type, m.status, m.current_version, v.content, v.source_id, v.valid_from,"
-            " v.valid_until, s.kind AS source_kind, s.trust AS source_trust"
+            " v.valid_until, s.kind AS source_kind, s.trust AS source_trust, m.sensitivity"
             " FROM memory_fts f JOIN memories m ON m.id = f.memory_id"
             " JOIN memory_versions v ON v.memory_id = m.id AND v.version = m.current_version"
             " JOIN sources s ON s.id = v.source_id"
@@ -335,11 +523,119 @@ class MemoryManager:
                     r["source_trust"],
                     r["valid_from"],
                     r["valid_until"],
+                    r["sensitivity"],
                 )
             )
             if len(hits) >= limit:
                 break
         return hits
+
+    _HIT_SQL = (
+        "SELECT m.id, m.type, m.status, m.current_version, v.content, v.source_id, v.valid_from,"
+        " v.valid_until, s.kind AS source_kind, s.trust AS source_trust, m.sensitivity"
+        " FROM memories m JOIN memory_versions v ON v.memory_id = m.id AND v.version = m.current_version"
+        " JOIN sources s ON s.id = v.source_id"
+    )
+
+    def _hit(self, r: sqlite3.Row, when: datetime) -> MemoryHit | None:
+        if r["valid_from"] and parse_utc(r["valid_from"]) > when:
+            return None
+        if r["valid_until"] and parse_utc(r["valid_until"]) <= when:
+            return None
+        return MemoryHit(
+            r["id"], r["type"], r["status"], r["current_version"], r["content"], r["source_id"],
+            r["source_kind"], r["source_trust"], r["valid_from"], r["valid_until"], r["sensitivity"],
+        )
+
+    def get_current(self, memory_id: str, at: datetime | None = None) -> MemoryHit | None:
+        """The current version of a CONFIRMED memory valid now, or None."""
+        r = self.conn.execute(self._HIT_SQL + " WHERE m.id = ? AND m.status = 'confirmed'", (memory_id,)).fetchone()
+        return self._hit(r, at or self.clock.now()) if r is not None else None
+
+    def search_terms(self, *, employee_id: str, terms: list[str], limit: int = 8) -> list[MemoryHit]:
+        """Confirmed memories matching ANY of the prefix terms (already folded to [a-z0-9]), bm25-ranked."""
+        safe = [t for t in terms if re.fullmatch(r"[a-z0-9]{2,40}", t)]
+        if not safe:
+            raise AtlasError(ErrorCode.INVALID_INPUT, "empty search query")
+        rows = self.conn.execute(
+            self._HIT_SQL.replace("FROM memories m", "FROM memory_fts f JOIN memories m ON m.id = f.memory_id")
+            + " WHERE memory_fts MATCH ? AND m.employee_id = ? AND m.status = 'confirmed'"
+            " ORDER BY bm25(memory_fts) LIMIT ?",
+            (" OR ".join(f"{t}*" for t in safe), employee_id, limit * 3),
+        ).fetchall()
+        when = self.clock.now()
+        hits = [h for h in (self._hit(r, when) for r in rows) if h is not None]
+        return hits[:limit]
+
+    def list_for_owner(self, employee_id: str, statuses: tuple[str, ...], limit: int) -> list[dict[str, Any]]:
+        """The Memory screen (spec 8.4, 21.2): content, source, validity, confirmation and version."""
+        rows = self.conn.execute(
+            "SELECT m.id, m.type, m.status, m.sensitivity, m.current_version, m.updated_at, v.content,"  # noqa: S608
+            " v.valid_from, v.valid_until, s.kind AS source_kind, s.trust AS source_trust"
+            " FROM memories m JOIN memory_versions v ON v.memory_id = m.id AND v.version = m.current_version"
+            " JOIN sources s ON s.id = v.source_id WHERE m.employee_id = ?"
+            f" AND m.status IN ({','.join('?' * len(statuses))}) ORDER BY m.updated_at DESC LIMIT ?",
+            (employee_id, *statuses, limit),
+        ).fetchall()
+        return [
+            {
+                "memory_id": r["id"],
+                "type": r["type"],
+                "status": r["status"],
+                "sensitivity": r["sensitivity"],
+                "version": r["current_version"],
+                "content": r["content"],
+                "valid_from": r["valid_from"],
+                "valid_until": r["valid_until"],
+                "source_kind": r["source_kind"],
+                "source_trust": r["source_trust"],
+                "updated_at": r["updated_at"],
+            }
+            for r in rows
+        ]
+
+    def export_for_owner(self, employee_id: str) -> dict[str, Any]:
+        """Export with manifest (spec 9.3): every memory with all versions and sources; forgotten content
+        is not exported (its tombstone ids are, without content)."""
+        memories = []
+        for m in self.conn.execute(
+            "SELECT id, type, status, sensitivity, created_at FROM memories WHERE employee_id = ? ORDER BY created_at",
+            (employee_id,),
+        ).fetchall():
+            versions = [
+                {
+                    "version": v["version"],
+                    "content": v["content"],
+                    "valid_from": v["valid_from"],
+                    "valid_until": v["valid_until"],
+                    "recorded_at": v["recorded_at"],
+                    "source": {"kind": v["kind"], "trust": v["trust"], "ref": v["ref"]},
+                }
+                for v in self.conn.execute(
+                    "SELECT v.*, s.kind, s.trust, s.ref FROM memory_versions v JOIN sources s ON s.id = v.source_id"
+                    " WHERE v.memory_id = ? ORDER BY v.version",
+                    (m["id"],),
+                )
+                if v["content"]
+            ]
+            memories.append({**dict(m), "versions": versions})
+        tombstones = [
+            {"memory_id": t[0], "scope": t[1], "created_at": t[2]}
+            for t in self.conn.execute(
+                "SELECT memory_id, scope, created_at FROM forget_tombstones WHERE employee_id = ?", (employee_id,)
+            )
+        ]
+        return {
+            "manifest": {
+                "schema": "atlas.memories.export/1",
+                "employee_id": employee_id,
+                "exported_at": to_utc_str(self.clock.now()),
+                "memories": len(memories),
+                "note": "conteúdo esquecido não é exportado; os tombstones registram apenas o fato",
+            },
+            "memories": memories,
+            "forgotten": tombstones,
+        }
 
     def history(self, memory_id: str) -> list[tuple[int, str, str]]:
         """(version, content, source_id) oldest first. Superseded versions remain traceable."""

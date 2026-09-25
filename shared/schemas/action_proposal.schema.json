@@ -6,31 +6,69 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema_version", "task_id", "step_id", "tool_id", "tool_version", "input",
-    "expected_outcome", "verification"
+    "schema_version",
+    "task_id",
+    "step_id",
+    "tool_id",
+    "tool_version",
+    "input",
+    "expected_outcome",
+    "verification",
+    "instruction_revision"
   ],
   "properties": {
-    "schema_version": { "$ref": "common.schema.json#/$defs/schema_version" },
-    "task_id": { "$ref": "common.schema.json#/$defs/uuid" },
-    "step_id": { "$ref": "common.schema.json#/$defs/uuid" },
-    "tool_id": { "$ref": "common.schema.json#/$defs/tool_id" },
-    "tool_version": { "$ref": "common.schema.json#/$defs/semver" },
-    "input": { "type": "object" },
-    "expected_outcome": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "schema_version": {
+      "$ref": "common.schema.json#/$defs/schema_version"
+    },
+    "task_id": {
+      "$ref": "common.schema.json#/$defs/uuid"
+    },
+    "step_id": {
+      "$ref": "common.schema.json#/$defs/uuid"
+    },
+    "tool_id": {
+      "$ref": "common.schema.json#/$defs/tool_id"
+    },
+    "tool_version": {
+      "$ref": "common.schema.json#/$defs/semver"
+    },
+    "input": {
+      "type": "object"
+    },
+    "expected_outcome": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
     "verification": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "required"],
+      "required": [
+        "kind",
+        "required"
+      ],
       "properties": {
         "kind": {
           "type": "string",
           "enum": [
-            "provider_receipt", "artifact_hash", "file_opens", "deterministic_check",
-            "source_check", "human_confirmation", "none"
+            "provider_receipt",
+            "artifact_hash",
+            "file_opens",
+            "deterministic_check",
+            "source_check",
+            "human_confirmation",
+            "none"
           ]
         },
-        "required": { "type": "boolean" }
+        "required": {
+          "type": "boolean"
+        }
       }
+    },
+    "instruction_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Task instruction revision the proposal was decided under; the broker refuses a stale one."
     }
   }
 }

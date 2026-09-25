@@ -28,6 +28,8 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
+from runtime.notifications import texts
+from runtime.notifications.outbox import enqueue_in_txn
 from runtime.tasks.engine import Lease, TaskEngine
 from runtime.tasks.state_machine import TaskState
 from runtime.tools.registry import RegistryError, ToolManifest, ToolRegistry
@@ -190,7 +192,7 @@ class Broker:
                     return early
                 action_id, idem_key, warnings = early
         except AtlasError as exc:
-            if exc.code == ErrorCode.UNAUTHORIZED:
+            if exc.code in (ErrorCode.UNAUTHORIZED, ErrorCode.VERSION_CONFLICT):
                 self._journal_rejection(lease, str(exc))
             raise
 
@@ -388,6 +390,16 @@ class Broker:
     ) -> DispatchResult | tuple[str, str | None, list[str]]:
         employee_id = task["employee_id"]
         worker = Actor("worker", lease.worker_id, "internal")
+        if proposal["instruction_revision"] != task["instruction_revision"]:
+            # Linearization point for corrections (A3-03): a proposal decided under older instructions
+            # is refused inside the dispatch transaction, before anything is authorized or sent.
+            raise AtlasError(
+                ErrorCode.VERSION_CONFLICT,
+                f"instructions changed (revision {proposal['instruction_revision']} -> "
+                f"{task['instruction_revision']}); proposal discarded before dispatch",
+                persisted="nothing dispatched",
+                recommended_action="re-plan with the current instructions",
+            )
         existing = self.ledger.find_open_in_txn(task["id"], input_hash)
         mandate = self.mandates.find_applicable_in_txn(
             employee_id=employee_id, tool_id=manifest.tool_id, destination=destination, cost=cost
@@ -418,6 +430,7 @@ class Broker:
                 input_hash=input_hash,
                 destination=destination,
                 worker_id=lease.worker_id,
+                instruction_revision=int(task["instruction_revision"]),
             )
         self.ledger.annotate_policy_in_txn(
             action_id, decision.outcome, decision.reason_code, decision.policy_version
@@ -479,6 +492,10 @@ class Broker:
                 self.tasks.transition_in_txn(
                     task, TaskState.WAITING_APPROVAL, BROKER, f"approval needed for {manifest.tool_id}"
                 )
+                enqueue_in_txn(
+                    self.conn, self.clock, employee_id=employee_id, task_id=task["id"], kind="status",
+                    content=texts.APPROVAL_NEEDED,
+                )
                 return DispatchResult("APPROVAL_REQUIRED", action_id, decision.reason_code, approval=approval)
             # APPROVED: reserve atomically against the exact hash
             self.approvals.reserve_in_txn(
@@ -510,6 +527,10 @@ class Broker:
                 )
                 self.tasks.transition_in_txn(
                     task, TaskState.BLOCKED, BROKER, f"budget: {exc.reason}", blocked_reason="BUDGET_EXCEEDED"
+                )
+                enqueue_in_txn(
+                    self.conn, self.clock, employee_id=employee_id, task_id=task["id"], kind="status",
+                    content=texts.BUDGET_EXHAUSTED,
                 )
                 event("action.budget_blocked", f"{manifest.tool_id}: {exc.reason}")
                 return DispatchResult("BUDGET_EXCEEDED", action_id, exc.reason)
@@ -637,6 +658,10 @@ class Broker:
                         BROKER,
                         "external effect unknown",
                         blocked_reason="EXTERNAL_EFFECT_UNKNOWN",
+                    )
+                    enqueue_in_txn(
+                        self.conn, self.clock, employee_id=task["employee_id"], task_id=task["id"], kind="status",
+                        content=texts.EFFECT_UNKNOWN,
                     )
                 final = "UNKNOWN"
             tool_result = {

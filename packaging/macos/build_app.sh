@@ -24,6 +24,8 @@ echo "$PBS_SHA256  $TMP/python.tgz" | shasum -a 256 -c -
 tar -xzf "$TMP/python.tgz" -C "$APP/Contents/Resources"   # -> Resources/python
 "$APP/Contents/Resources/python/bin/python3" -m pip install --quiet --no-deps --only-binary=:all: \
   --target "$APP/Contents/Resources/site-packages" -r "$ROOT/packaging/macos/runtime-requirements.lock"
+# N23: SBOM of what really ships (fails if the installed runtime differs from the lock).
+"$APP/Contents/Resources/python/bin/python3" "$ROOT/scripts/sbom.py"   --lock "$ROOT/packaging/macos/runtime-requirements.lock" --site "$APP/Contents/Resources/site-packages"   --out "$APP/Contents/Resources/sbom.cdx.json"
 
 for pkg in shared storage security runtime core config; do
   cp -R "$ROOT/$pkg" "$APP/Contents/Resources/core-src/$pkg"

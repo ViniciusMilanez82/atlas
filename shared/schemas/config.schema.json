@@ -154,6 +154,42 @@
           "const": false
         }
       }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Scoped consents for disclosing SENSITIVE data to a provider (spec 9.2). Absent = deny.",
+      "properties": {
+        "sensitive_consents": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "provider",
+              "purposes"
+            ],
+            "properties": {
+              "provider": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "purposes": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "enum": [
+                    "conversation",
+                    "task"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

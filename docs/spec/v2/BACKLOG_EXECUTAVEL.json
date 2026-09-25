@@ -1,0 +1,1792 @@
+{
+  "contract": "2.0",
+  "baseline": "d81cece2713ccb5b12e58902e55b05a614467951",
+  "generated_on": "2026-09-24",
+  "notice": "Plano normativo. Status não comprova execução. Revalidar HEAD antes de alterar.",
+  "items": [
+    {
+      "id": "A3-01",
+      "title": "A conversa livre não recupera a memória duradoura",
+      "kind": "correcao_auditoria",
+      "priority": "P1",
+      "gate": "G2",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "7–9",
+      "source_evidence": "ESTÁTICA",
+      "existing_entrypoints": [
+        "core/conversation.py::_chat",
+        "runtime/memory/manager.py::search"
+      ],
+      "implementation": "Criar um serviço de contexto comum a conversa e tarefas: recuperar memórias pertinentes, com classificação, fonte, validade e confirmação. Preservar identidade e preferências aplicáveis mesmo quando o vocabulário da pergunta muda. Não despejar o banco inteiro no modelo.",
+      "acceptance": "Guardar e confirmar fato sintético; inserir mais de 20 mensagens; reiniciar; perguntar com paráfrase. Verificar que a fonte correta chega ao contexto, que a resposta a utiliza e que uma memória não confirmada não vira autoridade.",
+      "scenarios": [
+        "T04"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_01.py",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-02",
+      "title": "A classificação de dados sensíveis se perde antes da inferência",
+      "kind": "correcao_auditoria",
+      "priority": "P1",
+      "gate": "G1",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "4, 9, 12",
+      "source_evidence": "ESTÁTICA + SQL ISOLADO",
+      "existing_entrypoints": [
+        "runtime/memory/manager.py::MemoryHit/search",
+        "runtime/agent/loop.py::_context/_decide",
+        "core/conversation.py::_remember/_chat",
+        "runtime/models/context.py::ContextItem",
+        "runtime/models/router.py::candidates",
+        "runtime/tools/builtin.py::search_memory"
+      ],
+      "implementation": "Propagar classificação e proveniência em mensagens, memórias, anexos, observações, resumos e entregáveis. Calcular a classificação agregada do contexto efetivamente enviado e aplicar um controle de saída independente do LLM imediatamente antes do transporte. Confirmar uma memória não deve equivaler a autorizar sua divulgação à nuvem.",
+      "acceptance": "Usar sentinela sintética SENSITIVE em memória e anexo: sem consentimento, nenhuma chamada ao provedor deve conter a sentinela. Com consentimento escopado, transmitir somente o necessário. Repetir após resumo, correção, retomada, mensagem de confirmação e troca de provedor.",
+      "scenarios": [
+        "T08"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_02.py",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-03",
+      "title": "Correções em execução não entram no próximo passo",
+      "kind": "correcao_auditoria",
+      "priority": "P1",
+      "gate": "G1",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "5–7",
+      "source_evidence": "ESTÁTICA",
+      "existing_entrypoints": [
+        "core/conversation.py::handle (correction)",
+        "runtime/agent/loop.py::_owner_messages/_resume_state/_context/run"
+      ],
+      "implementation": "Versionar instruções por tarefa, vincular explicitamente a tarefa alvo e detectar alteração antes de cada inferência e despacho. Uma correção material deve invalidar propostas antigas e exigir replanejamento/reaquisição da autorização pertinente; preservar o que já aconteceu.",
+      "acceptance": "Pausar um provedor falso entre decisão e execução, enviar correção por outra conexão e liberar. A ação antiga não pode ocorrer. O próximo contexto deve conter a correção, sem novo task_id e sem repetição de efeitos já confirmados.",
+      "scenarios": [
+        "T19"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_03.py",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-04",
+      "title": "“Pare tudo” pode ser ignorado ou esperar atrás da conversa",
+      "kind": "correcao_auditoria",
+      "priority": "P1",
+      "gate": "G1",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "6, 21–22",
+      "source_evidence": "ESTÁTICA",
+      "existing_entrypoints": [
+        "platform/macos/AtlasKit/Sources/AtlasKit/AtlasViewModel.swift::stopAll/send/deliver",
+        "platform/macos/AtlasKit/Sources/AtlasKit/AtlasConnection.swift::call/callSync"
+      ],
+      "implementation": "Implementar canal de controle prioritário e independente, que não dependa de isSending, do modelo ou da fila de conversas. Registrar a ordem de parada, revogar leases, interromper ferramentas/chamadas canceláveis e informar efeitos já ocorridos ou incertos.",
+      "acceptance": "Com envio pendente, provedor sem resposta, upload em andamento e reconexão, acionar o mesmo botão/atalho do app. Medir recebimento da parada e ausência de novos despachos; não aceitar apenas uma mudança visual ou resposta textual.",
+      "scenarios": [
+        "T20"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_04.py + platform/macos/AtlasKit/Tests/AtlasKitTests/A304RegressionTests.swift",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-05",
+      "title": "Lease de 60 segundos pode expirar durante uma chamada válida",
+      "kind": "correcao_auditoria",
+      "priority": "P1",
+      "gate": "G1",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "6, 22",
+      "source_evidence": "ESTÁTICA; REPRODUÇÃO INTEGRADA PENDENTE",
+      "existing_entrypoints": [
+        "runtime/tasks/engine.py::DEFAULT_LEASE_TTL/check_lease_in_txn/heartbeat",
+        "runtime/models/types.py::ModelRequest",
+        "runtime/agent/loop.py::run/_run_tool",
+        "core/daemon.py::worker"
+      ],
+      "implementation": "Renovar o lease por supervisor independente do trabalho bloqueante, com fencing e limite total; adicionar watchdog de leases expirados que reconcilie efeitos e retome com segurança. Não resolver somente aumentando o TTL.",
+      "acceptance": "Com relógio injetável, fazer a inferência ultrapassar o TTL; cobrir resposta tardia, cancelamento, queda e trabalhador obsoleto. A tarefa deve terminar em estado explícito e recuperável, sem ação duplicada nem RUNNING sem heartbeat.",
+      "scenarios": [
+        "T21"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_05.py",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-06",
+      "title": "Resposta estruturada incompleta pode matar o worker sem mudar a saúde",
+      "kind": "correcao_auditoria",
+      "priority": "P1",
+      "gate": "G1",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "4, 6, 11",
+      "source_evidence": "ESTÁTICA + FRAGMENTO ISOLADO",
+      "existing_entrypoints": [
+        "runtime/agent/loop.py::_decide/run/_validate",
+        "core/conversation.py::_chat",
+        "core/daemon.py::worker",
+        "core/service.py::_health"
+      ],
+      "implementation": "Validar o schema completo, tipos e limites na fronteira antes de qualquer acesso. Acrescentar supervisão da thread/processo, estado de erro recuperável, diagnóstico seguro e reconciliação; não esconder a exceção com sucesso fictício.",
+      "acceptance": "Testar JSON como lista, campos ausentes, summary null/int/list, question numérica, decisão inválida e erro interno de ferramenta. Nenhum caso pode matar silenciosamente o worker ou deixar saúde positiva sem executor.",
+      "scenarios": [
+        "T22"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_06.py",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-07",
+      "title": "“Entrega verificada” não comprova que o objetivo foi atendido",
+      "kind": "correcao_auditoria",
+      "priority": "P1",
+      "gate": "G2",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "13",
+      "source_evidence": "ESTÁTICA + VERIFICAÇÕES DE CONTEÚDO ISOLADAS",
+      "existing_entrypoints": [
+        "runtime/verification/verifier.py::verify_text_artifact/_sources",
+        "core/daemon.py::worker",
+        "runtime/agent/loop.py::_complete"
+      ],
+      "implementation": "Separar integridade do arquivo, cobertura do pedido, exatidão de cálculos, existência/proveniência das fontes e revisão de conteúdo. Critérios devem derivar do pedido integral, com evidência por critério. Revisão por outro LLM pode ajudar, mas não é prova factual isoladamente.",
+      "acceptance": "Entregar propositalmente assunto errado, cálculos errados, fonte inexistente e cláusula omitida. Cada falha deve impedir conclusão ou produzir entrega parcial claramente rotulada. Um arquivo válido não pode satisfazer automaticamente critérios de negócio distintos.",
+      "scenarios": [
+        "T23"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_07.py",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-08",
+      "title": "A palavra portuguesa “todo” é tratada como placeholder",
+      "kind": "correcao_auditoria",
+      "priority": "P2",
+      "gate": "G2",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "13",
+      "source_evidence": "REGEX ISOLADA REPRODUZIDA",
+      "existing_entrypoints": [
+        "runtime/verification/verifier.py::PLACEHOLDERS"
+      ],
+      "implementation": "Detectar marcadores explícitos contextualizados, como TODO: em estrutura de desenvolvimento, sem confundir palavras comuns. A política de placeholders precisa considerar idioma e tipo de artefato.",
+      "acceptance": "Aceitar “todo”, “todos” e frases normais; rejeitar TODO: completar, [inserir valor] e marcadores claros nos contextos apropriados. Incluir a lista como regressão em português.",
+      "scenarios": [
+        "T23"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_08.py",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-09",
+      "title": "Aceitar PDF/Office/imagem não significa extrair seu conteúdo",
+      "kind": "correcao_auditoria",
+      "priority": "P1",
+      "gate": "G2",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "10, 14",
+      "source_evidence": "ESTÁTICA",
+      "existing_entrypoints": [
+        "platform/macos/AtlasKit/Sources/AtlasApp/AtlasApp.swift::pickFiles",
+        "runtime/artifacts/manager.py::EXTENSIONS/import_file",
+        "runtime/tools/builtin.py::read_text"
+      ],
+      "implementation": "Implementar extratores por formato com proveniência (página, célula, seção), limites e falha explícita; usar visão/OCR apenas quando necessário e autorizado. Até então, explicar no app quais formatos são apenas armazenados e quais são compreendidos.",
+      "acceptance": "Comparar documentos sintéticos em TXT, PDF com texto, PDF digitalizado e Office; conferir valores em tabelas e cláusulas finais. Arquivo ilegível deve gerar diagnóstico, nunca análise fabricada.",
+      "scenarios": [
+        "T12"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_09.py",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-10",
+      "title": "Documentos e observações longos são truncados silenciosamente",
+      "kind": "correcao_auditoria",
+      "priority": "P1",
+      "gate": "G2",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "10, 14",
+      "source_evidence": "ESTÁTICA + CORTE DE TEXTO ISOLADO",
+      "existing_entrypoints": [
+        "runtime/tools/builtin.py::read_text",
+        "runtime/agent/loop.py::_run_tool/_observe"
+      ],
+      "implementation": "Guardar o conteúdo completo como artefato e retornar referências com paginação/ranges, tamanho total e has_more. Persistir observações estruturadas válidas; o contexto pode resumir, mas a fonte precisa continuar acessível. Exigir cobertura dos trechos relevantes antes de concluir.",
+      "acceptance": "Colocar a informação decisiva depois dos caracteres 20.000 e 200.000. O agente deve recuperá-la por outra chamada, registrar o intervalo e não concluir que leu o documento completo só porque leu o prefixo.",
+      "scenarios": [
+        "T13"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_10.py",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-11",
+      "title": "Deduplicação de mensagem não recupera processamento interrompido",
+      "kind": "correcao_auditoria",
+      "priority": "P1",
+      "gate": "G1",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "5",
+      "source_evidence": "ESTÁTICA",
+      "existing_entrypoints": [
+        "core/conversation.py::handle",
+        "platform/macos/AtlasKit/Sources/AtlasKit/AtlasAPI.swift::send",
+        "platform/macos/AtlasKit/Sources/AtlasKit/AtlasConnection.swift::callSync"
+      ],
+      "implementation": "Criar registro durável de requisição com hash do payload e estados RECEIVED/PROCESSING/COMPLETED/UNKNOWN. O reenvio deve devolver o resultado definitivo ou retomar a requisição incompleta com reconciliação. Mesmo ID com payload diferente deve ser conflito explícito.",
+      "acceptance": "Injetar queda depois da mensagem, depois da inferência, antes/depois da criação da tarefa e antes da resposta. O mesmo client_message_id deve levar a um único resultado recuperável, não a um reconhecimento vazio permanente.",
+      "scenarios": [
+        "T16"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_11.py",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-12",
+      "title": "Tarefa pode ser executada antes de todos os anexos serem vinculados",
+      "kind": "correcao_auditoria",
+      "priority": "P1",
+      "gate": "G1",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "4–5",
+      "source_evidence": "ESTÁTICA; CORRIDA A REPRODUZIR",
+      "existing_entrypoints": [
+        "core/conversation.py::_delegate",
+        "core/service.py::_task_create",
+        "runtime/tasks/engine.py::create",
+        "core/daemon.py::worker"
+      ],
+      "implementation": "Preparar objetivo, mensagem, anexos e critérios atomicamente, publicando a tarefa executável somente no último commit; ou usar um estado de preparação não elegível ao worker. Validar a operação inteira antes de expor o trabalho.",
+      "acceptance": "Usar duas conexões e barreiras de sincronização para forçar a seleção entre commits. O worker não pode adquirir a tarefa antes de seu pacote de entrada estar completo.",
+      "scenarios": [
+        "T17"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_12.py",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-13",
+      "title": "Roteamento por palavras-chave captura perguntas que não são status",
+      "kind": "correcao_auditoria",
+      "priority": "P2",
+      "gate": "G2",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "7",
+      "source_evidence": "REGEX ISOLADA REPRODUZIDA",
+      "existing_entrypoints": [
+        "core/conversation.py::_STATUS/_MEMORY/handle"
+      ],
+      "implementation": "Manter comandos exatos para parada e ações de autoridade; para intenções gerais usar contexto, limites lexicais e desambiguação. Preservar o texto original e normalizar apenas para reconhecimento, sem perder a extensão correta do trecho capturado.",
+      "acceptance": "Criar testes de paráfrases em português: estado de tarefa versus tempo/economia/explicação do software; memória versus lembrete. Perguntas semelhantes com intenções diferentes devem seguir rotas diferentes.",
+      "scenarios": [
+        "T03",
+        "T10"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_13.py",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-14",
+      "title": "Pergunta pendente captura assuntos novos como se fossem respostas",
+      "kind": "correcao_auditoria",
+      "priority": "P2",
+      "gate": "G2",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "7",
+      "source_evidence": "ESTÁTICA",
+      "existing_entrypoints": [
+        "core/conversation.py::_pending_question/handle/_answer",
+        "platform/macos/AtlasKit/Sources/AtlasKit/AtlasViewModel.swift::send"
+      ],
+      "implementation": "Oferecer responder à pergunta/tarefa por ID na interface e no contrato. Inferir continuidade somente quando inequívoca; assunto novo, status e comandos explícitos não devem ser consumidos como resposta.",
+      "acceptance": "Testar uma e duas perguntas simultâneas, resposta fora de ordem, pedido novo, pergunta de status e resposta a pergunta já resolvida. Só a tarefa correta pode ser retomada.",
+      "scenarios": [
+        "T10"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_14.py",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-15",
+      "title": "Anexar um arquivo força delegação mesmo quando o usuário só compartilha",
+      "kind": "correcao_auditoria",
+      "priority": "P2",
+      "gate": "G2",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "7, 14",
+      "source_evidence": "ESTÁTICA",
+      "existing_entrypoints": [
+        "platform/macos/AtlasKit/Sources/AtlasKit/AtlasViewModel.swift::deliver",
+        "core/conversation.py::handle/_delegate"
+      ],
+      "implementation": "Separar importação/armazenamento, referência em conversa, gravação de memória e delegação. Não converter anexo em autorização tácita para criar tarefa. Vincular anexos a respostas/correções na tarefa alvo.",
+      "acceptance": "Enviar arquivo para guardar, arquivo como complemento de tarefa e arquivo para análise nova. Os três cenários precisam produzir estados e vínculos diferentes, sem tarefas extras.",
+      "scenarios": [
+        "T11"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_15.py",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-16",
+      "title": "Corrigir uma memória remove sua validade temporal",
+      "kind": "correcao_auditoria",
+      "priority": "P2",
+      "gate": "G2",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "8",
+      "source_evidence": "SQL ISOLADO REPRODUZIDO",
+      "existing_entrypoints": [
+        "runtime/memory/manager.py::correct/search"
+      ],
+      "implementation": "Preservar a janela anterior por padrão e permitir uma alteração temporal explícita, versionada e validada. Correção de texto não deve mudar silenciosamente a vigência.",
+      "acceptance": "Corrigir memória expirada e memória futura. As duas devem continuar respeitando a janela original. Incluir um teste separado para alteração de vigência autorizada.",
+      "scenarios": [
+        "T06"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_16.py",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-17",
+      "title": "Excluir memória não elimina cópias usadas no contexto",
+      "kind": "correcao_auditoria",
+      "priority": "P2",
+      "gate": "G2",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "8–9, 23",
+      "source_evidence": "ESTÁTICA",
+      "existing_entrypoints": [
+        "runtime/memory/manager.py::delete",
+        "core/conversation.py::_remember/_chat",
+        "runtime/agent/loop.py::_observe/_resume_state"
+      ],
+      "implementation": "Definir escopos explícitos de exclusão e tombstones por origem; impedir reintrodução por histórico/resumo/observação. Oferecer revisão e exclusão na interface, explicando limites de backups. Não prometer apagar cópias externas fora do controle do produto.",
+      "acceptance": "Guardar, confirmar, usar, excluir e perguntar novamente em seguida e após reiniciar. Inspecionar todo contexto enviado. Testar exclusão parcial versus exclusão completa autorizada e política para backups.",
+      "scenarios": [
+        "T07"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_17.py",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-18",
+      "title": "O contexto pode preservar instruções antigas e descartar a atual",
+      "kind": "correcao_auditoria",
+      "priority": "P1",
+      "gate": "G1",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "8–9, 11",
+      "source_evidence": "FRAGMENTO ISOLADO + ESTÁTICA",
+      "existing_entrypoints": [
+        "runtime/models/context.py::ContextBuilder.build",
+        "core/conversation.py::_chat",
+        "runtime/agent/loop.py::_context"
+      ],
+      "implementation": "Reservar espaço para a mensagem vigente e restrições ativas; selecionar por relevância e recência dentro de cada autoridade. Resumir histórico sem transformar saídas do modelo em evidência verificada. Bloquear a inferência ou avisar se o contexto obrigatório não couber.",
+      "acceptance": "Saturar o histórico com mensagens longas e inserir uma correção curta no fim. A última instrução precisa estar presente em todas as chamadas. Sentinelas de texto antigo não confirmado não podem surgir como fato verificado.",
+      "scenarios": [
+        "T09"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_18.py",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-19",
+      "title": "Reduzir orçamento não atualiza clientes já em execução",
+      "kind": "correcao_auditoria",
+      "priority": "P1",
+      "gate": "G1",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "12",
+      "source_evidence": "ESTÁTICA; TESTE CONCORRENTE PENDENTE",
+      "existing_entrypoints": [
+        "core/intelligence.py::_client/build_client",
+        "core/daemon.py::_components/worker",
+        "security/budget/budget.py::BudgetLimits/BudgetManager.reserve_in_txn",
+        "runtime/models/router.py::call"
+      ],
+      "implementation": "Ler a revisão de política/orçamento vigente dentro da transação de cada reserva e despacho. Definir como reduções afetam reservas existentes e cancelar novos gastos incompatíveis; não apagar consumo já realizado.",
+      "acceptance": "Executar tarefa em múltiplos passos, reduzir teto por outra conexão entre dois passos e verificar que a chamada seguinte é barrada pelo novo limite. Testar aumento, revogação de consentimento e concorrência com Testar inteligência.",
+      "scenarios": [
+        "T24"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_19.py",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-20",
+      "title": "Transporte HTTP precisa vincular credenciais ao destino final",
+      "kind": "correcao_auditoria",
+      "priority": "P1",
+      "gate": "G1",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "12, 15–16",
+      "source_evidence": "ESTÁTICA + CONSTRUÇÃO DE REQUEST ISOLADA; CONDICIONAL",
+      "existing_entrypoints": [
+        "runtime/models/openai_responses.py::__init__/_request"
+      ],
+      "implementation": "Analisar scheme/host/porta com parser; permitir loopback exato apenas em modo de testes. Recusar redirects ou revalidar origem sem repassar Authorization entre origens; vincular uso da credencial ao destino efetivo e rejeitar endpoint arbitrário na distribuição normal.",
+      "acceptance": "Usar servidores locais de teste para 301/302/303/307/308: o destino de outra origem não pode receber Authorization. Testar prefixos enganosos, downgrade HTTPS/HTTP, URL com usuário e porta. Nunca usar segredo real nesses testes.",
+      "scenarios": [
+        "T26"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_20.py",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-21",
+      "title": "Arrastar vários arquivos pode importar apenas o primeiro",
+      "kind": "correcao_auditoria",
+      "priority": "P2",
+      "gate": "G3",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "14, 21",
+      "source_evidence": "ESTÁTICA; REPRODUÇÃO VISUAL PENDENTE",
+      "existing_entrypoints": [
+        "platform/macos/AtlasKit/Sources/AtlasApp/AtlasApp.swift::ConversationView.onDrop",
+        "platform/macos/AtlasKit/Sources/AtlasKit/AtlasViewModel.swift::attach"
+      ],
+      "implementation": "Usar fila de importação com resultado por arquivo, cancelamento e resumo de erros. Nunca descartar arquivos silenciosamente por estar ocupado.",
+      "acceptance": "Arrastar dez arquivos com transporte artificialmente lento: todos devem aparecer como importados ou falhar explicitamente. Repetir pelo seletor e misturar arquivos inválidos.",
+      "scenarios": [
+        "T14"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_21.py + platform/macos/AtlasKit/Tests/AtlasKitTests/A321RegressionTests.swift",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-22",
+      "title": "Reenvio não conserva todo o payload original",
+      "kind": "correcao_auditoria",
+      "priority": "P2",
+      "gate": "G1",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "5, 14, 21",
+      "source_evidence": "ESTÁTICA",
+      "existing_entrypoints": [
+        "platform/macos/AtlasKit/Sources/AtlasKit/AtlasViewModel.swift::failedDraft/retryFailedSend/deliver",
+        "platform/macos/AtlasKit/Sources/AtlasKit/AtlasAPI.swift::importFile"
+      ],
+      "implementation": "Persistir um envelope imutável de envio com texto, anexos, tarefa/resposta alvo, intenção, hash e idempotency key. Implementar recibo consultável da importação. Alterar anexos deve gerar novo envelope, não reutilizar o ID anterior.",
+      "acceptance": "Derrubar conexão após gravar mensagem/importar arquivo, alterar anexos na UI e tentar novamente. Recuperar o pedido original ou apresentar conflito claro; não criar cópias órfãs ou reinterpretar o payload.",
+      "scenarios": [
+        "T15"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_22.py + platform/macos/AtlasKit/Tests/AtlasKitTests/A322RegressionTests.swift",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-23",
+      "title": "Atualização do histórico não reconcilia mensagens existentes nem lacunas",
+      "kind": "correcao_auditoria",
+      "priority": "P2",
+      "gate": "G3",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "5, 21",
+      "source_evidence": "ESTÁTICA",
+      "existing_entrypoints": [
+        "platform/macos/AtlasKit/Sources/AtlasKit/AtlasViewModel.swift::merge/refresh/loadOlder",
+        "core/conversation.py::_set_kind/history"
+      ],
+      "implementation": "Fazer upsert por ID com versão/sequence e ordenar por sequência estável. Preencher explicitamente intervalos perdidos desde o último cursor, em vez de apenas anexar a última página.",
+      "acceptance": "Mudar kind/task_id de mensagem visível, reconectar depois de mais de 50 mensagens e paginar para trás. Verificar ausência de duplicação, lacunas e ordem incorreta.",
+      "scenarios": [
+        "T03",
+        "T15"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_23.py + platform/macos/AtlasKit/Tests/AtlasKitTests/A323RegressionTests.swift",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-24",
+      "title": "Uploads têm coordenação e limpeza incompletas",
+      "kind": "correcao_auditoria",
+      "priority": "P2",
+      "gate": "G1",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "5, 14",
+      "source_evidence": "ESTÁTICA; TESTE CONCORRENTE PENDENTE",
+      "existing_entrypoints": [
+        "core/service.py::__init__/_upload/_import/_upload_path",
+        "core/daemon.py::service"
+      ],
+      "implementation": "Coordenar uploads por ID entre conexões, com metadados transacionais, estado final e recibo. Definir quota agregada, prazo de expiração e limpeza recuperável; usar escrita segura e não tratar staging como arquivo já aprovado.",
+      "acceptance": "Enviar o mesmo chunk simultaneamente por duas conexões, fechar a conexão antes de importar, reiniciar e reenviar. Conferir hash final, uma única importação e remoção dos temporários expirados.",
+      "scenarios": [
+        "T14",
+        "T15"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_24.py",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-25",
+      "title": "Leitura em chunks relê e recalcula hash do arquivo inteiro",
+      "kind": "correcao_auditoria",
+      "priority": "P3",
+      "gate": "G3",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "14",
+      "source_evidence": "ESTÁTICA + CÁLCULO",
+      "existing_entrypoints": [
+        "core/service.py::_read",
+        "runtime/artifacts/manager.py::read_bytes",
+        "platform/macos/AtlasKit/Sources/AtlasKit/AtlasAPI.swift::readArtifact"
+      ],
+      "implementation": "Abrir uma sessão de leitura de artefato imutável com verificação inicial, tamanho/hash fixos e leitura por intervalo. Preservar a verificação final e detectar adulteração sem repetir trabalho integral a cada chunk.",
+      "acceptance": "Instrumentar bytes lidos/hasheados para 1, 10 e 50 MiB. O custo deve crescer aproximadamente com o tamanho do arquivo, não com tamanho multiplicado pelo número de chunks.",
+      "scenarios": [
+        "T32"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_25.py",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-26",
+      "title": "Algumas referências por ID não validam o proprietário completo",
+      "kind": "correcao_auditoria",
+      "priority": "P2",
+      "gate": "G1",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "3–4, 9, 12",
+      "source_evidence": "ESTÁTICA; AMEAÇA CONDICIONAL A MÚLTIPLAS IDENTIDADES",
+      "existing_entrypoints": [
+        "core/conversation.py::handle (delegate existing message)",
+        "core/service.py::_mem_correct",
+        "runtime/memory/manager.py::correct"
+      ],
+      "implementation": "Aplicar verificação central por objeto: session -> owner -> employee -> conversation/task/memory/source. Conferir IDs relacionados em todas as operações, não só nos métodos mais visíveis.",
+      "acceptance": "Criar dois proprietários e dois empregados com sessões distintas e tentar delegar mensagem/corrigir memória cruzadas. Tudo deve falhar sem revelar conteúdo, inclusive quando a fonte também é fornecida por ID.",
+      "scenarios": [
+        "T27"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_26.py",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-27",
+      "title": "Notificação pode se perder depois de a tarefa mudar de estado",
+      "kind": "correcao_auditoria",
+      "priority": "P2",
+      "gate": "G1",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "5, 19",
+      "source_evidence": "ESTÁTICA",
+      "existing_entrypoints": [
+        "runtime/agent/loop.py::_tell_owner/run/_complete",
+        "core/conversation.py::notify"
+      ],
+      "implementation": "Persistir evento de notificação na mesma transação da mudança de estado, com chave idempotente e dispatcher recuperável. Uma falha de notificação não deve desfazer um efeito externo, mas precisa ficar pendente e visível para nova entrega.",
+      "acceptance": "Falhar antes/depois do commit e durante notify; reiniciar. A pergunta/entrega deve aparecer exatamente uma vez, vinculada à tarefa, e nunca desaparecer silenciosamente.",
+      "scenarios": [
+        "T18"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_27.py",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-28",
+      "title": "Inicialização não demonstra exclusão mútua entre instâncias",
+      "kind": "correcao_auditoria",
+      "priority": "P2",
+      "gate": "G1",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "22",
+      "source_evidence": "ESTÁTICA; TESTE DE DUAS INSTÂNCIAS PENDENTE",
+      "existing_entrypoints": [
+        "platform/macos/AtlasKit/Sources/AtlasKit/Supervisor.swift::start/launchCore",
+        "core/daemon.py::bootstrap/main"
+      ],
+      "implementation": "Adquirir trava interprocesso exclusiva sobre o diretório de dados antes de alterar tokens, sockets ou recuperar tarefas; distinguir instância viva de arquivos órfãos. A segunda janela deve conectar-se à instância existente ou recusar com diagnóstico.",
+      "acceptance": "Abrir duas cópias e iniciar dois Supervisores/daemons simultaneamente. Deve haver um único responsável pela recuperação/execução e nenhuma remoção do socket de processo saudável.",
+      "scenarios": [
+        "T28"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_28.py",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-29",
+      "title": "Validação da inteligência sobrevive indevidamente à troca de credencial",
+      "kind": "correcao_auditoria",
+      "priority": "P2",
+      "gate": "G1",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "11–12",
+      "source_evidence": "ESTÁTICA",
+      "existing_entrypoints": [
+        "core/intelligence.py::status/register_key/_run_check"
+      ],
+      "implementation": "Vincular validação a credencial, endpoint, modelo, capacidades e versão relevante de configuração. Invalidar ou exigir nova validação ao mudar esse vínculo, sem confundir acesso ao modelo com verificação de preço.",
+      "acceptance": "Validar uma credencial sintética A em servidor controlado, substituí-la por B sem acesso e conferir que Pronta é retirada imediatamente; repetir mudando endpoint/modelo.",
+      "scenarios": [
+        "T29"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_29.py",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-30",
+      "title": "Os botões de controle não refletem os estados realmente aceitos",
+      "kind": "correcao_auditoria",
+      "priority": "P2",
+      "gate": "G3",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "6, 21",
+      "source_evidence": "ESTÁTICA",
+      "existing_entrypoints": [
+        "platform/macos/AtlasKit/Sources/AtlasApp/AtlasApp.swift::TaskRow",
+        "runtime/tasks/engine.py::resume/_resume_target",
+        "core/daemon.py::worker"
+      ],
+      "implementation": "Derivar ações disponíveis da máquina de estados; criar percurso explícito de desbloqueio que revalide causa, orçamento e efeitos incertos. Não liberar compras ou redespachar UNKNOWN só para fazer o botão funcionar.",
+      "acceptance": "Testar os controles em cada estado, incluindo bloqueio de orçamento, aprovação pendente, lease vencido e resultado incerto. Só mostrar ações válidas e documentar o resultado de cada uma.",
+      "scenarios": [
+        "T30"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_30.py + platform/macos/AtlasKit/Tests/AtlasKitTests/A330RegressionTests.swift",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-31",
+      "title": "Encerrar serviços ainda pode bloquear a interface sem prazo",
+      "kind": "correcao_auditoria",
+      "priority": "P2",
+      "gate": "G3",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "22",
+      "source_evidence": "ESTÁTICA; REPRODUÇÃO MAC PENDENTE",
+      "existing_entrypoints": [
+        "platform/macos/AtlasKit/Sources/AtlasApp/AtlasApp.swift::AppController.shutdown",
+        "platform/macos/AtlasKit/Sources/AtlasKit/Supervisor.swift::stop"
+      ],
+      "implementation": "Executar shutdown fora do MainActor, com etapas limitadas: parada cooperativa, checkpoint/reconciliação, diagnóstico e término forçado controlado quando indispensável. Não ocultar que o resultado de uma ação externa pode ser desconhecido.",
+      "acceptance": "Substituir serviço por processo de teste que ignora a primeira solicitação de término. O app deve continuar responsivo e concluir ou explicar a saída dentro de um limite mensurável.",
+      "scenarios": [
+        "T31"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_31.py + platform/macos/AtlasKit/Tests/AtlasKitTests/A331RegressionTests.swift",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "A3-32",
+      "title": "Salvar resultado não preserva o nome e a extensão do arquivo",
+      "kind": "correcao_auditoria",
+      "priority": "P3",
+      "gate": "G3",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "14, 21",
+      "source_evidence": "ESTÁTICA",
+      "existing_entrypoints": [
+        "platform/macos/AtlasKit/Sources/AtlasApp/AtlasApp.swift::Bubble.saveAs",
+        "platform/macos/AtlasKit/Sources/AtlasKit/AtlasViewModel.swift::export"
+      ],
+      "implementation": "Carregar metadados do artefato para sugerir o nome completo, extensão e tipo; preservar liberdade de renomear sem trocar silenciosamente o formato.",
+      "acceptance": "Exportar TXT, Markdown, CSV e JSON sem editar o nome sugerido. Conferir extensão, conteúdo, hash e abertura no aplicativo indicado.",
+      "scenarios": [
+        "T32"
+      ],
+      "proposed_regression_path": "tests/regression/test_a3_32.py + platform/macos/AtlasKit/Tests/AtlasKitTests/A332RegressionTests.swift",
+      "depends_on": [
+        "N01"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "resultado_integracao",
+        "ambiente",
+        "limitacoes"
+      ]
+    },
+    {
+      "id": "N01",
+      "title": "Adotar contrato, baseline e rastreabilidade",
+      "kind": "pacote_produto",
+      "priority": "OBRIGATORIO_V1",
+      "gate": "G0",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "0, 26–28",
+      "depends_on": [],
+      "proposed_entrypoints": [
+        "docs/spec/",
+        "docs/PROGRESS.md",
+        "docs/REQUIREMENTS_TRACEABILITY.md"
+      ],
+      "implementation": "Registrar HEAD/estado local, ler contrato e auditoria, executar o que o ambiente permite e decompor os itens sem refazer o projeto. Criar evidência por achado e manter status real; obter primeiro teste de regressão nas classes existentes.",
+      "scenarios": [],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "teste_integrado",
+        "ambiente",
+        "limitacoes",
+        "gate"
+      ]
+    },
+    {
+      "id": "N02",
+      "title": "Authority Core e transporte de controle",
+      "kind": "pacote_produto",
+      "priority": "OBRIGATORIO_V1",
+      "gate": "G1",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "3–6, 9, 12",
+      "depends_on": [
+        "N01"
+      ],
+      "proposed_entrypoints": [
+        "core/",
+        "security/broker/",
+        "security/policy/",
+        "shared/schemas/"
+      ],
+      "implementation": "Separar interface, propostas e autoridade; introduzir versões/epochs e lane de controle independente. Todas as emissões e operações de efeito validam a política vigente no broker; runtime e guest não escrevem permissões.",
+      "scenarios": [
+        "T08",
+        "T19",
+        "T20",
+        "T27"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "teste_integrado",
+        "ambiente",
+        "limitacoes",
+        "gate"
+      ]
+    },
+    {
+      "id": "N03",
+      "title": "Inbox, transações e outbox recuperáveis",
+      "kind": "pacote_produto",
+      "priority": "OBRIGATORIO_V1",
+      "gate": "G1",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "4–6",
+      "depends_on": [
+        "N01"
+      ],
+      "proposed_entrypoints": [
+        "storage/migrations/",
+        "storage/repositories/",
+        "core/service.py",
+        "core/conversation.py"
+      ],
+      "implementation": "Persistir envelope canônico e hash, estados de processamento e recibo. Publicar tarefa/anexos/critério atomicamente. Outbox no commit de estado; deduplicar localmente e reconciliar efeitos externos sem prometer exactly-once universal.",
+      "scenarios": [
+        "T15",
+        "T16",
+        "T17",
+        "T18"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "teste_integrado",
+        "ambiente",
+        "limitacoes",
+        "gate"
+      ]
+    },
+    {
+      "id": "N04",
+      "title": "Supervisão, leases e agenda independente",
+      "kind": "pacote_produto",
+      "priority": "OBRIGATORIO_V1",
+      "gate": "G1",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "6, 22",
+      "depends_on": [
+        "N02",
+        "N03"
+      ],
+      "proposed_entrypoints": [
+        "core/daemon.py",
+        "runtime/tasks/",
+        "platform/macos/AtlasKit/"
+      ],
+      "implementation": "Executar heartbeat/watchdog/scheduler fora do bloqueio do worker, recuperar leases abandonados e reportar saúde real. Trava de instância antes de tokens/sockets; shutdown/restart limitados e controle claro do ciclo de vida.",
+      "scenarios": [
+        "T21",
+        "T22",
+        "T28",
+        "T31"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "teste_integrado",
+        "ambiente",
+        "limitacoes",
+        "gate"
+      ]
+    },
+    {
+      "id": "N05",
+      "title": "Cofre, egress e orçamento dinâmico",
+      "kind": "pacote_produto",
+      "priority": "OBRIGATORIO_V1",
+      "gate": "G1",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "9, 11–12",
+      "depends_on": [
+        "N02",
+        "N03"
+      ],
+      "proposed_entrypoints": [
+        "security/vault/",
+        "security/budget/",
+        "security/network/",
+        "core/intelligence.py"
+      ],
+      "implementation": "Preservar classificação e fonte até o payload final. Conferir consentimento/destino e orçamento dentro de cada emissão. Bind da validação à chave/modelo/endpoint; ledger distingue reservado, real, estimado e desconhecido.",
+      "scenarios": [
+        "T08",
+        "T24",
+        "T25",
+        "T26",
+        "T29"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "teste_integrado",
+        "ambiente",
+        "limitacoes",
+        "gate"
+      ]
+    },
+    {
+      "id": "N06",
+      "title": "Contexto comum e conhecimento duradouro",
+      "kind": "pacote_produto",
+      "priority": "OBRIGATORIO_V1",
+      "gate": "G2",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "7–9",
+      "depends_on": [
+        "N02",
+        "N05"
+      ],
+      "proposed_entrypoints": [
+        "runtime/memory/",
+        "runtime/models/context.py",
+        "core/conversation.py"
+      ],
+      "implementation": "Criar recuperação híbrida com proveniência e vigência compartilhada por chat e tarefas. Reservar contexto obrigatório; sumarização conserva origem e sensibilidade. Implementar linhagem/tombstones e tela de gestão para correção/esquecimento.",
+      "scenarios": [
+        "T04",
+        "T05",
+        "T07",
+        "T09"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "teste_integrado",
+        "ambiente",
+        "limitacoes",
+        "gate"
+      ]
+    },
+    {
+      "id": "N07",
+      "title": "Intenções, perguntas e continuidade",
+      "kind": "pacote_produto",
+      "priority": "OBRIGATORIO_V1",
+      "gate": "G2",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "5, 7, 21",
+      "depends_on": [
+        "N03",
+        "N06"
+      ],
+      "proposed_entrypoints": [
+        "core/conversation.py",
+        "core/service.py",
+        "platform/macos/AtlasKit/"
+      ],
+      "implementation": "Usar contratos de intenção e alvo explícito. Comandos de autoridade são determinísticos; assunto novo não responde uma pergunta por acidente. Anexo pode ser armazenado, vinculado ou analisado; correção afeta tarefa vigente sem nova delegação.",
+      "scenarios": [
+        "T03",
+        "T10",
+        "T11",
+        "T19"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "teste_integrado",
+        "ambiente",
+        "limitacoes",
+        "gate"
+      ]
+    },
+    {
+      "id": "N08",
+      "title": "Documentos e extração por formato",
+      "kind": "pacote_produto",
+      "priority": "OBRIGATORIO_V1",
+      "gate": "G2",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "10, 14",
+      "depends_on": [
+        "N03",
+        "N05"
+      ],
+      "proposed_entrypoints": [
+        "runtime/artifacts/",
+        "runtime/tools/",
+        "platform/execution/"
+      ],
+      "implementation": "Implementar extratores reais e isolados, incluindo texto, tabelas, páginas/células e fonte visual quando exigida. Registrar cobertura e segmentos completos com paginação. Formato não suportado fica armazenável, não analisado artificialmente.",
+      "scenarios": [
+        "T12",
+        "T13"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "teste_integrado",
+        "ambiente",
+        "limitacoes",
+        "gate"
+      ]
+    },
+    {
+      "id": "N09",
+      "title": "Datas, unidades e cálculos verificáveis",
+      "kind": "pacote_produto",
+      "priority": "OBRIGATORIO_V1",
+      "gate": "G2",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "8, 10, 13",
+      "depends_on": [
+        "N06",
+        "N08"
+      ],
+      "proposed_entrypoints": [
+        "runtime/tools/",
+        "shared/",
+        "tests/evals/"
+      ],
+      "implementation": "Usar código para datas, intervalos, recorrências, unidades, moedas e números. Derivar valores das fontes e guardar rastreabilidade. Não criar calendário de filhos como produto à parte; oferecer operações estruturadas generalistas.",
+      "scenarios": [
+        "T06",
+        "T23"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "teste_integrado",
+        "ambiente",
+        "limitacoes",
+        "gate"
+      ]
+    },
+    {
+      "id": "N10",
+      "title": "Planner, contratos de ferramenta e critérios",
+      "kind": "pacote_produto",
+      "priority": "OBRIGATORIO_V1",
+      "gate": "G2",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "6, 11, 13",
+      "depends_on": [
+        "N02",
+        "N06",
+        "N08"
+      ],
+      "proposed_entrypoints": [
+        "runtime/agent/",
+        "runtime/tools/registry.py",
+        "runtime/verification/"
+      ],
+      "implementation": "Preservar pedido completo e gerar plano com critérios rastreáveis. Validar schema completo antes de uso, catálogos habilitados apenas e evidência por critério. Corrigir falso positivo de todo. Não confundir sucesso estrutural com atendimento factual.",
+      "scenarios": [
+        "T19",
+        "T22",
+        "T23"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "teste_integrado",
+        "ambiente",
+        "limitacoes",
+        "gate"
+      ]
+    },
+    {
+      "id": "N11",
+      "title": "Artefatos, uploads e exportação",
+      "kind": "pacote_produto",
+      "priority": "OBRIGATORIO_V1",
+      "gate": "G3",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "10, 14, 21",
+      "depends_on": [
+        "N03",
+        "N08"
+      ],
+      "proposed_entrypoints": [
+        "runtime/artifacts/",
+        "core/service.py",
+        "platform/macos/AtlasKit/"
+      ],
+      "implementation": "Implementar filas por arquivo, recibo da importação, quota/TTL globais e leitura linear de objeto imutável. Exportar formatos reais com nome/extensão e render/abertura, preservando original e impedindo path escape.",
+      "scenarios": [
+        "T14",
+        "T15",
+        "T32"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "teste_integrado",
+        "ambiente",
+        "limitacoes",
+        "gate"
+      ]
+    },
+    {
+      "id": "N12",
+      "title": "Interface local completa e reconciliação",
+      "kind": "pacote_produto",
+      "priority": "OBRIGATORIO_V1",
+      "gate": "G3",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "7, 21–22",
+      "depends_on": [
+        "N04",
+        "N07",
+        "N11"
+      ],
+      "proposed_entrypoints": [
+        "platform/macos/AtlasKit/Sources/AtlasApp/",
+        "platform/macos/AtlasKit/Sources/AtlasKit/"
+      ],
+      "implementation": "Conectar as telas aos estados reais, fazer upsert/cursor de histórico, anexos/respostas vinculados, botões derivados do estado e retomada de bloqueios. Manter UI responsiva e parada fora do fluxo de envio. Testar app, não só ViewModel.",
+      "scenarios": [
+        "T03",
+        "T10",
+        "T30",
+        "T31"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "teste_integrado",
+        "ambiente",
+        "limitacoes",
+        "gate"
+      ]
+    },
+    {
+      "id": "N13",
+      "title": "Homologar inteligência e modos",
+      "kind": "pacote_produto",
+      "priority": "OBRIGATORIO_V1",
+      "gate": "G4",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "11–12, 25",
+      "depends_on": [
+        "N05",
+        "N10",
+        "N12"
+      ],
+      "proposed_entrypoints": [
+        "runtime/models/",
+        "core/intelligence.py",
+        "tests/evals/"
+      ],
+      "implementation": "Validar IDs/capacidades atuais e acesso da conta com autorização. Executar tarefa geral real no bundle, medir qualidade/custo e provar que modos mudam seleção. Defaults de modelo são candidatos, não acesso ou preço garantidos.",
+      "scenarios": [
+        "T04",
+        "T19",
+        "T20",
+        "T23",
+        "T24",
+        "T29"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "teste_integrado",
+        "ambiente",
+        "limitacoes",
+        "gate"
+      ]
+    },
+    {
+      "id": "N14",
+      "title": "Workspace Linux ARM64 e mediação",
+      "kind": "pacote_produto",
+      "priority": "OBRIGATORIO_V1",
+      "gate": "G5",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "3, 15, 22",
+      "depends_on": [
+        "N02",
+        "N04",
+        "N05"
+      ],
+      "proposed_entrypoints": [
+        "platform/workspace/",
+        "platform/macos/",
+        "security/network/"
+      ],
+      "implementation": "Provar VM por Virtualization.framework, guest agent, transporte e egress externo. Não montar home nem liberar NIC irrestrita. Arquitetura virtio socket/proxy ou alternativa justificada por ADR precisa funcionar e bloquear sentinelas no Mac real.",
+      "scenarios": [
+        "T02",
+        "T33"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "teste_integrado",
+        "ambiente",
+        "limitacoes",
+        "gate"
+      ]
+    },
+    {
+      "id": "N15",
+      "title": "Execution Box e código gerado",
+      "kind": "pacote_produto",
+      "priority": "OBRIGATORIO_V1",
+      "gate": "G5",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "15, 17",
+      "depends_on": [
+        "N14"
+      ],
+      "proposed_entrypoints": [
+        "platform/execution/",
+        "security/policy/",
+        "runtime/tools/"
+      ],
+      "implementation": "Executar código novo em ambiente descartável sem tokens/cofre/dados de produção e sem rede padrão. Impor tempo/CPU/memória/disco. Exportar somente artefatos validados. Processo filho sozinho não equivale a sandbox.",
+      "scenarios": [
+        "T33",
+        "T37"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "teste_integrado",
+        "ambiente",
+        "limitacoes",
+        "gate"
+      ]
+    },
+    {
+      "id": "N16",
+      "title": "Browser, pesquisa e tela de trabalho",
+      "kind": "pacote_produto",
+      "priority": "OBRIGATORIO_V1",
+      "gate": "G5",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "13, 15–16",
+      "depends_on": [
+        "N13",
+        "N14",
+        "N15"
+      ],
+      "proposed_entrypoints": [
+        "platform/workspace/",
+        "runtime/tools/",
+        "platform/macos/AtlasKit/"
+      ],
+      "implementation": "Empacotar Playwright/browser compatíveis, APIs antes de cliques livres, perfis separados e ação sensível por driver homologado. Mostrar tela real/takeover com exclusividade e invalidar cliques antigos. Pesquisa entrega fontes recuperadas e atualizadas.",
+      "scenarios": [
+        "T34",
+        "T35"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "teste_integrado",
+        "ambiente",
+        "limitacoes",
+        "gate"
+      ]
+    },
+    {
+      "id": "N17",
+      "title": "Identidade operacional, contas e e-mail",
+      "kind": "pacote_produto",
+      "priority": "OBRIGATORIO_V1",
+      "gate": "G6",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "12, 18",
+      "depends_on": [
+        "N05",
+        "N16"
+      ],
+      "proposed_entrypoints": [
+        "runtime/connectors/",
+        "security/vault/",
+        "core/service.py"
+      ],
+      "implementation": "Criar percurso de conta dedicada administrada pelo dono; OAuth/recuperação/termos visíveis. Entrega ao canal verificado sob mandato. Remetente de e-mail não é autenticador de comando. Implementar recibos e reconciliação.",
+      "scenarios": [
+        "T36"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "teste_integrado",
+        "ambiente",
+        "limitacoes",
+        "gate"
+      ]
+    },
+    {
+      "id": "N18",
+      "title": "Solicitações de recursos e ações materiais",
+      "kind": "pacote_produto",
+      "priority": "OBRIGATORIO_V1",
+      "gate": "G6",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "12, 16, 18",
+      "depends_on": [
+        "N17"
+      ],
+      "proposed_entrypoints": [
+        "security/approvals/",
+        "runtime/connectors/",
+        "platform/macos/AtlasKit/"
+      ],
+      "implementation": "Proposta de serviço inclui necessidade, preço consultado, renovação, dados e alternativas. Executar compromisso somente com mandato/aprovação aplicáveis. Sandbox de pagamento primeiro; cartão limitado não elimina autorização nem reconciliação.",
+      "scenarios": [
+        "T25",
+        "T36"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "teste_integrado",
+        "ambiente",
+        "limitacoes",
+        "gate"
+      ]
+    },
+    {
+      "id": "N19",
+      "title": "Aprendizado e ciclo de skills",
+      "kind": "pacote_produto",
+      "priority": "OBRIGATORIO_V1",
+      "gate": "G6",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "8, 17",
+      "depends_on": [
+        "N10",
+        "N15"
+      ],
+      "proposed_entrypoints": [
+        "runtime/skills/",
+        "tests/evals/",
+        "storage/migrations/"
+      ],
+      "implementation": "Persistir lições resumidas ligadas a evidência; criar manifestos e testes de skill, quarentena/promoção/revogação/rollback. Autopromoção só no mesmo conjunto de direitos e sob política prévia. Nenhuma skill altera Core ou segurança.",
+      "scenarios": [
+        "T37"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "teste_integrado",
+        "ambiente",
+        "limitacoes",
+        "gate"
+      ]
+    },
+    {
+      "id": "N20",
+      "title": "Conversa por voz",
+      "kind": "pacote_produto",
+      "priority": "OBRIGATORIO_V1",
+      "gate": "G7",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "11–12, 20",
+      "depends_on": [
+        "N07",
+        "N13"
+      ],
+      "proposed_entrypoints": [
+        "runtime/voice/",
+        "platform/macos/AtlasKit/"
+      ],
+      "implementation": "Integrar transcrição/síntese/streaming ao mesmo contexto e Task Engine; microfone explícito, retenção mínima, barge-in e confirmações de valores. Escolher modelo de voz documentado e testar pt-BR; cobrar no mesmo ledger.",
+      "scenarios": [
+        "T38"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "teste_integrado",
+        "ambiente",
+        "limitacoes",
+        "gate"
+      ]
+    },
+    {
+      "id": "N21",
+      "title": "Companion remoto e canal seguro",
+      "kind": "pacote_produto",
+      "priority": "OBRIGATORIO_V1",
+      "gate": "G7",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "5, 9, 19",
+      "depends_on": [
+        "N03",
+        "N05",
+        "N12"
+      ],
+      "proposed_entrypoints": [
+        "apps/companion-web/",
+        "gateway/",
+        "shared/schemas/"
+      ],
+      "implementation": "Pairing com chave por dispositivo, relay durável de ciphertext via protocolo estabelecido, conexão de saída do Mac, replay/revogação/ACKs e fila offline. Não criar outro núcleo ou expor portas administrativas. E-mail adicional e WhatsApp oficial condicional.",
+      "scenarios": [
+        "T18",
+        "T39"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "teste_integrado",
+        "ambiente",
+        "limitacoes",
+        "gate"
+      ]
+    },
+    {
+      "id": "N22",
+      "title": "Onboarding leigo, privacidade e recuperação",
+      "kind": "pacote_produto",
+      "priority": "OBRIGATORIO_V1",
+      "gate": "G8",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "9, 21–24",
+      "depends_on": [
+        "N12",
+        "N14",
+        "N17",
+        "N20",
+        "N21"
+      ],
+      "proposed_entrypoints": [
+        "platform/macos/AtlasKit/",
+        "storage/backup/",
+        "security/",
+        "docs/"
+      ],
+      "implementation": "Completar identidade, modos, orçamento, contas e disponibilidade em português claro. Cifrar banco/artefatos/índices/staging com bibliotecas auditadas e chaves recuperáveis autorizadas. Item de login, acessibilidade, exportação/exclusão e restore com revogações.",
+      "scenarios": [
+        "T01",
+        "T02",
+        "T07",
+        "T31",
+        "T40"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "teste_integrado",
+        "ambiente",
+        "limitacoes",
+        "gate"
+      ]
+    },
+    {
+      "id": "N23",
+      "title": "Build, atualização e distribuição",
+      "kind": "pacote_produto",
+      "priority": "OBRIGATORIO_V1",
+      "gate": "G9",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "22–24, 28",
+      "depends_on": [
+        "N22"
+      ],
+      "proposed_entrypoints": [
+        "packaging/",
+        ".github/workflows/",
+        "scripts/",
+        "docs/"
+      ],
+      "implementation": "Empacotar dependências/VM verificadas, SBOM/licenças, certificados fora do app/agente, assinatura/notarização e instalador. Update compatível com DB/workspace/skills e rollback controlado. Gates críticos sem continue-on-error.",
+      "scenarios": [
+        "T01",
+        "T31",
+        "T40"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "teste_integrado",
+        "ambiente",
+        "limitacoes",
+        "gate"
+      ]
+    },
+    {
+      "id": "N24",
+      "title": "Aceite integrado e entrega V1",
+      "kind": "pacote_produto",
+      "priority": "OBRIGATORIO_V1",
+      "gate": "G10",
+      "status": "A_REVALIDAR_NO_HEAD",
+      "chapters": "24–28",
+      "depends_on": [
+        "N18",
+        "N19",
+        "N23"
+      ],
+      "proposed_entrypoints": [
+        "tests/",
+        "docs/evidence/",
+        "docs/ACCEPTANCE_REPORT.md"
+      ],
+      "implementation": "Revisar controles independentemente, executar cenários no bundle com serviços/modelos reais autorizados e usuário comum. Entregar matriz rastreável, custos, riscos e manual. Publicação final só com aceite humano; pendência essencial impede chamar V1 completa.",
+      "scenarios": [
+        "T01",
+        "T02",
+        "T03",
+        "T04",
+        "T05",
+        "T06",
+        "T07",
+        "T08",
+        "T09",
+        "T10",
+        "T11",
+        "T12",
+        "T13",
+        "T14",
+        "T15",
+        "T16",
+        "T17",
+        "T18",
+        "T19",
+        "T20",
+        "T21",
+        "T22",
+        "T23",
+        "T24",
+        "T25",
+        "T26",
+        "T27",
+        "T28",
+        "T29",
+        "T30",
+        "T31",
+        "T32",
+        "T33",
+        "T34",
+        "T35",
+        "T36",
+        "T37",
+        "T38",
+        "T39",
+        "T40"
+      ],
+      "completion_evidence": [
+        "commit",
+        "teste_regressao",
+        "teste_integrado",
+        "ambiente",
+        "limitacoes",
+        "gate"
+      ]
+    }
+  ]
+}

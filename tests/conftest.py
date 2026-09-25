@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 import sys
 from collections.abc import Iterator
@@ -12,6 +13,10 @@ from shared.actors import Actor
 from shared.clock import ManualClock
 from storage.repositories.identity import Employee, create_employee, create_owner
 from storage.store import open_store
+
+# Test mode for provider endpoints (A3-20): local fake servers on the exact loopback address are
+# accepted only when the harness says so. The app never sets this; see openai_responses.endpoint_problem.
+os.environ["ATLAS_ALLOW_TEST_ENDPOINTS"] = "1"
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:

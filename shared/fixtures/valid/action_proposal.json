@@ -13,5 +13,6 @@
   "verification": {
     "kind": "provider_receipt",
     "required": true
-  }
+  },
+  "instruction_revision": 1
 }

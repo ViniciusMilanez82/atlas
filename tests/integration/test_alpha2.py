@@ -69,7 +69,7 @@ class Env:
             w.clock,
             registry=ToolRegistry(conn, w.clock),
             policy=PolicyEngine(),
-            budget=BudgetManager(conn, w.clock, BudgetLimits("USD", None, None)),
+            budget=BudgetManager.live(conn, w.clock),  # as in the daemon (A3-19)
         )
         intel = IntelligenceSetup(conn, w.clock, Vault(conn, self.backend, w.clock), base_url=self.base_url)
         return CoreService(
@@ -388,7 +388,7 @@ def test_check_respects_monthly_ceiling_of_global_ledger(env: Env, api: FakeOpen
         )
     )
     ok(save(c, base_config(monthly_limit_minor=40, accept_reference_prices=True)))
-    from security.budget.budget import BudgetLimits, BudgetManager
+    from security.budget.budget import BudgetManager
     from shared.money import Money
 
     budget = BudgetManager(env.world.conn, env.world.clock, BudgetLimits("USD", 40, 40))

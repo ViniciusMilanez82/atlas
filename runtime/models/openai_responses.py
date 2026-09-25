@@ -21,10 +21,13 @@ logged and never included in error messages.
 
 from __future__ import annotations
 
+import ipaddress
 import json
+import os
 import socket
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterator
 from http.client import HTTPException, HTTPResponse
@@ -45,7 +48,57 @@ from runtime.models.types import (
 from security.vault.vault import SecretValue
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
+# Distribution allowlist (spec 12.4): changing the endpoint is a trust configuration, not a model decision.
+ALLOWED_ENDPOINTS = frozenset({DEFAULT_BASE_URL})
+TEST_ENDPOINTS_ENV = "ATLAS_ALLOW_TEST_ENDPOINTS"
+
+
+def test_endpoints_allowed() -> bool:
+    """Test mode is an explicit environment switch set by the test harness, never by the app."""
+    return os.environ.get(TEST_ENDPOINTS_ENV) == "1"
+
+
+def endpoint_problem(url: str, *, allow_test_endpoints: bool) -> str | None:
+    """Why ``url`` may not receive the API credential, or None when it may (A3-20).
+
+    Parsed, not prefix-matched: scheme/host/port come from ``urlsplit``. No userinfo. Plain HTTP only
+    to the exact loopback addresses 127.0.0.1 or ::1 and only in test mode. Remote (HTTPS) endpoints must
+    be in the distribution allowlist in every mode.
+    """
+    try:
+        parts = urllib.parse.urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return "endpoint is not a valid URL"
+    del port
+    if parts.username is not None or parts.password is not None or "@" in parts.netloc:
+        return "endpoint must not contain user information"
+    host = parts.hostname or ""
+    if parts.scheme == "https" and host:
+        if url.rstrip("/") in ALLOWED_ENDPOINTS:  # remote endpoints: allowlist only, in every mode
+            return None
+        return f"endpoint {parts.scheme}://{host} is not in the distribution allowlist"
+    if parts.scheme == "http":
+        try:
+            loopback = ipaddress.ip_address(host).is_loopback and host in ("127.0.0.1", "::1")
+        except ValueError:
+            loopback = False
+        if not loopback:
+            return "plain HTTP is accepted only for the exact loopback address (127.0.0.1 or ::1)"
+        return None if allow_test_endpoints else "local test endpoints are accepted only in test mode"
+    return f"unsupported endpoint scheme {parts.scheme!r}"
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Authenticated calls never follow redirects: the credential is bound to the configured origin."""
+
+    def redirect_request(self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> None:
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
 _STATUS_KIND = {
+    **{code: ProviderErrorKind.INVALID_REQUEST for code in (301, 302, 303, 307, 308)},
     400: ProviderErrorKind.INVALID_REQUEST,
     401: ProviderErrorKind.AUTH,
     403: ProviderErrorKind.AUTH,
@@ -64,9 +117,12 @@ class OpenAIResponsesProvider:
         *,
         capabilities: dict[str, ModelCapabilities],
         base_url: str = DEFAULT_BASE_URL,
+        allow_test_endpoints: bool | None = None,
     ) -> None:
-        if not base_url.startswith("https://") and not base_url.startswith("http://127.0.0.1"):
-            raise ValueError("the provider endpoint must be HTTPS (plain HTTP only for local test servers)")
+        allowed = test_endpoints_allowed() if allow_test_endpoints is None else allow_test_endpoints
+        problem = endpoint_problem(base_url, allow_test_endpoints=allowed)
+        if problem:
+            raise ValueError(f"refusing provider endpoint: {problem}")
         self._key_provider = key_provider
         self._caps = capabilities
         self._base = base_url.rstrip("/")
@@ -228,8 +284,10 @@ class OpenAIResponsesProvider:
         req.add_header("Content-Type", "application/json")
         req.add_header("Authorization", "Bearer " + self._key_provider().reveal().decode("utf-8"))
         try:
-            return urllib.request.urlopen(req, timeout=timeout)  # type: ignore[no-any-return]  # noqa: S310
+            return _OPENER.open(req, timeout=timeout)  # type: ignore[no-any-return]
         except urllib.error.HTTPError as exc:
+            if 300 <= exc.code < 400:  # redirect refused: never re-send the credential elsewhere
+                raise _HTTPFailure(exc.code, exc.headers.get("x-request-id"), None, "redirect_refused") from None
             try:
                 detail = json.loads(exc.read().decode("utf-8")).get("error", {})
             except Exception:

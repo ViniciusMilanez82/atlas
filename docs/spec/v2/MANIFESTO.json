@@ -1,0 +1,70 @@
+{
+  "title": "Atlas — Contrato integral de implementação",
+  "version": "2.0",
+  "date": "2026-09-24",
+  "baseline_commit": "d81cece2713ccb5b12e58902e55b05a614467951",
+  "content": {
+    "chapters": 31,
+    "annexes": 3,
+    "audit_work_orders": 32,
+    "product_packages": 24,
+    "backlog_items": 56,
+    "acceptance_scenarios": 40,
+    "pdf_pages": 67,
+    "master_markdown_words": 25253
+  },
+  "scope": "Documentação e instruções. Não altera o código nem homologa o Atlas.",
+  "checks": "Estrutura e IDs, dependências do backlog, renderização e limites de texto do PDF verificados. Não são testes do software Atlas.",
+  "files": [
+    {
+      "path": "AGENTS_ATLAS.md",
+      "bytes": 2518,
+      "sha256": "d9f3e4446faa27dd6a642ff1c62a2ba6027e959f045744e6dc29e9130e2c45cd"
+    },
+    {
+      "path": "ATLAS_CONTRATO_IMPLEMENTACAO_v2.md",
+      "bytes": 199512,
+      "sha256": "8c6b8300298d51aaafa75eae1b7bd1509c4c518fb3269110edef76f25df76b34"
+    },
+    {
+      "path": "ATLAS_CONTRATO_IMPLEMENTACAO_v2.pdf",
+      "bytes": 293093,
+      "sha256": "6cb0aff220a71a62854dd72168da8c237f8323a9ec246cdba1b590e762cd24fd"
+    },
+    {
+      "path": "BACKLOG_EXECUTAVEL.json",
+      "bytes": 65950,
+      "sha256": "50c212c9f013fc718282d437c57674ca94641bbd0401f9a5c5696aa6af49c3fa"
+    },
+    {
+      "path": "BACKLOG_EXECUTAVEL.md",
+      "bytes": 5656,
+      "sha256": "afe01ef2c003334fb90c5a8f555a2671c1b65695cb2a480555d464248683baa0"
+    },
+    {
+      "path": "CENARIOS_ACEITE.json",
+      "bytes": 25395,
+      "sha256": "d8ad999b9e0318463d48f1f26c0c53e8f8ce652db05f0d27991096c2ae51963c"
+    },
+    {
+      "path": "LEIA_PRIMEIRO.md",
+      "bytes": 2613,
+      "sha256": "d17e7ada6d8e9925093febc26729b347cd79c15122cf35a401fca3cce1080004"
+    },
+    {
+      "path": "PROMPT_INICIAR_IMPLEMENTACAO.txt",
+      "bytes": 10646,
+      "sha256": "af5732f3fa320dd8b71c8153121babde7507b66a338c8d4b830f1c3c4568d423"
+    },
+    {
+      "path": "referencias/AUDITORIA_ALPHA2_HISTORICA.md",
+      "bytes": 74518,
+      "sha256": "970a5f9f1c4d8bc16c782ccd960bcee8326b19457ca1be1a137e457a0cc024ce"
+    },
+    {
+      "path": "referencias/MASTER_SPEC_v1_HISTORICA.md",
+      "bytes": 88469,
+      "sha256": "6a4f80e13112b0c206d7b9468c01ba0388d4800e3ad20baf225e628d31ba2cfd"
+    }
+  ]
+}

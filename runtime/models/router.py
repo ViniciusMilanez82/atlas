@@ -27,6 +27,7 @@ from runtime.models.types import (
 )
 from runtime.tasks.limits import CircuitBreaker
 from security.budget.budget import BudgetManager
+from security.egress.guard import EgressGuard
 from shared.actors import Actor
 from shared.clock import Clock, parse_utc, to_utc_str
 from shared.errors import AtlasError, ErrorCode
@@ -170,6 +171,7 @@ class BudgetedModelClient:
         budget: BudgetManager,
         breakers: dict[str, CircuitBreaker] | None = None,
         unknown_retention: timedelta = timedelta(days=7),
+        egress: EgressGuard | None = None,
     ) -> None:
         self.conn = conn
         self.clock = clock
@@ -179,6 +181,7 @@ class BudgetedModelClient:
         self.budget = budget
         self.breakers = breakers or {}
         self.unknown_retention = unknown_retention
+        self.egress = egress
 
     # ---------------------------------------------------------------- attempt bookkeeping
 
@@ -280,7 +283,10 @@ class BudgetedModelClient:
                 request.json_schema if entry.capabilities.structured_output else None,
                 request.effort if request.effort in entry.capabilities.effort_levels else None,
                 request.timeout_s,
+                request.classification,
             )
+            if self.egress is not None:  # final payload vs consent in force, per provider/purpose (A3-02)
+                self.egress.check(provider=entry.provider, classification=call_req.classification, purpose=purpose)
             estimate = provider.estimate_usage(call_req)
             reserve_amount = price.max_cost(estimate.input_tokens, call_req.max_output_tokens)
             attempt_id, reservation_id = self._open_attempt(

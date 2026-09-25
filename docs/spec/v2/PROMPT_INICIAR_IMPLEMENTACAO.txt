@@ -1,0 +1,70 @@
+ATLAS — INSTRUÇÃO DE EXECUÇÃO INTEGRAL PARA A IA PROGRAMADORA
+Contrato vigente: ATLAS_CONTRATO_IMPLEMENTACAO_v2.md
+Proprietário: Vinícius Milanez
+Repositório existente: ViniciusMilanez82/atlas
+Baseline histórica: v0.1.0-alpha.2 / d81cece2713ccb5b12e58902e55b05a614467951
+
+MISSÃO
+Você deve continuar, corrigir, integrar e concluir o ATLAS definido no contrato, trabalhando no repositório real. Não estou pedindo apenas revisão, arquitetura, explicação ou um novo plano. Quero implementação comprovável, progressiva e rastreável. O objetivo final é um funcionário digital generalista com identidade operacional, memória, arquivos, contas e computador próprios, instalado por usuário comum no Mac, conversando por texto e voz, recebendo objetivos, escolhendo meios e entregando resultados com segurança e evidências.
+
+O Atlas não herda minhas contas pessoais. Ele deve ter ambiente de trabalho próprio. Calendário, filhos, viagens, propostas e empresa foram exemplos de uso, não funcionalidades que definem o domínio do produto. Uma pessoa digital é a experiência; não significa fingir ser humano ou inventar documentos e poderes legais.
+
+LEITURA OBRIGATÓRIA
+Leia integralmente ATLAS_CONTRATO_IMPLEMENTACAO_v2.md, seus três anexos, BACKLOG_EXECUTAVEL.json e CENARIOS_ACEITE.json. Consulte os históricos em referencias/, a Master Spec preservada no repositório, os ADRs, progresso, testes e código vigente. Não substitua esse material por um resumo que elimine requisitos. O contrato principal prevalece sobre um índice abreviado; qualquer alteração material de escopo deve ser explícita.
+
+A leitura deve resultar em trabalho concreto. Se o contexto do seu ambiente não comportar tudo ao mesmo tempo, leia por seções e mantenha um índice persistente de requisitos, dependências e decisões. Não use limitação de contexto para afirmar que leu o arquivo inteiro ou remover anexos. Não criar outro repositório nem refazer módulos que já funcionam.
+
+PRIMEIRAS AÇÕES
+1. Registre HEAD, branch, alterações locais, versões do ambiente e recursos realmente acessíveis. Compare com a baseline histórica sem reverter mudanças posteriores. Não apague o trabalho do proprietário.
+2. Adote o contrato em docs/spec/ e registre a decisão sem reescrever a especificação histórica. Crie ou atualize baseline, rastreabilidade, matriz de capacidades, correções e evidências.
+3. Execute a baseline disponível. Diferencie Python, Swift, IPC/Keychain, bundle, interface, VM e provedor real. Ausência de Mac/credencial bloqueia somente o teste dependente, não todo desenvolvimento.
+4. Revalide A3-01 a A3-32: reproduzido, confirmado estático, corrigido previamente, risco condicional ou não confirmado. Cada classificação precisa de evidência. Não invente 32 correções só para fechar a lista; também não encerre um achado por argumento genérico.
+5. Comece pela primeira correção de controle/privacidade ainda aberta, com regressão nas classes reais. Prossiga pelas dependências. Não peça uma nova aprovação de planejamento para simplesmente começar o trabalho já solicitado.
+
+ORDEM DE ENTREGA
+G0 baseline/contrato. G1 controle, privacidade, persistência e segurança. G2 conhecimento, documentos e qualidade. G3 Alpha local operável. G4 inteligência real autorizada. G5 workspace e pesquisa. G6 contas e skills. G7 voz e contato remoto. G8 experiência leiga e recuperação. G9 distribuição. G10 aceite V1.
+
+Os gates são critérios de aceitação, não justificativa para impedir trabalho paralelo independente. É possível escrever extratores, UI, adaptadores e provas de plataforma em paralelo; não ativar uma capacidade externa antes de seu controle estar comprovado. Corrigir a Alpha NÃO encerra a missão. O contrato exige completar as capacidades da V1 que ainda não existem.
+
+INVARIANTES QUE NÃO PODEM SER SIMPLIFICADOS
+- O usuário dá objetivos, não passos ou configurações de agentes. A interface deve conversar, lembrar, perguntar, aceitar correções, pausar e entregar como um único funcionário.
+- Não usar a vida digital pessoal do proprietário como substituto do ambiente próprio. Sem shell livre no host, cookies pessoais, home montada ou token do Core no guest.
+- O LLM propõe; política, consentimento, orçamento, aprovação, execução e verificação são aplicados por componentes confiáveis.
+- Parada tem caminho prioritário independente de isSending, da fila de conversa e da inferência. Nenhuma proposta obsoleta executa depois de correção material efetivada.
+- Revisão vigente da política/instruções/orçamento é revalidada em cada nova reserva e despacho. Cliente antigo não preserva direitos revogados.
+- Toda entrada tem recibo durável e payload imutável. Retentativa recupera o pedido inteiro; mesmo ID com conteúdo diferente é conflito. Tarefa só fica elegível com anexos, escopos e critérios completos.
+- Outbox é transacional. Não perder a pergunta ou o resultado após mudar o estado da tarefa. Não garantir exactly-once onde um fornecedor externo não o oferece; conciliar UNKNOWN.
+- Memória é comum a chat e tarefas, não apenas as últimas mensagens. Respeitar fonte, validade, sensibilidade e confirmação. Exclusão deve impedir reintrodução por derivados controlados.
+- Propagar classificação até o payload final. Guardar dado sensível não autoriza enviá-lo à nuvem. As saídas do modelo não viram fatos verificados automaticamente.
+- Importar PDF, Office ou imagem não é compreender. Extrair por formato com gabarito e proveniência; ler por trechos completos/paginados e demonstrar cobertura. Não decodificar binários como UTF-8 nem cortar JSON no meio.
+- Arquivo íntegro não prova objetivo cumprido. Evidência por critério, cálculo por código, fonte realmente recuperada e revisão de conteúdo. Não aprovar texto irrelevante com URLs inventadas.
+- Worker, leases e scheduler precisam de supervisão independente. Processo vivo não significa executor saudável. Resposta malformada nunca mata worker silenciosamente.
+- Credenciais nunca entram em prompt, log, commit ou pacote. Destino autenticado precisa ser validado, inclusive redirects. Testes usam segredos sintéticos.
+- Workspace real, navegador, takeover, contas dedicadas, aprendizado de skills, voz e companion são partes da visão completa. Mocks são para testes, não prova de implementação.
+- Fechar janela, sair, pausar, suspender e desligar são estados diferentes. Não prometer atividade com o Mac indisponível. Serviço de login deve ser autorizado e visível.
+- Instalação final e uso cotidiano não exigem terminal, Python/Docker manuais ou conhecimento de API. BYOK deve ser guiado e rotulado; modo gerenciado só aparece como pronto se realmente implementado.
+
+MODELOS E FERRAMENTAS
+Valide nomes, capacidades, parâmetros e acesso contra a documentação oficial e a conta disponível no momento. O contrato propõe gpt-6-sol, gpt-6-astra e gpt-6-luna como perfis candidatos; nome em tabela não é acesso. Não congelar preços de referência como faturamento garantido. Use limites conservadores e ledger global para chat, teste, embeddings, voz, revisão e trabalho.
+
+Implemente o catálogo real de ferramentas, seus schemas de entrada/saída e versões. O planejador não pode instalar ferramenta com mais privilégios do que recebeu. Código novo roda em ambiente descartável. Skills passam por teste, análise de permissões, promoção e rollback. A configuração de um modelo poderoso não substitui nenhum desses mecanismos.
+
+CONTRATO DE TRABALHO POR ITEM
+Para cada A3 ou N: entenda os arquivos reais; escreva regressão reproduzindo o problema quando aplicável; implemente a menor mudança correta; execute unitários, contrato e integração; teste no bundle quando o percurso envolver UI; revise o diff; atualize documentação e evidências; registre commit local coerente; avance ao próximo item desbloqueado. Novos bugs viram itens rastreáveis, não ficam escondidos porque não pertencem à lista inicial.
+
+Não resolver um teste quebrado removendo asserção, trocando por fake ou marcando skip/xfail. Não conceder privilégios extras para passar a demonstração. Não declarar teste de VM/Keychain/voz/site como real se ele só consultou um mock. Não atribuir ao cenário inteiro o sucesso de uma função interna.
+
+LIMITES DE AUTORIZAÇÃO
+Esta instrução autoriza o trabalho técnico no ambiente de desenvolvimento disponível; não cria consentimento para gasto, cadastro com obrigações, exposição de dados pessoais ou publicação de segredos. Credenciais devem entrar por mecanismo seguro. Solicite somente decisões humanas indispensáveis: acesso ao Mac, conta/teto, conta operacional, domínio/hospedagem, assinatura Apple, aprovação material e aceite final. Não me peça para escolher bibliotecas, escrever código ou resolver arquitetura que você consegue avaliar.
+
+Sem uma dependência, registre exatamente qual comando/cenário fica bloqueado e prossiga nos demais. Não invente execução em Mac, chamada real, pagamento ou resultado para encerrar um gate. Não prometa executar fora da sessão quando seu ambiente não suporta isso.
+
+EVIDÊNCIA E RELATÓRIO
+Atualize PROGRESS.md e a matriz requisito → código → teste → evidência. Para cada entrega, informe ID, commit, arquivos, comando exato, resultado, skips, ambiente, modelos efetivos, consumo observado, limitações e próximos itens. Distinga: implementado, compilado, unitário, integrado, E2E, modelo real, hardware real e aprovado pelo proprietário.
+
+Execute T01–T40, com dados sintéticos e gabaritos, ao longo dos gates. Para inferência real, obtenha autorização de conta e teto; depois teste objetivos variados na aplicação real, não apenas um JSON de health. Inclua condições adversas: arquivos longos, dois assuntos, correção ao vivo, parada sob carga, crash entre commits, orçamento reduzido e fonte falsa.
+
+Uma release precisa de bundle existente, hash, versão, assinatura/notarização quando aplicáveis, atualização/restauração e manual leigo. Beta/V1 exigem escopo integrado; uma Alpha funcional limitada deve continuar identificada como tal. Não afirmar ausência universal de bugs.
+
+COMECE AGORA
+Apresente uma baseline factual breve, a primeira tarefa prioritária e seu critério de teste; em seguida trabalhe no código. Não encerre sua resposta apenas dizendo que preparará algo. Continue pelas tarefas tecnicamente desbloqueadas dentro dos limites reais do seu ambiente, preservando todo o escopo e os controles deste contrato.

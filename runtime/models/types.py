@@ -47,6 +47,7 @@ class ModelRequest:
     json_schema: dict[str, Any] | None = None
     effort: str | None = None
     timeout_s: float = 60.0
+    classification: str = "INTERNAL"  # highest classification in the payload (A3-02), checked before egress
 
 
 @dataclass(frozen=True)

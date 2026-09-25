@@ -55,7 +55,16 @@
         "conversations.history",
         "memories.confirm",
         "artifacts.upload",
-        "artifacts.read"
+        "artifacts.read",
+        "control.stop",
+        "tasks.update_instruction",
+        "tasks.reevaluate",
+        "memories.forget_preview",
+        "memories.list",
+        "memories.export",
+        "artifacts.all",
+        "capabilities.list",
+        "capabilities.decide"
       ]
     },
     "params": {
@@ -505,6 +514,137 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "control.stop"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_control_stop"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "tasks.update_instruction"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_update_instruction"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "tasks.reevaluate"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_task_mutation"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "memories.forget_preview"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_forget_preview"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "memories.list"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_memories_list"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "enum": [
+              "memories.export",
+              "artifacts.all"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_base_list"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "capabilities.list"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_base"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "method": {
+            "const": "capabilities.decide"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "$ref": "#/$defs/p_capability_decide"
+          }
+        }
+      }
     }
   ],
   "$defs": {
@@ -574,6 +714,9 @@
           ]
         },
         "reply_to_message_id": {
+          "$ref": "common.schema.json#/$defs/uuid"
+        },
+        "task_id": {
           "$ref": "common.schema.json#/$defs/uuid"
         }
       }
@@ -850,8 +993,7 @@
         "correlation_id",
         "memory_id",
         "expected_version",
-        "content",
-        "source_id"
+        "content"
       ],
       "properties": {
         "schema_version": {
@@ -874,6 +1016,29 @@
         },
         "source_id": {
           "$ref": "#/$defs/uuid"
+        },
+        "valid_from": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/utc_timestamp"
+            }
+          ]
+        },
+        "valid_until": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/utc_timestamp"
+            }
+          ]
+        },
+        "change_validity": {
+          "type": "boolean"
         }
       }
     },
@@ -894,6 +1059,12 @@
         },
         "memory_id": {
           "$ref": "#/$defs/uuid"
+        },
+        "scope": {
+          "enum": [
+            "stop_using",
+            "erase"
+          ]
         }
       }
     },
@@ -928,6 +1099,18 @@
         },
         "task_id": {
           "$ref": "#/$defs/uuid"
+        },
+        "expected_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "classification": {
+          "enum": [
+            "PUBLIC",
+            "INTERNAL",
+            "PERSONAL",
+            "SENSITIVE"
+          ]
         }
       }
     },
@@ -1088,6 +1271,14 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 200
+        },
+        "after_sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "changed_since_revision": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     },
@@ -1150,6 +1341,163 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 524288
+        }
+      }
+    },
+    "p_control_stop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id",
+        "employee_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "employee_id": {
+          "$ref": "#/$defs/uuid"
+        }
+      }
+    },
+    "p_update_instruction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id",
+        "task_id",
+        "text",
+        "client_message_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "task_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32000
+        },
+        "client_message_id": {
+          "$ref": "#/$defs/uuid"
+        }
+      }
+    },
+    "p_forget_preview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id",
+        "memory_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "memory_id": {
+          "$ref": "#/$defs/uuid"
+        }
+      }
+    },
+    "p_memories_list": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "statuses": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 5,
+          "items": {
+            "enum": [
+              "proposed",
+              "confirmed",
+              "disputed",
+              "superseded",
+              "deleted"
+            ]
+          }
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        }
+      }
+    },
+    "p_base_list": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        }
+      }
+    },
+    "p_capability_decide": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "correlation_id",
+        "request_id",
+        "decision"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "correlation_id": {
+          "$ref": "common.schema.json#/$defs/correlation_id"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "decision": {
+          "enum": [
+            "APPROVE",
+            "REJECT"
+          ]
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 500
         }
       }
     }

@@ -33,7 +33,14 @@ from tests.fakes.adapters import EMAIL_SEND, FakeWorld
 from tests.fakes.model_provider import FakeModelProvider
 
 UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-TOOLS = ["artifact.read_text", "artifact.write_text", "memory.search", "email.send_external"]
+TOOLS = [
+    "artifact.read_text",
+    "artifact.write_text",
+    "memory.search",
+    "documents.read",
+    "documents.search",
+    "email.send_external",
+]
 
 
 def decision(
@@ -53,6 +60,7 @@ def decision(
             "input_json": json.dumps(inp or {}),
             "artifact_id": artifact,
             "question": question,
+            "capability_json": "",
         }
     )
 

@@ -85,7 +85,7 @@ class UnixSocketServer:
                 f"socket path is {len(str(self.path).encode())} bytes; the OS limit is {MAX_SUN_PATH}. "
                 "Use a shorter private directory for IPC."
             )
-        if self.path.exists():
+        if self.path.exists():  # safe only because the caller holds the data-directory lock (A3-28)
             self.path.unlink()
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.bind(str(self.path))

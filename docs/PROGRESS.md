@@ -8,8 +8,59 @@ próxima tarefa. Testes marcados **NÃO EXECUTADO** indicam a dependência exata
 | Gate | Estado |
 | --- | --- |
 | READY TO CODE | Atingido (spec 23.1) |
+| G0 (contrato v2) | Atingido — baseline, contrato adotado, matriz e regressões |
+| G1 (contrato v2) | Correções e regressões concluídas no núcleo; validação no Mac do proprietário pendente (D-01) |
 | READY FOR BETA | **Não atingido** |
 | READY FOR RELEASE | **Não atingido** |
+
+## Contrato v2.0 — sessão de 2026-09-24 (branch `impl/contract-v2`)
+
+Contrato vigente: `docs/spec/v2/ATLAS_CONTRATO_IMPLEMENTACAO_v2.md` (ADR-015). Baseline factual em
+`docs/BASELINE.md`; matriz dos achados em `docs/AUDIT_REMEDIATION.md`; capacidades em
+`docs/CAPABILITY_MATRIX.md`.
+
+**Feito nesta sessão.** G0 completo; os 32 achados A3 corrigidos com regressão executada (reprodução
+antes da correção registrada em cada commit); pacotes N02-N05 (autoridade, inbox/outbox, supervisão,
+egress/orçamento) e partes de N06-N12 (conhecimento comum, intenções, extração de documentos, critérios,
+uploads, interface) no nível de núcleo e ViewModel. Quatro achados novos (B-01..B-04) registrados e tratados.
+
+**Evidência (comandos exatos).**
+
+```text
+Windows local: python scripts/check.py (venv em %USERPROFILE%/.venvs/atlas)
+  ruff=PASS secrets=PASS mypy=PASS (92 arquivos) pytest: 627 passed, 8 skipped (fim da sessão)
+  skips: 2 daemon E2E + 1 servidor UDS + 1 teste A3-28 com processos (sem Unix sockets no Windows),
+         1 symlink (privilégio), 1 chamada real opt-in (D-03), 1 probe Swift e 1 Keychain real (D-01)
+CI (GitHub Actions, commits da branch): core-linux, core-macos e app-evidence verdes até 7aa1c24;
+  Swift no macOS 15: 35 testes, 0 falhas (inclui A304RegressionTests, G3RegressionTests e
+  SupervisorTests com processos reais: segunda instância recusada, parada com prazo)
+  bundle Atlas.app gerado com as novas dependências e iniciado sem Python do sistema
+```
+
+**Estados, separados.** Implementado e testado em integração: sim (ver matriz). Compilado no macOS: sim.
+Modelo real: **não** (D-03). Uso interativo por uma pessoa num Mac: **não** (D-01). VM, navegador, voz,
+companion, contas, skills: **não implementados** (N14-N21).
+
+**Custos incorridos:** zero. Nenhuma credencial usada ou solicitada.
+
+**Pacotes do produto avançados na mesma sessão (depois dos 32 achados).**
+
+| Pacote | Commit | O que ficou pronto | Evidência |
+| --- | --- | --- | --- |
+| N11 | `a50d283` | PDF/DOCX/XLSX/PPTX gerados e validados por releitura | `tests/integration/test_generate_documents.py` |
+| N09 | `efaaf6b` | `calc.evaluate` (Decimal) e `calendar.analyze` (fusos, DST, dia inteiro, recorrência/exceções) | `tests/integration/test_compute_tools.py` |
+| N13 | `86105bd` | Modos mudam o modelo chamado; só perfis validados; tela com modo simples e IDs no Avançado | `tests/integration/test_intelligence_modes.py` |
+| N06/N12 | `437f401` | Telas Memória (confirmar, corrigir, esquecer com prévia, exportar) e Arquivos | `test_memory_files_screens.py`, `G3RegressionTests` |
+| N18 | `6a1c832`, `2aa46d0` | Pedido concreto de recurso decidido pelo dono (sem compra, sem liberar dados) | `tests/integration/test_capability_requests.py` |
+| N23 | `377ff7f` | SBOM CycloneDX do runtime embutido | `tests/contract/test_sbom.py` |
+
+**Próximos itens desbloqueados (ordem):** índice semântico local (embeddings) no serviço de conhecimento; onboarding leigo (N22: identidade, modo,
+orçamento, privacidade) no app; núcleo de voz (N20: separar "pare de falar" de "pare o trabalho"); protocolo e
+relay local do companion (N21) com biblioteca criptográfica estabelecida. Dependem de decisão/recurso do
+proprietário: VM e Execution Box (N14/N15, Mac com virtualização — D-01), inteligência real (D-03), conta e
+e-mail operacional (N17), domínio do relay (N21), assinatura Apple (N23, D-07).
+
+---
 
 ## Diagnóstico do ambiente — 2026-09-23
 

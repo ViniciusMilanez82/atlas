@@ -46,14 +46,15 @@ class Ledger:
         input_hash: str,
         destination: str | None,
         worker_id: str | None,
+        instruction_revision: int | None = None,
     ) -> str:
         require_transaction(self.conn)
         action_id = new_id()
         now = to_utc_str(self.clock.now())
         self.conn.execute(
             "INSERT INTO actions(id, task_id, step_id, tool_id, tool_version, effect_class, risk_class, status,"
-            " input_json, input_hash, destination, worker_id, created_at, updated_at)"
-            " VALUES (?,?,?,?,?,?,?,'PROPOSED',?,?,?,?,?,?)",
+            " input_json, input_hash, destination, worker_id, created_at, updated_at, instruction_revision)"
+            " VALUES (?,?,?,?,?,?,?,'PROPOSED',?,?,?,?,?,?,?)",
             (
                 action_id,
                 task_id,
@@ -68,6 +69,7 @@ class Ledger:
                 worker_id,
                 now,
                 now,
+                instruction_revision,
             ),
         )
         return action_id

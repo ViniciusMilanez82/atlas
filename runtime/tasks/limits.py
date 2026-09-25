@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
 
+from runtime.notifications.outbox import Notice, enqueue_in_txn
 from runtime.tasks.engine import Lease, TaskEngine
 from runtime.tasks.state_machine import TaskState
 from shared.actors import Actor
@@ -77,8 +78,9 @@ class ProgressGuard:
         ).fetchone()
         return row
 
-    def record(self, lease: Lease, outcome: StepOutcome) -> TaskState:
-        """Record one step for the lease holder. Returns the task state afterwards."""
+    def record(self, lease: Lease, outcome: StepOutcome, notice: Notice | None = None) -> TaskState:
+        """Record one step for the lease holder. Returns the task state afterwards. ``notice`` is queued
+        for the owner in the same commit when the step makes the task leave RUNNING (A3-27)."""
         worker = Actor("worker", lease.worker_id, "internal")
         now = self.clock.now()
         with transaction(self.conn):
@@ -124,8 +126,53 @@ class ProgressGuard:
                     f"limits: failures={fails} replans={replans} steps_without_result={steps}",
                     blocked_reason=reason,
                 )
+                if notice is not None and target == TaskState.BLOCKED:
+                    enqueue_in_txn(
+                        self.conn,
+                        self.clock,
+                        employee_id=task["employee_id"],
+                        task_id=task["id"],
+                        kind=notice[0],
+                        content=notice[1],
+                        artifact_id=notice[2],
+                    )
                 return target
             return TaskState.RUNNING
+
+    def reclaim_after_worker_loss(self, task_id: str, why: str) -> TaskState | None:
+        """Take a RUNNING task back from a worker that crashed or lost its lease (A3-05, A3-06).
+
+        Leaving RUNNING bumps the fencing token, so the old worker can never dispatch again. Effects of
+        uncertain outcome block the task for reconciliation; otherwise the loss counts as a transient
+        failure (backoff, bounded by ``max_transient_retries``) so a deterministic bug cannot spin.
+        Returns the new state, or None when the task was not RUNNING anymore.
+        """
+        actor = Actor("system", "watchdog")
+        now = self.clock.now()
+        with transaction(self.conn):
+            task = self.engine._row(task_id)
+            if task["state"] != TaskState.RUNNING:
+                return None
+            if self.engine._unknown_actions(task_id):
+                self.engine.transition_in_txn(
+                    task, TaskState.BLOCKED, actor, why, blocked_reason="EXTERNAL_EFFECT_UNKNOWN"
+                )
+                return TaskState.BLOCKED
+            c = self._counters_in_txn(task_id)
+            fails = int(c["transient_failures"]) + 1
+            next_at = None
+            if fails > self.limits.max_transient_retries:
+                target, reason = TaskState.BLOCKED, "RETRY_LIMIT"
+            else:
+                target, reason = TaskState.RETRYING, None
+                next_at = to_utc_str(now + backoff_delay(fails, self.limits, self.rng))
+            self.conn.execute(
+                "UPDATE task_progress SET transient_failures = ?, next_attempt_at = ?, updated_at = ?"
+                " WHERE task_id = ?",
+                (fails, next_at, to_utc_str(now), task_id),
+            )
+            self.engine.transition_in_txn(task, target, actor, why, blocked_reason=reason)
+            return target
 
     def promote_due_retries(self) -> list[str]:
         """RETRYING -> READY once the backoff has elapsed (policy and budget are re-checked at dispatch)."""

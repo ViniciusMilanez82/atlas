@@ -20,6 +20,7 @@ import shutil
 import sqlite3
 import stat
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -137,6 +138,9 @@ class ArtifactManager:
         self.clock = clock
         self.root = root.resolve()
         (self.root / "objects").mkdir(parents=True, exist_ok=True)
+        self.bytes_hashed = 0  # instrumentation for the linear-read guarantee (A3-25)
+        self.bytes_read = 0
+        self._verified: dict[str, tuple[int, int, int]] = {}  # artifact -> (size, mtime_ns, inode) checked
 
     # ------------------------------------------------------------------ store
 
@@ -184,9 +188,41 @@ class ArtifactManager:
         if not path.is_file():
             raise AtlasError(ErrorCode.INVALID_INPUT, "artifact content is missing from the store")
         data = path.read_bytes()
+        self.bytes_read += len(data)
+        self.bytes_hashed += len(data)
         if hashlib.sha256(data).hexdigest() != r["sha256"]:
             raise AtlasError(ErrorCode.INVALID_INPUT, "artifact content does not match its hash")
         return data
+
+    def read_range(self, artifact_id: str, offset: int, length: int) -> tuple[bytes, int]:
+        """Read ``length`` bytes at ``offset`` of an immutable artifact. Returns (chunk, total size).
+
+        The whole object is hashed once per reader and pinned by (size, mtime, inode); later ranges read
+        only their bytes, so reading a file in N chunks costs ~2x its size, not N x its size (A3-25).
+        Any change of the pinned identity forces a new full verification, so tampering during the read
+        is detected instead of being streamed.
+        """
+        r = self._row(artifact_id)
+        path = self._object_path(r["sha256"])
+        if not path.is_file():
+            raise AtlasError(ErrorCode.INVALID_INPUT, "artifact content is missing from the store")
+        st = path.stat()
+        pin = (st.st_size, st.st_mtime_ns, st.st_ino)
+        if self._verified.get(artifact_id) != pin:
+            h = hashlib.sha256()
+            with path.open("rb") as fh:
+                for block in iter(lambda: fh.read(1024 * 1024), b""):
+                    h.update(block)
+                    self.bytes_hashed += len(block)
+            if h.hexdigest() != r["sha256"] or st.st_size != r["size_bytes"]:
+                self._verified.pop(artifact_id, None)
+                raise AtlasError(ErrorCode.INVALID_INPUT, "artifact content does not match its hash")
+            self._verified[artifact_id] = pin
+        with path.open("rb") as fh:
+            fh.seek(offset)
+            chunk = fh.read(length)
+        self.bytes_read += len(chunk)
+        return chunk, int(r["size_bytes"])
 
     def _insert(
         self,
@@ -199,6 +235,7 @@ class ArtifactManager:
         classification: str,
         relation: str,
         actor: Actor,
+        on_insert_in_txn: Callable[[str], None] | None = None,
     ) -> Artifact:
         sha = self._put(data)
         aid = new_id()
@@ -239,6 +276,8 @@ class ArtifactManager:
                 actor=actor,
                 summary=f"{relation} artifact '{name}' v{version} ({len(data)} bytes)",
             )
+            if on_insert_in_txn is not None:  # e.g. the upload receipt, in the same commit (A3-22)
+                on_insert_in_txn(aid)
         return self.get(aid)
 
     # ------------------------------------------------------------------ import / create / export
@@ -252,6 +291,8 @@ class ArtifactManager:
         declared_name: str | None = None,
         task_id: str | None = None,
         classification: str = "INTERNAL",
+        expected_sha256: str | None = None,
+        on_insert_in_txn: Callable[[str], None] | None = None,
     ) -> Artifact:
         """Explicit import of ONE file the owner chose. The original is never modified."""
         if actor.kind != "owner":
@@ -268,6 +309,8 @@ class ArtifactManager:
         if ext not in EXTENSIONS:
             raise AtlasError(ErrorCode.INVALID_INPUT, f"file type {ext or '(none)'} is not accepted")
         data = source.read_bytes()
+        if expected_sha256 is not None and hashlib.sha256(data).hexdigest() != expected_sha256:
+            raise AtlasError(ErrorCode.INVALID_INPUT, "received file does not match the expected hash")
         kind = sniff(data)
         if kind == "zip" and ext in (".docx", ".xlsx", ".pptx"):
             members = inspect_archive(source)
@@ -286,6 +329,7 @@ class ArtifactManager:
             classification=classification,
             relation="input",
             actor=actor,
+            on_insert_in_txn=on_insert_in_txn,
         )
 
     def create_text(
@@ -311,6 +355,38 @@ class ArtifactManager:
         if ext == ".json":
             json.loads(content)  # must be valid JSON
         mime = TEXT_MIME.get(ext, "application/json" if ext == ".json" else "text/plain")
+        return self._insert(
+            employee_id=employee_id,
+            task_id=task_id,
+            name=name,
+            mime=mime,
+            data=data,
+            classification=classification,
+            relation="output",
+            actor=actor,
+        )
+
+    def create_document(
+        self,
+        *,
+        actor: Actor,
+        employee_id: str,
+        task_id: str,
+        name: str,
+        data: bytes,
+        mime: str,
+        classification: str = "INTERNAL",
+    ) -> Artifact:
+        """Atlas-produced binary deliverable (PDF/DOCX/XLSX/PPTX) already validated by round trip (N11)."""
+        name = self._clean_name(name)
+        ext = Path(name).suffix.lower()
+        if ext not in (".pdf", ".docx", ".xlsx", ".pptx"):
+            raise AtlasError(ErrorCode.INVALID_INPUT, "documents must be .pdf, .docx, .xlsx or .pptx")
+        if len(data) > MAX_IMPORT_BYTES:
+            raise AtlasError(ErrorCode.INVALID_INPUT, "artifact too large")
+        kind = sniff(data)
+        if kind not in EXTENSIONS[ext] and not (ext != ".pdf" and kind == "zip"):
+            raise AtlasError(ErrorCode.INVALID_INPUT, f"content is {kind}, which does not match {ext}")
         return self._insert(
             employee_id=employee_id,
             task_id=task_id,

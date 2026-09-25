@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
 
+from runtime.notifications.outbox import Notice, enqueue_in_txn
 from runtime.tasks.state_machine import TERMINAL, TaskState, check_transition
 from shared.actors import SYSTEM, Actor
 from shared.clock import Clock, parse_utc, to_utc_str
@@ -43,6 +44,7 @@ class StopReport:
     in_flight_actions: list[str] = field(default_factory=list)
     unknown_actions: list[str] = field(default_factory=list)
     elapsed_ms: float = 0.0
+    control_epoch: int = 0
 
 
 @dataclass
@@ -83,7 +85,7 @@ class TaskEngine:
         objective: str,
         external_writes: bool = False,
         purchases: bool = False,
-        criteria: list[tuple[str, bool]] | None = None,
+        criteria: list[tuple[Any, ...]] | None = None,
         priority: str = "NORMAL",
         data_policy: str = "INTERNAL",
         budget_limit: Money | None = None,
@@ -91,8 +93,18 @@ class TaskEngine:
         parent_task_id: str | None = None,
         conversation_id: str | None = None,
         client_request_id: str | None = None,
+        original_request: str | None = None,
+        source_message_id: str | None = None,
+        input_artifact_ids: list[str] | None = None,
     ) -> str:
         """Persist a task before anything claims work has started (spec 3.3).
+
+        ``original_request`` is the owner's full text (the objective may be a shorter statement); it is
+        stored verbatim as instruction revision 1 so later summaries never replace it (spec 13.1).
+
+        Publication is atomic (A3-12, spec 5.2): the task row, criteria, instruction, input attachments and
+        the link to the source message commit together, so a worker can never pick up a task whose input
+        package is incomplete. Every attachment must belong to the employee or nothing is created.
 
         ``client_request_id`` makes creation idempotent: resending the same request (after a lost reply or
         a reconnect) returns the task that already exists instead of creating a duplicate.
@@ -142,11 +154,36 @@ class TaskEngine:
                     client_request_id,
                 ),
             )
-            for text, required in criteria or []:
+            for c in criteria or []:  # (description, required[, check_kind, params]) - A3-07
                 self.conn.execute(
-                    "INSERT INTO task_criteria(id, task_id, description, required) VALUES (?,?,?,?)",
-                    (new_id(), task_id, text, int(required)),
+                    "INSERT INTO task_criteria(id, task_id, description, required, check_kind, params_json)"
+                    " VALUES (?,?,?,?,?,?)",
+                    (
+                        new_id(),
+                        task_id,
+                        c[0],
+                        int(c[1]),
+                        c[2] if len(c) > 2 else None,
+                        json.dumps(c[3]) if len(c) > 3 and c[3] else None,
+                    ),
                 )
+            for aid in dict.fromkeys(input_artifact_ids or []):
+                art = self.conn.execute("SELECT employee_id FROM artifacts WHERE id = ?", (aid,)).fetchone()
+                if art is None or art["employee_id"] != employee_id:
+                    raise _err(ErrorCode.INVALID_INPUT, "attachment not found for this employee")
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO artifact_links(artifact_id, task_id, relation) VALUES (?,?,'input')",
+                    (aid, task_id),
+                )
+            if source_message_id is not None:
+                self.conn.execute(
+                    "UPDATE messages SET task_id = ? WHERE id = ? AND task_id IS NULL", (task_id, source_message_id)
+                )
+            self.conn.execute(
+                "INSERT INTO task_instruction_versions(task_id, revision, kind, instruction, material, author,"
+                " source_message_id, created_at) VALUES (?,1,'ORIGINAL',?,1,?,?,?)",
+                (task_id, (original_request or objective)[:32000], f"{actor.kind}:{actor.id}", source_message_id, now),
+            )
             journal.append(
                 self.conn,
                 self.clock,
@@ -191,6 +228,8 @@ class TaskEngine:
             "state": r["state"],
             "blocked_reason": r["blocked_reason"],
             "version": r["version"],
+            "instruction_revision": r["instruction_revision"],
+            "available_actions": available_actions(r["state"], r["blocked_reason"]),
             "parent_task_id": r["parent_task_id"],
             "deadline": r["deadline"],
             "created_at": r["created_at"],
@@ -330,12 +369,31 @@ class TaskEngine:
             self.conn.execute("UPDATE tasks SET lease_expires_at = ? WHERE id = ?", (expires, lease.task_id))
         return Lease(lease.task_id, lease.worker_id, lease.fencing_token, expires)
 
-    def release(self, lease: Lease, to: TaskState, reason: str, blocked_reason: str | None = None) -> None:
+    def release(
+        self,
+        lease: Lease,
+        to: TaskState,
+        reason: str,
+        blocked_reason: str | None = None,
+        notice: Notice | None = None,
+    ) -> None:
+        """Leave RUNNING. ``notice`` (kind, content, artifact_id) is queued for the owner in the SAME
+        commit as the state change (A3-27): a task never waits for the owner without telling them."""
         with transaction(self.conn):
             row = self.check_lease_in_txn(lease.task_id, lease.worker_id, lease.fencing_token)
             self.transition_in_txn(
                 row, to, Actor("worker", lease.worker_id, "internal"), reason, blocked_reason=blocked_reason
             )
+            if notice is not None:
+                enqueue_in_txn(
+                    self.conn,
+                    self.clock,
+                    employee_id=row["employee_id"],
+                    task_id=row["id"],
+                    kind=notice[0],
+                    content=notice[1],
+                    artifact_id=notice[2],
+                )
 
     # ------------------------------------------------------------------ owner controls
 
@@ -393,6 +451,46 @@ class TaskEngine:
             )
             return target
 
+    def reevaluate(
+        self, task_id: str, *, actor: Actor, expected_version: int, budget: Any
+    ) -> tuple[TaskState, str]:
+        """'Reavaliar bloqueio' (A3-30): unblock only when the cause is really gone. Budget is read
+        live; limits counters are reset for NO_PROGRESS/RETRY_LIMIT (the owner decided to try again);
+        UNKNOWN external effects stay blocked until reconciled - a button never re-dispatches them."""
+        with transaction(self.conn):
+            row = self._row(task_id)
+            self._owner_check(actor, row)
+            if row["version"] != expected_version:
+                raise _err(ErrorCode.VERSION_CONFLICT, "task changed; refresh and retry")
+            if row["state"] != TaskState.BLOCKED:
+                return TaskState(row["state"]), "a tarefa não está bloqueada"
+            reason = row["blocked_reason"]
+            if reason == "EXTERNAL_EFFECT_UNKNOWN" and self._unknown_actions(task_id):
+                return TaskState.BLOCKED, (
+                    "há ação com resultado incerto; é preciso conferir (reconciliar) antes de continuar"
+                )
+            if reason == "BUDGET_EXCEEDED":
+                lim = budget.limits
+                task_used = budget._committed("task", task_id)
+                from security.budget.budget import period_key
+
+                period_used = budget._committed("period", period_key(self.clock))
+                if (
+                    lim.monthly_limit_minor is None
+                    or lim.per_task_limit_minor is None
+                    or task_used >= lim.per_task_limit_minor
+                    or period_used >= lim.monthly_limit_minor
+                ):
+                    return TaskState.BLOCKED, "o orçamento continua esgotado; aumente o teto em Configurações"
+            if reason in ("NO_PROGRESS", "RETRY_LIMIT"):
+                self.conn.execute(
+                    "UPDATE task_progress SET transient_failures = 0, replans_without_progress = 0,"
+                    " steps_without_verified = 0, next_attempt_at = NULL WHERE task_id = ?",
+                    (task_id,),
+                )
+            self.transition_in_txn(row, TaskState.READY, actor, f"owner re-evaluated block ({reason})")
+            return TaskState.READY, "condição reavaliada; a tarefa voltou para a fila"
+
     def cancel(self, task_id: str, *, actor: Actor, expected_version: int) -> CancelReport:
         """Stop future dispatches. Effects that already happened are reported, never undone (spec 12.3)."""
         report = CancelReport(task_id)
@@ -432,7 +530,87 @@ class TaskEngine:
             )
         return report
 
-    def stop_all(self, *, actor: Actor, employee_id: str) -> StopReport:
+    def instructions(self, task_id: str) -> list[dict[str, Any]]:
+        """Every instruction revision, oldest first (the last one is in force)."""
+        return [
+            {"revision": r["revision"], "kind": r["kind"], "instruction": r["instruction"], "material": bool(r["material"])}
+            for r in self.conn.execute(
+                "SELECT revision, kind, instruction, material FROM task_instruction_versions WHERE task_id = ?"
+                " ORDER BY revision",
+                (task_id,),
+            )
+        ]
+
+    def update_instruction(
+        self,
+        task_id: str,
+        *,
+        actor: Actor,
+        text: str,
+        kind: str = "CORRECTION",
+        material: bool = True,
+        source_message_id: str | None = None,
+    ) -> int:
+        """Record a new instruction revision durably (A3-03, spec 6.3). Returns the new revision.
+
+        A material change cancels proposals not yet dispatched and revokes approvals given for the old
+        instructions; the broker refuses any proposal decided under an older revision. Effects already
+        dispatched are kept and reported, never undone. A correction grants no capability or budget.
+        """
+        if kind not in ("CORRECTION", "ANSWER", "ATTACHMENT"):
+            raise _err(ErrorCode.INVALID_INPUT, f"unknown instruction kind {kind}")
+        if not text.strip():
+            raise _err(ErrorCode.INVALID_INPUT, "empty instruction")
+        now = to_utc_str(self.clock.now())
+        with transaction(self.conn):
+            row = self._row(task_id)
+            self._owner_check(actor, row)
+            if row["state"] in TERMINAL:
+                raise _err(ErrorCode.INVALID_INPUT, f"task is {row['state']}; start a new task instead")
+            rev = int(row["instruction_revision"]) + 1
+            self.conn.execute(
+                "INSERT INTO task_instruction_versions(task_id, revision, kind, instruction, material, author,"
+                " source_message_id, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                (task_id, rev, kind, text[:32000], int(material), f"{actor.kind}:{actor.id}", source_message_id, now),
+            )
+            self.conn.execute(
+                "UPDATE tasks SET instruction_revision = ?, version = version + 1, updated_at = ? WHERE id = ?",
+                (rev, now, task_id),
+            )
+            cancelled = revoked = 0
+            if material:
+                for a in self.conn.execute(
+                    "SELECT id FROM actions WHERE task_id = ? AND status IN ('PROPOSED','AUTHORIZED')", (task_id,)
+                ).fetchall():
+                    self.conn.execute(
+                        "UPDATE actions SET status = 'CANCELLED_BEFORE_DISPATCH', status_reason = 'INSTRUCTION_CHANGED',"
+                        " updated_at = ? WHERE id = ?",
+                        (now, a["id"]),
+                    )
+                    cancelled += 1
+                for ap in self.conn.execute(
+                    "SELECT id FROM approvals WHERE task_id = ? AND status IN ('PENDING','APPROVED')", (task_id,)
+                ).fetchall():
+                    self.conn.execute(
+                        "UPDATE approvals SET status = 'REVOKED', decided_at = ? WHERE id = ?", (now, ap["id"])
+                    )
+                    revoked += 1
+                fresh = self._row(task_id)
+                if fresh["state"] == TaskState.WAITING_APPROVAL and revoked:
+                    self.transition_in_txn(fresh, TaskState.READY, actor, "approval revoked by a correction")
+            journal.append(
+                self.conn,
+                self.clock,
+                employee_id=row["employee_id"],
+                task_id=task_id,
+                type="task.instruction_updated",
+                actor=actor,
+                summary=f"instruction revision {rev} ({kind}{', material' if material else ''}); "
+                f"{cancelled} proposal(s) cancelled, {revoked} approval(s) revoked",
+            )
+        return rev
+
+    def stop_all(self, *, actor: Actor, employee_id: str, origin: str = "local_app") -> StopReport:
         """Authenticated "stop everything": revoke every lease and pause all active tasks (spec 12.3)."""
         started = time.perf_counter()
         report = StopReport()
@@ -458,13 +636,38 @@ class TaskEngine:
                 (report.in_flight_actions if a["status"] == "DISPATCHING" else report.unknown_actions).append(
                     a["id"]
                 )
+            self.conn.execute(
+                "UPDATE employees SET control_epoch = control_epoch + 1 WHERE id = ?", (employee_id,)
+            )
+            report.control_epoch = int(
+                self.conn.execute("SELECT control_epoch FROM employees WHERE id = ?", (employee_id,)).fetchone()[0]
+            )
+            self.conn.execute(
+                "INSERT INTO control_orders(id, employee_id, kind, control_epoch, origin, requested_at, applied_at,"
+                " report_json) VALUES (?,?,'STOP_ALL',?,?,?,?,?)",
+                (
+                    new_id(),
+                    employee_id,
+                    report.control_epoch,
+                    origin,
+                    to_utc_str(self.clock.now()),
+                    to_utc_str(self.clock.now()),
+                    json.dumps(
+                        {
+                            "paused": report.paused_tasks,
+                            "in_flight": report.in_flight_actions,
+                            "unknown": report.unknown_actions,
+                        }
+                    ),
+                ),
+            )
             journal.append(
                 self.conn,
                 self.clock,
                 employee_id=employee_id,
                 type="employee.stopped",
                 actor=actor,
-                summary=f"stop-all: {len(report.paused_tasks)} task(s) paused, "
+                summary=f"stop-all (epoch {report.control_epoch}): {len(report.paused_tasks)} task(s) paused, "
                 f"{len(report.in_flight_actions)} action(s) already in flight",
             )
         report.elapsed_ms = (time.perf_counter() - started) * 1000
@@ -486,8 +689,11 @@ class TaskEngine:
             if cur.rowcount != 1:
                 raise _err(ErrorCode.INVALID_INPUT, "unknown criterion")
 
-    def complete(self, task_id: str, *, actor: Actor, expected_version: int) -> None:
-        """COMPLETED only when every required criterion has evidence (spec 15.3)."""
+    def complete(
+        self, task_id: str, *, actor: Actor, expected_version: int, notice: Notice | None = None
+    ) -> None:
+        """COMPLETED only when every required criterion has evidence (spec 15.3). The delivery notice
+        commits together with the state (A3-27)."""
         with transaction(self.conn):
             row = self._row(task_id)
             if row["version"] != expected_version:
@@ -507,6 +713,16 @@ class TaskEngine:
             if self._unknown_actions(task_id):
                 raise _err(ErrorCode.EXTERNAL_EFFECT_UNKNOWN, "task has actions with unknown outcome")
             self.transition_in_txn(row, TaskState.COMPLETED, actor, "all required criteria satisfied")
+            if notice is not None:
+                enqueue_in_txn(
+                    self.conn,
+                    self.clock,
+                    employee_id=row["employee_id"],
+                    task_id=task_id,
+                    kind=notice[0],
+                    content=notice[1],
+                    artifact_id=notice[2],
+                )
 
     def checkpoint(self, task_id: str, state: dict[str, Any]) -> str:
         """Operational checkpoint. Private model reasoning is never stored (spec 9.3)."""
@@ -594,6 +810,17 @@ class TaskEngine:
                 return TaskState.BLOCKED
             self.transition_in_txn(row, TaskState.READY, actor, "blocking condition resolved")
             return TaskState.READY
+
+
+def available_actions(state: str, blocked_reason: str | None) -> list[str]:
+    """What the owner may do now (A3-30, spec 6.1). The UI shows exactly these; nothing is guessed."""
+    if state in ("COMPLETED", "FAILED", "CANCELLED"):
+        return []
+    if state == "PAUSED":
+        return ["resume", "cancel"]
+    if state == "BLOCKED":
+        return ["reconcile" if blocked_reason == "EXTERNAL_EFFECT_UNKNOWN" else "reevaluate", "cancel"]
+    return ["pause", "cancel"]
 
 
 def is_terminal(state: str) -> bool:

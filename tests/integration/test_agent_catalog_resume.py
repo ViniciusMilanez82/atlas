@@ -127,7 +127,6 @@ def test_resume_uses_persisted_observations_and_owner_answer(world: World, tmp_p
 
     s = build(world, tmp_path, policy)
     cs = ConversationService(world.conn, world.clock, s.runner.broker, None)
-    s.runner.notify = lambda tid, kind, text, art: cs.notify(tid, kind, text, art)
     conv = cs.current(world.employee.id)
     tid = setup_task(s, tmp_path, DOC_A, DOC_B, conversation_id=conv)
 
