@@ -20,7 +20,8 @@ MONEY = re.compile(r"(R\$|US\$|USD|BRL|EUR|€)\s?(\d{1,3}(?:\.\d{3})+(?:,\d{1,2
 _CAP = re.compile(r"\b(nao ultrapass\w*|ate|no maximo|maximo|teto|limite|nao pass\w*|nao exced\w*|abaixo de)\b")
 _EXCLUDE = re.compile(
     r"\b(exclua|excluir|excluindo|exceto|nao inclua|nao incluir|nao considere|desconsidere|ignore|evite|"
-    r"sem|nunca|nao use|nao usar|proibido)\b\s+(?P<obj>[^,.;]{3,120})"
+    r"sem|nunca|nao use|nao usar|proibido|abandone|esqueca|deixe de lado|em vez de|ao inves de)\b\s+(?P<obj>[^,.;]{3,120}?)"
+    r"(?=\s+e\s+|[,.;]|$)"  # the object ends at the next clause: "abandone as macas e produza..."
 )
 _SEPARATE_AFTER = re.compile(r"\s+(?:separadamente|em separado|a parte|discriminad\w*)\b")
 _SEPARATE_BEFORE = re.compile(r"\b(?:separe|discrimine|destaque)\s+(?P<obj>[^,.;]{3,80})")

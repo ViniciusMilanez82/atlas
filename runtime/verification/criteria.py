@@ -28,7 +28,9 @@ _VERBS = frozenset(
     "recomende recomendar resuma resumir escreva escrever prepare preparar monte montar elabore elaborar "
     "revise revisar verifique verificar pesquise pesquisar procure procurar calcule calcular organize "
     "organizar liste listar mande mandar envie enviar traduza traduzir explique explicar diga dizer "
-    "indique indicar mostre mostrar produza produzir redija redigir leia ler use usar".split()
+    "indique indicar mostre mostrar produza produzir redija redigir leia ler use usar priorize priorizar "
+    "considere considerar inclua incluir mude mudar troque trocar substitua substituir abandone abandonar "
+    "apresente apresentar mantenha manter".split()
 )
 
 

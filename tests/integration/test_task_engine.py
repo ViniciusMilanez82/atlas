@@ -231,7 +231,8 @@ class TestCompletion:
         ev = new_id()
         with transaction(world.conn):
             world.conn.execute(
-                "INSERT INTO evidence(id, task_id, kind, summary, created_at) VALUES (?,?,?,?,?)",
+                # R5-04: evidence names the instruction revision it evaluated
+                "INSERT INTO evidence(id, task_id, kind, summary, created_at, instruction_revision) VALUES (?,?,?,?,?,1)",
                 (ev, tid, "file_opens", "arquivo aberto e hash conferido", "2026-01-01T00:00:00.000Z"),
             )
         required = next(c for c in engine.get(tid)["completion_criteria"] if c["required"])

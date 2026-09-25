@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 import time
 from dataclasses import dataclass, field
@@ -18,6 +19,8 @@ from typing import Any
 
 from runtime.notifications.outbox import Notice, enqueue_in_txn
 from runtime.tasks.state_machine import TERMINAL, TaskState, check_transition
+from runtime.verification.conditions import extract_conditions, fold
+from runtime.verification.criteria import CHECKED_CONDITIONS, key_terms
 from security.egress.guard import highest
 from security.egress.lineage import classify_text, instruction_classification
 from shared.actors import SYSTEM, Actor
@@ -30,6 +33,12 @@ from storage import journal
 from storage.db import require_transaction, transaction
 
 DEFAULT_LEASE_TTL = timedelta(seconds=60)
+# A correction that replaces the subject (not only adds to it) supersedes the earlier coverage (R5-04).
+_REPLACES = re.compile(
+    r"\b(abandone|esqueca|em vez de|ao inves de|substitua|troque|mude para|somente sobre|apenas sobre|"
+    r"nao quero mais|deixe de lado)\b"
+)
+_CORRECTION_WORDS = {"verda", "corri", "corre", "mudei", "ideia", "aband", "somen", "apena", "agora", "tambe"}
 
 
 def sha256_text(text: str) -> str:
@@ -247,7 +256,9 @@ class TaskEngine:
     def get(self, task_id: str) -> dict[str, Any]:
         r = self._row(task_id)
         criteria = self.conn.execute(
-            "SELECT id, description, required FROM task_criteria WHERE task_id = ? ORDER BY rowid", (task_id,)
+            "SELECT id, description, required FROM task_criteria WHERE task_id = ? AND superseded_revision IS NULL"
+            " ORDER BY rowid",
+            (task_id,),
         ).fetchall()
         return {
             "schema_version": "1.0",
@@ -439,12 +450,13 @@ class TaskEngine:
         reason: str,
         blocked_reason: str | None = None,
         notice: Notice | None = None,
-    ) -> None:
+    ) -> int:
         """Leave RUNNING. ``notice`` (kind, content, artifact_id) is queued for the owner in the SAME
-        commit as the state change (A3-27): a task never waits for the owner without telling them."""
+        commit as the state change (A3-27): a task never waits for the owner without telling them.
+        Returns the new task version."""
         with transaction(self.conn):
             row = self.check_lease_in_txn(lease.task_id, lease.worker_id, lease.fencing_token)
-            self.transition_in_txn(
+            version = self.transition_in_txn(
                 row, to, Actor("worker", lease.worker_id, "internal"), reason, blocked_reason=blocked_reason
             )
             if notice is not None:
@@ -457,6 +469,7 @@ class TaskEngine:
                     content=notice[1],
                     artifact_id=notice[2],
                 )
+        return version
 
     # ------------------------------------------------------------------ owner controls
 
@@ -677,6 +690,9 @@ class TaskEngine:
                 fresh = self._row(task_id)
                 if fresh["state"] == TaskState.WAITING_APPROVAL and revoked:
                     self.transition_in_txn(fresh, TaskState.READY, actor, "approval revoked by a correction")
+                criteria_note = self._rederive_criteria_in_txn(task_id, rev, kind, text)
+            else:
+                criteria_note = "not material: evidence kept (the note does not change what is delivered)"
             journal.append(
                 self.conn,
                 self.clock,
@@ -685,9 +701,67 @@ class TaskEngine:
                 type="task.instruction_updated",
                 actor=actor,
                 summary=f"instruction revision {rev} ({kind}{', material' if material else ''}); "
-                f"{cancelled} proposal(s) cancelled, {revoked} approval(s) revoked",
+                f"{cancelled} proposal(s) cancelled, {revoked} approval(s) revoked; {criteria_note}",
             )
         return rev
+
+    def _rederive_criteria_in_txn(self, task_id: str, rev: int, kind: str, text: str) -> str:
+        """A material instruction invalidates every earlier approval and adds what it asks for (R5-04).
+
+        * all live criteria lose their evidence: they must be proven again for revision ``rev``;
+        * a correction's own subject becomes a coverage criterion (terms it excludes are left out); if it
+          REPLACES the subject ("abandone...", "somente sobre..."), earlier coverage is superseded;
+        * each condition of the correction is a criterion; one of the same kind (a new cap, a new date)
+          supersedes the earlier one instead of stacking contradictory conditions;
+        * an attachment makes complete reading of the inputs a criterion.
+        """
+        require_transaction(self.conn)
+        live = self.conn.execute(
+            "SELECT id, check_kind, params_json FROM task_criteria WHERE task_id = ? AND superseded_revision IS NULL",
+            (task_id,),
+        ).fetchall()
+        self.conn.execute(
+            "UPDATE task_criteria SET satisfied_at = NULL, evidence_id = NULL WHERE task_id = ?"
+            " AND superseded_revision IS NULL",
+            (task_id,),
+        )
+        added = superseded = 0
+
+        def add(description: str, required: bool, check: str, params: dict[str, Any]) -> None:
+            nonlocal added
+            self.conn.execute(
+                "INSERT INTO task_criteria(id, task_id, description, required, check_kind, params_json,"
+                " instruction_revision) VALUES (?,?,?,?,?,?,?)",
+                (new_id(), task_id, description, int(required), check, json.dumps(params) if params else None, rev),
+            )
+            added += 1
+
+        def supersede(criterion_id: str) -> None:
+            nonlocal superseded
+            self.conn.execute("UPDATE task_criteria SET superseded_revision = ? WHERE id = ?", (rev, criterion_id))
+            superseded += 1
+
+        if kind == "CORRECTION":
+            conditions = extract_conditions(text)
+            excluded = {t for c in conditions if c.kind == "EXCLUSION" for t in key_terms(c.value)}
+            terms = [t for t in key_terms(text) if t not in excluded and t not in _CORRECTION_WORDS]
+            if _REPLACES.search(fold(text)):
+                for c in live:
+                    if c["check_kind"] == "coverage":
+                        supersede(c["id"])
+            if terms:
+                add(f"Atende à correção da revisão {rev} (aborda: {', '.join(terms)})", True, "coverage",
+                    {"terms": terms, "min_ratio": 0.5})
+            for cond in conditions:
+                if cond.kind in ("DATE", "MONEY_CAP", "QUANTITY"):
+                    for c in live:
+                        params = json.loads(c["params_json"]) if c["params_json"] else {}
+                        if c["check_kind"] == "condition" and params.get("kind") == cond.kind:
+                            supersede(c["id"])
+                add(cond.describe(), cond.kind in CHECKED_CONDITIONS, "condition", cond.as_params())
+        elif kind == "ATTACHMENT" and not any(c["check_kind"] == "inputs_read" for c in live):
+            add("Documentos de entrada lidos por completo", True, "inputs_read", {})
+        return f"criteria: {len(live)} re-opened, {superseded} superseded, {added} added for revision {rev}"
 
     def stop_all(self, *, actor: Actor, employee_id: str, origin: str = "local_app") -> StopReport:
         """Authenticated "stop everything": revoke every lease and pause all active tasks (spec 12.3)."""
@@ -769,19 +843,37 @@ class TaskEngine:
                 raise _err(ErrorCode.INVALID_INPUT, "unknown criterion")
 
     def complete(
-        self, task_id: str, *, actor: Actor, expected_version: int, notice: Notice | None = None
+        self,
+        task_id: str,
+        *,
+        actor: Actor,
+        expected_version: int,
+        notice: Notice | None = None,
+        expected_revision: int | None = None,
     ) -> None:
         """COMPLETED only when every required criterion has evidence (spec 15.3). The delivery notice
-        commits together with the state (A3-27)."""
+        commits together with the state (A3-27).
+
+        R5-04: ``expected_revision`` is the instruction revision the deliverable was verified for; it is
+        compared-and-set inside this transaction, and every live required criterion must be satisfied by
+        evidence of the revision in force. A correction that landed after verification makes this fail."""
         with transaction(self.conn):
             row = self._row(task_id)
             if row["version"] != expected_version:
                 raise _err(ErrorCode.VERSION_CONFLICT, "task changed; refresh and retry")
+            if expected_revision is not None and int(row["instruction_revision"]) != expected_revision:
+                raise _err(
+                    ErrorCode.VERSION_CONFLICT,
+                    f"verified for instruction revision {expected_revision}, but revision "
+                    f"{row['instruction_revision']} is in force",
+                )
             if row["state"] != TaskState.VERIFYING:
                 raise _err(ErrorCode.INVALID_INPUT, "only a task in VERIFYING can complete")
             missing = self.conn.execute(
-                "SELECT description FROM task_criteria WHERE task_id = ? AND required = 1 AND satisfied_at IS NULL",
-                (task_id,),
+                "SELECT c.description FROM task_criteria c LEFT JOIN evidence e ON e.id = c.evidence_id"
+                " WHERE c.task_id = ? AND c.required = 1 AND c.superseded_revision IS NULL"
+                " AND (c.satisfied_at IS NULL OR COALESCE(e.instruction_revision, 0) <> ?)",
+                (task_id, row["instruction_revision"]),
             ).fetchall()
             if missing:
                 raise _err(

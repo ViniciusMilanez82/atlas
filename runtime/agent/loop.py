@@ -528,6 +528,7 @@ class AgentRunner:
                         Authority.VERIFIED_FACT,
                     )
                 )
+            decided_for = int(task["instruction_revision"])
             try:
                 decision = self._decide(task, observations)
             except (RequiredContextWithheld, EgressBlocked) as exc:  # A3-02: ask, never leak or guess
@@ -587,12 +588,29 @@ class AgentRunner:
                 if state != TaskState.RUNNING:
                     return self._outcome(task_id, reason, steps)
                 continue
+            current = int(self.tasks.get(task_id)["instruction_revision"])
+            if current != decided_for:  # R5-04: a decision about an older revision never acts
+                self._journal(
+                    task_id,
+                    "task.decision_discarded",
+                    f"{decision['decision']} decided under revision {decided_for}; revision {current} is in force",
+                )
+                observations.append(
+                    Observation(
+                        f"Your last decision ({decision['decision']}) was made before instruction revision "
+                        f"{current} and was discarded. Decide again under the CURRENT instructions.",
+                        "system",
+                        Authority.VERIFIED_FACT,
+                    )
+                )
+                continue  # the loop re-plans for the new revision; not a lack of progress
             self.tasks.checkpoint(
                 task_id,
                 {
                     "step": steps,
                     "decision": decision["decision"],
                     "summary": decision["summary"],
+                    "instruction_revision": decided_for,
                 },
             )
             verdict = self._validate(decision)
@@ -627,8 +645,12 @@ class AgentRunner:
             if decision["decision"] == "finish":
                 result = self.verifier.verify_text_artifact(task_id, decision.get("artifact_id", ""), spec)
                 self._last_verification = result
-                if result.passed:
-                    return self._complete(task_id, lease, result.evidence_id, decision["artifact_id"], steps)
+                if result.passed and result.instruction_revision == decided_for:
+                    return self._complete(
+                        task_id, lease, result.evidence_id, decision["artifact_id"], steps, decided_for
+                    )
+                if result.passed:  # verified, but for a newer revision than the decision: decide again
+                    continue
                 gaps = result.gaps
                 observations.append(
                     Observation(
@@ -740,7 +762,7 @@ class AgentRunner:
         return None if state == TaskState.RUNNING else f"stopped after {res.status}"
 
     def _complete(
-        self, task_id: str, lease: Lease, evidence_id: str | None, artifact_id: str, steps: int
+        self, task_id: str, lease: Lease, evidence_id: str | None, artifact_id: str, steps: int, revision: int
     ) -> RunOutcome:
         assert evidence_id is not None
         per = self._last_verification.criteria if self._last_verification else {}
@@ -748,18 +770,52 @@ class AgentRunner:
             own = per.get(c["criterion_id"])
             if own is not None and own.passed and own.evidence_id:  # its OWN evidence (A3-07)
                 self.tasks.satisfy_criterion(task_id, c["criterion_id"], own.evidence_id)
-        self.tasks.release(lease, TaskState.VERIFYING, "deliverable verified")
+        try:
+            version = self.tasks.release(lease, TaskState.VERIFYING, "deliverable verified")
+        except AtlasError:
+            return self._outcome(task_id, "lease revoked (paused, stopped or cancelled)", steps)
         name = self.conn.execute("SELECT name FROM artifacts WHERE id = ?", (artifact_id,)).fetchone()
-        self.tasks.complete(
-            task_id,
-            actor=self.actor,
-            expected_version=self.tasks.get(task_id)["version"],
-            notice=("result", f"Concluí a tarefa. Entrega verificada: {name[0] if name else artifact_id}.", artifact_id),
-        )
+        limits = self._limitations()
+        try:
+            self.tasks.complete(  # compare-and-set: the version we left RUNNING with and the verified revision
+                task_id,
+                actor=self.actor,
+                expected_version=version,
+                expected_revision=revision,
+                notice=(
+                    "result",
+                    f"Concluí a tarefa. Entrega verificada: {name[0] if name else artifact_id}." + limits,
+                    artifact_id,
+                ),
+            )
+        except AtlasError as exc:  # a correction landed between verification and commit (R5-04)
+            self._back_to_ready(task_id, exc.message)
+            return self._outcome(task_id, f"not completed: {exc.message}", steps)
         self._journal(task_id, "task.delivered", f"deliverable artifact {artifact_id} verified")
         out = self._outcome(task_id, "completed with verified deliverable", steps)
         out.deliverable_id = artifact_id
         return out
+
+    def _limitations(self) -> str:
+        """Non-required checks that did not pass are limitations, stated - never a silent 'verified'."""
+        res = self._last_verification
+        if res is None:
+            return ""
+        gaps = [g for g in res.gaps if "exige revisão" in g]
+        return (" Não verificado automaticamente (revise): " + "; ".join(gaps)[:600] + ".") if gaps else ""
+
+    def _back_to_ready(self, task_id: str, reason: str) -> None:
+        try:
+            task = self.tasks.get(task_id)
+            if task["state"] == TaskState.VERIFYING:
+                v = self.tasks.transition(
+                    task_id, TaskState.PLANNING, expected_version=task["version"], actor=self.actor, reason=reason[:300]
+                )
+                self.tasks.transition(
+                    task_id, TaskState.READY, expected_version=v, actor=self.actor, reason="re-plan for the new revision"
+                )
+        except AtlasError:
+            pass  # the owner paused/cancelled meanwhile: nothing to requeue
 
     def _safe_release(
         self,

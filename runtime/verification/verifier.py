@@ -73,6 +73,7 @@ class VerificationResult:
     gaps: list[str] = field(default_factory=list)
     evidence_id: str | None = None  # integrity evidence (kept for callers of the Alpha API)
     criteria: dict[str, CriterionResult] = field(default_factory=dict)  # criterion_id -> result
+    instruction_revision: int = 1  # the revision this verification evaluated (R5-04)
 
 
 class Verifier:
@@ -296,11 +297,13 @@ class Verifier:
 
     # ------------------------------------------------------------------ evidence
 
-    def _evidence(self, task_id: str, artifact_id: str, kind: str, summary: str) -> str:
+    def _evidence(self, task_id: str, artifact_id: str, kind: str, summary: str, revision: int) -> str:
         eid = new_id()
         self.conn.execute(
-            "INSERT INTO evidence(id, task_id, artifact_id, kind, summary, created_at) VALUES (?,?,?,?,?,?)",
-            (eid, task_id, artifact_id, kind, summary[:1000], to_utc_str(self.clock.now())),
+            "INSERT INTO evidence(id, task_id, artifact_id, kind, summary, created_at, instruction_revision)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (eid, task_id, artifact_id, kind, f"[revision {revision}] {summary}"[:1000], to_utc_str(self.clock.now()),
+             revision),
         )
         return eid
 
@@ -310,10 +313,12 @@ class Verifier:
         self, task_id: str, artifact_id: str, spec: DeliverableSpec
     ) -> VerificationResult:
         res = VerificationResult(artifact_id, passed=False)
+        rev = self.conn.execute("SELECT instruction_revision FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        res.instruction_revision = int(rev[0]) if rev else 1
         body = self._integrity(task_id, artifact_id, spec, res)
-        criteria = self.conn.execute(
+        criteria = self.conn.execute(  # superseded criteria are history, not requirements (R5-04)
             "SELECT id, description, required, check_kind, params_json FROM task_criteria WHERE task_id = ?"
-            " ORDER BY rowid",
+            " AND superseded_revision IS NULL ORDER BY rowid",
             (task_id,),
         ).fetchall()
         if body is None:
@@ -377,6 +382,7 @@ class Verifier:
                     artifact_id,
                     "file_opens",
                     f"'{art.name}' v{art.version} sha256 {art.sha256[:12]}: opens, {len(body)} chars, no placeholders",
+                    res.instruction_revision,
                 )
                 for c in criteria:
                     kind = c["check_kind"] or "all"
@@ -387,6 +393,6 @@ class Verifier:
                     results[c["id"]].evidence_id = (
                         res.evidence_id
                         if kind == "integrity"
-                        else self._evidence(task_id, artifact_id, ev_kind, summary)
+                        else self._evidence(task_id, artifact_id, ev_kind, summary, res.instruction_revision)
                     )
         return res
