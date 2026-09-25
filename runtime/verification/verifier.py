@@ -257,7 +257,7 @@ class Verifier:
     def _sources(self, task_id: str, body: str, minimum: int, spec: DeliverableSpec) -> str | None:
         inputs = set(self._inputs(task_id))
         cited_arts = sorted(set(ARTIFACT_REF.findall(body)))
-        urls = sorted(set(URL.findall(body)))
+        urls = sorted({u.rstrip(".,;:") for u in URL.findall(body)})  # "Fonte: https://x/a." cites x/a
         if spec.allowed_source_prefixes:
             urls = [u for u in urls if u.startswith(spec.allowed_source_prefixes)]
         problems = []
@@ -269,20 +269,51 @@ class Verifier:
                 problems.append(f"fonte citada não foi consultada nesta tarefa: artifact:{aid}")
             else:
                 valid += 1
-        for u in urls:  # no research tool has retrieved any page for this task yet
-            retrieved = self.conn.execute(
-                "SELECT 1 FROM sources WHERE kind = 'web' AND ref = ?", (u,)
-            ).fetchone()
-            if retrieved:
-                valid += 1
-            else:
+        from runtime.research.sources import SourceRetrievals
+
+        retrievals = SourceRetrievals(self.conn, self.clock, self.artifacts)
+        for u in urls:  # R5-08: registered is not retrieved; only a retrieval scoped to THIS task counts
+            rows = retrievals.for_task(task_id, u)
+            if not rows:
                 problems.append(f"fonte citada não foi recuperada nesta tarefa: {u}")
+                continue
+            fresh = [r for r in rows if retrievals.valid(r)]
+            if not fresh:
+                problems.append(f"a consulta a {u} expirou para um dado que muda com o tempo; consulte de novo")
+                continue
+            unsupported = self._unsupported_claim(body, u, fresh[0]["artifact_id"])
+            if unsupported:
+                problems.append(f"a fonte {u} não sustenta a afirmação: «{unsupported[:120]}»")
+                continue
+            valid += 1
         need = max(minimum, spec.min_sources)
         if valid < need:
             problems.append(
                 f"precisa de pelo menos {need} fonte(s) consultada(s) e citada(s); encontrei {valid}"
             )
         return "; ".join(problems) if problems else None
+
+    def _unsupported_claim(self, body: str, url: str, artifact_id: str) -> str | None:
+        """The sentence citing ``url`` must be backed by the captured content: every number it states
+        appears there, or (without numbers) at least one of its significant terms does."""
+        captured = fold(self.artifacts.read_bytes(artifact_id).decode("utf-8", errors="replace"))
+        numbers_in_capture = set(re.findall(r"\d+(?:[.,]\d+)*", captured))
+        words = {stem(w) for w in re.findall(r"[a-z0-9]+", captured)}
+        parts = self._sentences(body)
+        for i, sentence in enumerate(parts):
+            if url not in sentence:
+                continue
+            claim = re.sub(r"(?i)\b(fontes?|refer[eê]ncias?|dispon[ií]vel em|acesso em|consultad[oa] em)\b", " ",
+                           sentence.replace(url, " "))
+            if not key_terms(claim) and not re.search(r"\d", claim) and i > 0:
+                claim = parts[i - 1]  # "Fonte: <url>" on its own backs the previous statement
+            numbers = set(re.findall(r"\d+(?:[.,]\d+)*", claim))
+            if numbers and not numbers <= numbers_in_capture:
+                return claim
+            terms = key_terms(claim)
+            if not numbers and terms and not any(t in words for t in terms):
+                return claim
+        return None
 
     def _inputs_read(self, task_id: str, body: str = "") -> str | None:
         missing = []
