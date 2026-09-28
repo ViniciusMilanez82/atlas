@@ -503,7 +503,7 @@ class AgentRunner:
         path = database_path(self.conn)
         if path is None:  # in-memory database: no second connection can renew the lease
             try:
-                return self._run_leased(task_id, spec, lease)
+                return self._run_with_controls(task_id, spec, lease)
             finally:
                 self._deliver(task_id)
         keeper = LeaseKeeper(
@@ -511,10 +511,27 @@ class AgentRunner:
         )
         with keeper:  # renews while model calls and dispatches block this thread (A3-05)
             try:
-                return self._run_leased(task_id, spec, lease)
+                return self._run_with_controls(task_id, spec, lease)
             finally:
                 self.last_keeper_beats = keeper.beats
                 self._deliver(task_id)
+
+    def _run_with_controls(self, task_id: str, spec: DeliverableSpec, lease: Lease) -> RunOutcome:
+        """A control change while a tool runs is an orderly stop, not a worker crash.
+
+        ProgressGuard must continue rejecting stale leases. Only turn that rejection into a
+        result when the persisted task proves the lease really ceased to belong to this run.
+        """
+        try:
+            return self._run_leased(task_id, spec, lease)
+        except AtlasError as exc:
+            current = self.tasks.get(task_id)
+            if exc.code == ErrorCode.UNAUTHORIZED and (
+                current["state"] != "RUNNING" or current["fencing_token"] != lease.fencing_token
+                or current["lease_owner"] != lease.worker_id
+            ):
+                return self._outcome(task_id, "lease revoked during execution; no further action dispatched", 0)
+            raise
 
     def _run_leased(self, task_id: str, spec: DeliverableSpec, lease: Lease) -> RunOutcome:
         plan_id, observations = self._resume_state(task_id)
@@ -753,10 +770,12 @@ class AgentRunner:
             # Progress = a new deliverable version, or new document segments read (a long document read
             # page by page is progress, not a loop).
             wrote = tool_id in ("artifact.write_text", "artifact.write_document")
+            computed = tool_id == "skills.transform_rows" and not (res.output or {}).get("replayed", False)
+            learned = tool_id == "skills.propose_table" and not (res.output or {}).get("replayed", False)
             read_more = tool_id in ("artifact.read_text", "documents.read") and bool((res.output or {}).get("segments"))
             fetched = tool_id == "web.fetch" and bool((res.output or {}).get("retrieval_id"))  # a new source (N16)
             self.guard.record(
-                lease, StepOutcome.VERIFIED_RESULT if wrote or read_more or fetched else StepOutcome.NO_NEW_RESULT
+                lease, StepOutcome.VERIFIED_RESULT if wrote or read_more or fetched or learned or computed else StepOutcome.NO_NEW_RESULT
             )
             return None
         self._finish_step(step_id, "FAILED")

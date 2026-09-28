@@ -19,6 +19,8 @@ from runtime.artifacts.manager import ArtifactManager
 from runtime.documents.generate import GenerationError, generate
 from runtime.documents.store import MAX_PAGE_CHARS, DocumentStore
 from runtime.memory.manager import MemoryManager
+from runtime.skills.table_tools import MANIFESTS as TABLE_MANIFESTS
+from runtime.skills.table_tools import TableSkillTools
 from runtime.tools.compute import ComputeError, analyze_calendar, evaluate, format_br
 from runtime.tools.registry import ToolManifest, ToolRegistry
 from security.broker.broker import AdapterOutcome
@@ -245,7 +247,7 @@ BUILTIN_MANIFESTS = (
     CALC,
     CALENDAR,
     WEB_FETCH,
-)
+) + TABLE_MANIFESTS
 
 
 class BuiltinTools:
@@ -506,6 +508,8 @@ class BuiltinTools:
             WEB_FETCH.tool_id: self.web_fetch,
         }
         for m in BUILTIN_MANIFESTS:
+            if m.tool_id not in bindings:
+                continue
             registry.register(m, bindings[m.tool_id])
             registry.enable(
                 m.tool_id,
@@ -513,3 +517,5 @@ class BuiltinTools:
                 actor=enabled_by,
                 validation_evidence="tests/integration/test_agent_loop.py",
             )
+
+        TableSkillTools(self.db_path, self.store_root, self.clock).register(registry, enabled_by=enabled_by)

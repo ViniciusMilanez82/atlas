@@ -27,6 +27,7 @@ KNOWN_SCHEMAS = (
     "task",
     "ipc_request",
     "ipc_response",
+    "table_skill",
     "config",
 )
 

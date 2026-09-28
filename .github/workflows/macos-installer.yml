@@ -1,7 +1,7 @@
 name: macos-installer
 on:
   push:
-    branches: ["feat/macos-easy-installer"]
+    branches: ["feat/macos-easy-installer", "feat/reusable-table-skills"]
   workflow_dispatch:
 permissions:
   contents: read
