@@ -1,0 +1,54 @@
+name: macos-installer
+on:
+  push:
+    branches: ["feat/macos-easy-installer"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-installation:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install fixed development tools
+        run: python -m pip install -r requirements-dev.lock
+      - name: Validate installer contracts
+        run: python -m pytest -q tests/regression/test_installer_contract.py
+      - name: Build the existing Alpha application
+        run: bash packaging/macos/build_app.sh "$RUNNER_TEMP/atlas-app"
+      - name: Build native offline PKG and DMG
+        run: bash packaging/macos/build_installer.sh "$RUNNER_TEMP/atlas-app/Atlas.app" "$RUNNER_TEMP/atlas-installer" "$GITHUB_RUN_NUMBER"
+      - name: Install, launch, quit, reinstall and verify data preservation on disposable macOS
+        run: |
+          python packaging/macos/verify_installer.py \
+            --pkg "$RUNNER_TEMP/atlas-installer/Atlas-Instalador-Alpha-AppleSilicon.pkg" \
+            --dmg "$RUNNER_TEMP/atlas-installer/Atlas-Instalador-Alpha-AppleSilicon.dmg" \
+            --manifest "$RUNNER_TEMP/atlas-installer/bundle-manifest.json" \
+            --probe "$(swift build -c release --package-path platform/macos/AtlasKit --show-bin-path)/atlas-bundle-check" \
+            --evidence "$RUNNER_TEMP/atlas-installer-evidence"
+      - name: Upload installers only after installation tests pass
+        uses: actions/upload-artifact@v4
+        with:
+          name: Atlas-Instalador-Alpha-AppleSilicon
+          path: |
+            ${{ runner.temp }}/atlas-installer/Atlas-Instalador-Alpha-AppleSilicon.pkg
+            ${{ runner.temp }}/atlas-installer/Atlas-Instalador-Alpha-AppleSilicon.dmg
+            ${{ runner.temp }}/atlas-installer/SHA256SUMS.txt
+            ${{ runner.temp }}/atlas-installer/BUILD_STATUS.txt
+            ${{ runner.temp }}/atlas-installer/Distribution.xml
+          if-no-files-found: error
+          retention-days: 14
+      - name: Keep test evidence, including failures, without credentials or user data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Atlas-Installer-Evidence
+          path: ${{ runner.temp }}/atlas-installer-evidence/
+          if-no-files-found: warn
+          retention-days: 14
