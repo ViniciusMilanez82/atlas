@@ -5,6 +5,12 @@ export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 mountpoint -q /proc || mount -t proc proc /proc
 mountpoint -q /sys || mount -t sysfs sysfs /sys
 mountpoint -q /dev || mount -t devtmpfs devtmpfs /dev
+# There is no udev/mdev daemon in this minimal appliance. Set normal Unix permissions only on
+# these kernel pseudodevices; never chmod disks, vsock, directories or arbitrary device nodes.
+for device in null zero random urandom; do
+  [ -c "/dev/$device" ] || { echo ATLAS_PSEUDODEVICE_MISSING; poweroff -f; exit 1; }
+  chmod 0666 "/dev/$device"
+done
 mkdir -p /dev/pts /dev/shm
 mountpoint -q /dev/pts || mount -t devpts devpts /dev/pts
 mount -t tmpfs -o mode=1777,nosuid,nodev,size=256m tmpfs /dev/shm
