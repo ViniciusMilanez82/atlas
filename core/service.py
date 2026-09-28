@@ -22,6 +22,7 @@ from core.health import WorkerMonitor
 from core.intelligence import IntelligenceSetup
 from core.ipc.sessions import Session
 from core.setup import SetupService
+from core.table_skills import TableSkillsService
 from runtime.artifacts.manager import ArtifactManager
 from runtime.artifacts.uploads import UploadStore, staging_path
 from runtime.memory.manager import MemoryManager
@@ -83,6 +84,7 @@ class CoreService:
         self.version = version
         self.intelligence = intelligence
         self.artifacts = artifacts
+        self.table_skills = TableSkillsService(conn, clock)
         self.setup = SetupService(conn, clock, intelligence)
         self.conversation = ConversationService(conn, clock, broker, intelligence)
         self.handlers: dict[str, Callable[[Session, dict[str, Any]], dict[str, Any]]] = {
@@ -128,6 +130,7 @@ class CoreService:
             "capabilities.list": self._capabilities_list,
             "capabilities.decide": self._capabilities_decide,
             "tasks.update_instruction": self._update_instruction,
+            **self.table_skills.handlers,
         }
 
     # ------------------------------------------------------------------ dispatch

@@ -1,0 +1,11 @@
+{
+  "format": "atlas.table.v1",
+  "columns": [
+    {"name": "item", "op": "strip", "field": "item"},
+    {"name": "total", "op": "multiply", "fields": ["unit", "qty"], "scale": 2}
+  ],
+  "tests": [
+    {"label": "two modules", "rows": [{"item": "A ", "unit": "100.25", "qty": 2}], "expected": [{"item": "A", "total": "200.50"}]},
+    {"label": "rounding", "rows": [{"item": " B", "unit": "1.005", "qty": 1}], "expected": [{"item": "B", "total": "1.01"}]}
+  ]
+}

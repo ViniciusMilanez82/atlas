@@ -33,6 +33,7 @@ final class AppController: ObservableObject {
     let supervisor: Supervisor?
     let model: AtlasViewModel
     let setup: ProductSetupModel
+    let skills: SkillLibraryModel
     let voice: VoiceController
     private var timer: Timer?
 
@@ -52,6 +53,7 @@ final class AppController: ObservableObject {
         let api = AtlasAPI(transport: connection, control: controlLane)
         model = AtlasViewModel(api: api)
         setup = ProductSetupModel(api: api)
+        skills = SkillLibraryModel(api: api)
         voice = VoiceController(capture: NativeVoiceCapture(), output: NativeVoiceOutput())
         connection.onStateChange = { [weak model] state in
             Task { @MainActor in model?.setConnectionState(state) }
@@ -127,7 +129,7 @@ struct AtlasApp: App {
     var body: some Scene {
         WindowGroup("Atlas") {
             RootView().environmentObject(controller).environmentObject(controller.model)
-                .environmentObject(controller.setup).environmentObject(controller.voice)
+                .environmentObject(controller.setup).environmentObject(controller.voice).environmentObject(controller.skills)
                 .frame(minWidth: 900, minHeight: 600)
                 .task {
                     AppDelegate.onTerminateAsync = { [weak controller] in await controller?.shutdown() }
@@ -177,6 +179,7 @@ struct RootView: View {
             TabView {
                 ConversationView().tabItem { Text("Conversa") }
                 WorkView().tabItem { Text("Trabalho") }
+                SkillsView().tabItem { Text("Habilidades") }
                 MemoryView().tabItem { Text("Memória") }
                 FilesView().tabItem { Text("Arquivos") }
                 ApprovalsView().tabItem { Text("Aprovações") }
