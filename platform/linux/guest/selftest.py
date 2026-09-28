@@ -2,11 +2,13 @@
 import base64
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, "/usr/lib/atlas")
 from atlas_guest.browser import Browser
@@ -56,6 +58,7 @@ box.cancel(run_id)
 worker.join(7)
 assert not worker.is_alive() and holder['exit_code'] != 0, holder
 checks.append('concurrent_cancel_kills_real_process')
+print('ATLAS_EXECUTION_CHECKS '+json.dumps(checks),flush=True)
 
 browser = Browser()
 requests=[]
@@ -63,21 +66,32 @@ html=b"""<!doctype html><title>Atlas Guest Test</title><button id="change" oncli
 def fetch(request):
     requests.append(request)
     return {'allowed':True,'status':200,'headers':[{'name':'Content-Type','value':'text/html'}], 'body':base64.b64encode(html).decode()}
+# The test still executes the REAL launcher and Chromium with identical argv, namespaces and pipes.
+# Only stderr is redirected to the test console instead of /dev/null. No fake browser response,
+# sandbox switch or production logging change is introduced. This file is absent from the component image.
+real_popen = subprocess.Popen
+def diagnostic_popen(*args, **kwargs):
+    kwargs['stderr'] = None
+    return real_popen(*args, **kwargs)
 try:
-    page=browser.perform('browser.navigate',{'url':'https://atlas-guest.test/'},fetch)
-    assert 'Original page' in page['text'] and page['screenshot_jpeg'], page
-    assert requests and all(r['method']=='GET' for r in requests), requests
-    checks.append('real_chromium_render_and_screenshot_without_nic')
-    node=next(n for n in page['elements'] if n['tag']=='BUTTON')
-    changed=browser.perform('browser.click', {'element_id':node['id'],'page_token':page['page_token']},fetch)
-    assert 'Changed by real click' in changed['text'], changed
-    checks.append('real_observed_element_click')
-    try:
-        browser.perform('browser.click', {'element_id':node['id'],'page_token':page['page_token']},fetch)
-    except RuntimeError:
-        checks.append('obsolete_page_token_refused')
-    else:
-        raise AssertionError('stale click accepted')
+    with patch('atlas_guest.browser.subprocess.Popen', diagnostic_popen):
+        page=browser.perform('browser.navigate',{'url':'https://atlas-guest.test/'},fetch)
+        assert 'Original page' in page['text'] and page['screenshot_jpeg'], page
+        assert requests and all(r['method']=='GET' for r in requests), requests
+        checks.append('real_chromium_render_and_screenshot_without_nic')
+        node=next(n for n in page['elements'] if n['tag']=='BUTTON')
+        changed=browser.perform('browser.click', {'element_id':node['id'],'page_token':page['page_token']},fetch)
+        assert 'Changed by real click' in changed['text'], changed
+        checks.append('real_observed_element_click')
+        try:
+            browser.perform('browser.click', {'element_id':node['id'],'page_token':page['page_token']},fetch)
+        except RuntimeError:
+            checks.append('obsolete_page_token_refused')
+        else:
+            raise AssertionError('stale click accepted')
+except Exception:
+    print('ATLAS_BROWSER_EXIT '+str(browser.process.poll() if browser.process else None),flush=True)
+    raise
 finally:
     browser.cancel()
 print('ATLAS_SELFTEST_JSON '+json.dumps({'checks':checks,'count':len(checks),'uid':os.getuid(),'architecture':os.uname().machine},sort_keys=True),flush=True)
