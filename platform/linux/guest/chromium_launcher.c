@@ -25,6 +25,9 @@ int main(int argc, char **argv) {
     char *args[] = {"/usr/bin/chromium-browser", "--headless=new", "--remote-debugging-pipe",
         "--user-data-dir=/home/atlas/browser", "--no-first-run", "--no-default-browser-check",
         "--disable-background-networking", "--disable-sync", "--disable-component-update",
+        /* No GPU device is assigned to this appliance. Use the CPU compositor, not ANGLE/Vulkan
+         * or SwiftShader. This does not disable Chromium's process/seccomp sandbox. */
+        "--disable-gpu", "--disable-software-rasterizer",
         "--disable-features=MediaRouter", "--window-size=1280,720", "about:blank", NULL};
     if (access(args[0], X_OK)) args[0] = "/usr/bin/chromium";
     execv(args[0], args);
