@@ -1,0 +1,61 @@
+#!/bin/sh
+# PID 1 of the read-only employee appliance. No network interface is provisioned by the host.
+set -eu
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+mountpoint -q /proc || mount -t proc proc /proc
+mountpoint -q /sys || mount -t sysfs sysfs /sys
+mountpoint -q /dev || mount -t devtmpfs devtmpfs /dev
+# There is no udev/mdev daemon in this minimal appliance. Set normal Unix permissions only on
+# these kernel pseudodevices; never chmod disks, vsock, directories or arbitrary device nodes.
+for device in null zero random urandom; do
+  [ -c "/dev/$device" ] || { echo ATLAS_PSEUDODEVICE_MISSING; poweroff -f; exit 1; }
+  chmod 0666 "/dev/$device"
+done
+mkdir -p /dev/pts /dev/shm
+mountpoint -q /dev/pts || mount -t devpts devpts /dev/pts
+mount -t tmpfs -o mode=1777,nosuid,nodev,size=256m tmpfs /dev/shm
+mount -t tmpfs -o mode=755,nosuid,nodev,size=32m tmpfs /run
+mount -t tmpfs -o mode=1777,nosuid,nodev,size=512m tmpfs /tmp
+mount -t tmpfs -o mode=755,nosuid,nodev,size=128m tmpfs /var
+mkdir -p /run/user/1000 /var/lib/dbus
+chown 1000:1000 /run/user/1000
+chmod 700 /run/user/1000
+ip link set lo up
+# Reject unexpected NICs rather than trusting an image/host that claims there are none.
+for device in /sys/class/net/*; do
+  [ "$(basename "$device")" = lo ] || { echo ATLAS_UNEXPECTED_NETWORK_DEVICE; poweroff -f; exit 1; }
+done
+for module in virtio_blk virtio_console vmw_vsock_virtio_transport; do modprobe "$module" 2>/dev/null || true; done
+for attempt in $(seq 1 100); do [ -b /dev/vdb ] && break; sleep 0.1; done
+[ -b /dev/vdb ] || { echo ATLAS_DATA_DISK_MISSING; poweroff -f; exit 1; }
+kind="$(blkid -s TYPE -o value /dev/vdb || true)"
+if [ -z "$kind" ]; then
+  # First use only: check EVERY byte before formatting. A corrupted or unknown disk is not erased.
+  cmp -n "$(blockdev --getsize64 /dev/vdb)" /dev/vdb /dev/zero || { echo ATLAS_UNKNOWN_DATA_DISK_REFUSED; poweroff -f; exit 1; }
+  mkfs.ext4 -q -L ATLASDATA /dev/vdb
+elif [ "$kind" != ext4 ]; then
+  echo ATLAS_UNKNOWN_DATA_FILESYSTEM_REFUSED; poweroff -f; exit 1
+fi
+mount -t ext4 -o nosuid,nodev /dev/vdb /home/atlas
+chown 1000:1000 /home/atlas
+chmod 700 /home/atlas
+mkdir -p /home/atlas/browser
+chown 1000:1000 /home/atlas/browser
+chmod 700 /home/atlas/browser
+# Test mode is in a separate CI-only image, never in the released appliance.
+if grep -q 'atlas_selftest=1' /proc/cmdline; then
+  if [ -f /usr/lib/atlas/selftest.py ]; then
+    if su -s /bin/sh atlas -c 'exec python3 -I /usr/lib/atlas/selftest.py'; then echo ATLAS_GUEST_SELFTEST_PASS; else echo ATLAS_GUEST_SELFTEST_FAIL; fi
+  else
+    echo ATLAS_GUEST_SELFTEST_UNAVAILABLE
+  fi
+  sync; poweroff -f; exit 0
+fi
+# Keep PID 1 alive to reap children and terminate the agent on shutdown. No shell/getty/SSH service.
+trap 'kill "$agent" 2>/dev/null || true; sync; poweroff -f' TERM INT
+su -s /bin/sh atlas -c 'exec python3 -I /usr/lib/atlas/entry.py' &
+agent=$!
+echo ATLAS_GUEST_STARTED
+while kill -0 "$agent" 2>/dev/null; do wait "$agent" || true; done
+echo ATLAS_GUEST_AGENT_STOPPED
+sync; poweroff -f

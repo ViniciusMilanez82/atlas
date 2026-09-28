@@ -1,0 +1,31 @@
+name: workspace-build-tools
+on:
+  push:
+    branches: ["feat/independent-workspace"]
+    paths: [".github/workflows/workspace-build-tools.yml"]
+permissions:
+  contents: read
+jobs:
+  verification-tools:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Download fixed wheels for offline independent verification
+        run: |
+          mkdir -p "$RUNNER_TEMP/tools/wheels"
+          python -m pip download --only-binary=:all: -r requirements-dev.lock -d "$RUNNER_TEMP/tools/wheels"
+          curl --proto '=https' --tlsv1.2 -fsSL https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/aarch64/alpine-minirootfs-3.24.2-aarch64.tar.gz.sha256 -o "$RUNNER_TEMP/tools/alpine-source.sha256"
+          (cd "$RUNNER_TEMP/tools" && sha256sum wheels/* > WHEEL_SHA256SUMS.txt)
+          git rev-parse HEAD > "$RUNNER_TEMP/tools/SOURCE_COMMIT.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Atlas-offline-verification-tools
+          path: ${{ runner.temp }}/tools/
+          if-no-files-found: error
+          retention-days: 7
