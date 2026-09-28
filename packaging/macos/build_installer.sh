@@ -16,7 +16,7 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 python3 "$ROOT/packaging/macos/prepare_installer.py" --app "$APP" --work "$WORK" --build "$BUILD"
 for binary in "$APP/Contents/MacOS/Atlas" "$APP/Contents/MacOS/atlas-keychain-agent" "$APP/Contents/Resources/python/bin/python3"; do
-  lipo -verify_arch arm64 "$binary"
+  lipo "$binary" -verify_arch arm64
 done
 codesign --verify --deep --strict "$APP"
 mkdir -p "$WORK/root/Applications" "$WORK/disk"
