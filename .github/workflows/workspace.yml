@@ -1,0 +1,60 @@
+name: isolated-workspace-components
+on:
+  push:
+    branches: ["feat/independent-workspace"]
+    paths:
+      - 'platform/linux/**'
+      - 'security/network/browser.py'
+      - 'shared/workspace_wire.py'
+      - 'packaging/workspace/**'
+      - 'tests/regression/test_guest_contract.py'
+      - 'tests/regression/test_workspace_network.py'
+      - '.github/workflows/workspace.yml'
+permissions:
+  contents: read
+jobs:
+  linux-appliance:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install native image and boot test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-arm e2fsprogs
+      - name: Build signature-checked Linux appliance with pinned source archive
+        run: |
+          sudo env GITHUB_ACTIONS=true RUNNER_ENVIRONMENT=github-hosted RUNNER_TEMP="$RUNNER_TEMP" GITHUB_SHA="$GITHUB_SHA" \
+            SUDO_UID="$(id -u)" SUDO_GID="$(id -g)" bash packaging/workspace/build_guest.sh "$RUNNER_TEMP/appliance"
+      - name: Boot actual guest and exercise Chromium and isolated generated code
+        run: |
+          python packaging/workspace/test_guest.py --images "$RUNNER_TEMP/appliance" --evidence "$RUNNER_TEMP/guest-evidence"
+      - name: Archive component image only; this is not a Mac installer
+        run: |
+          printf '%s\n' 'EXPERIMENTAL LINUX COMPONENT ONLY. NOT INTEGRATED INTO MAC APP. NATIVE BRIDGE PUBLICATION BLOCKED. NOT V1.' > "$RUNNER_TEMP/appliance/COMPONENT_STATUS.txt"
+          tar -czf "$RUNNER_TEMP/Atlas-workspace-component.tar.gz" -C "$RUNNER_TEMP/appliance" \
+            kernel initrd rootfs.raw manifest.json apk-packages.lock apk-installed-metadata.txt alpine-source.sha256 COMPONENT_STATUS.txt
+          sha256sum "$RUNNER_TEMP/Atlas-workspace-component.tar.gz" > "$RUNNER_TEMP/Atlas-workspace-component.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Atlas-experimental-Linux-component-not-installer
+          path: |
+            ${{ runner.temp }}/Atlas-workspace-component.tar.gz
+            ${{ runner.temp }}/Atlas-workspace-component.sha256
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Atlas-guest-isolation-evidence
+          path: |
+            ${{ runner.temp }}/guest-evidence/
+            ${{ runner.temp }}/appliance/apk-packages.lock
+            ${{ runner.temp }}/appliance/manifest.json
+          if-no-files-found: warn
+          retention-days: 14
