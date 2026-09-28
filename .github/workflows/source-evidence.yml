@@ -1,7 +1,7 @@
 name: source-evidence
 on:
   push:
-    branches: ["fix/post-pr6-runtime-guards"]
+    branches: ["fix/post-pr6-runtime-guards", "feat/verified-procedures"]
 permissions:
   contents: read
 jobs:
