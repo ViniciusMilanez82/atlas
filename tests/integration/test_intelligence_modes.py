@@ -36,7 +36,9 @@ def _setup(c: Any, api: Any, mode: str, validate: tuple[str, ...] = ("light", "g
         model = MODELS[profile]
         api.queue.append((200, {}, {"id": model, "object": "model"}))
         api.queue.append((200, {}, ok_body(text='{"ok": true, "word": "atlas"}')))
-        assert ok(c.call("intelligence.check", model_id=model, max_cost_minor=5))["report"]["passed"] is True
+        # A 2048-token validation reservation for Astra exceeds 5 cents. This synthetic
+        # authorization is 20 cents; the separate budget regression proves insufficient caps block.
+        assert ok(c.call("intelligence.check", model_id=model, max_cost_minor=20))["report"]["passed"] is True
 
 
 def _call(env: Any, world: World, api: Any, complexity: str) -> str:

@@ -17,10 +17,11 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from runtime.models.connection_status import message
 from runtime.models.openai_responses import DEFAULT_BASE_URL, OpenAIResponsesProvider
 from runtime.models.pricing import SPEC_REFERENCE_TABLE, PriceTable
 from runtime.models.router import BudgetedModelClient, CatalogEntry, Consent, ModelRouter, Requirements
-from runtime.models.types import Message, ModelCapabilities, ModelRequest, Role
+from runtime.models.types import FinishReason, Message, ModelCapabilities, ModelRequest, Role
 from security.budget.budget import BudgetLimits, BudgetManager
 from security.vault.vault import SecretValue
 from shared.clock import SystemClock, to_utc_str
@@ -52,6 +53,11 @@ class IntelligenceReport:
     cost_minor: int | None = None
     currency: str | None = None
     errors: list[str] = field(default_factory=list)
+    reason_code: str = "CHECK_FAILED"
+
+    def fail(self, code: str) -> None:
+        self.reason_code = code
+        self.errors.append(message(code))
 
     @property
     def passed(self) -> bool:
@@ -82,7 +88,7 @@ def run_intelligence_check(
     except KeyError:
         report.errors.append("model has no entry in the price table; refusing a billable call")
         return report
-    caps = ModelCapabilities(structured_output=True)
+    caps = ModelCapabilities(structured_output=True, effort_levels=("low",))
     provider = OpenAIResponsesProvider(key_provider, capabilities={model_id: caps}, base_url=base_url)
     try:
         report.model_listed = provider.check_model_access(model_id)
@@ -134,7 +140,8 @@ def run_intelligence_check(
         request = ModelRequest(
             model_id,
             (Message(Role.USER, 'Reply with JSON: {"ok": true, "word": "atlas"}.'),),
-            max_output_tokens=64,
+            max_output_tokens=2048,
+            effort="low",
             json_schema=SCHEMA,
             timeout_s=60,
         )
@@ -160,7 +167,9 @@ def run_intelligence_check(
             report.currency = resp.estimated_cost.currency
         try:
             parsed: Any = json.loads(resp.output_text)
-            report.output_valid = parsed.get("ok") is True and isinstance(parsed.get("word"), str)
+            report.output_valid = (isinstance(parsed, dict) and parsed.get("ok") is True and parsed == {"ok": True, "word": "atlas"}
+                                   and resp.finish_reason == FinishReason.STOP
+                                   and resp.raw_extra.get("usage_reported") is True)
         except (json.JSONDecodeError, AttributeError):
             report.errors.append("output was not the requested JSON")
         return report
