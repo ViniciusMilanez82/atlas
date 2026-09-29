@@ -34,6 +34,7 @@ final class AppController: ObservableObject {
     let model: AtlasViewModel
     let setup: ProductSetupModel
     let voice: VoiceController
+    let readiness: MacTestReadinessModel
     private var timer: Timer?
 
     init() {
@@ -50,6 +51,12 @@ final class AppController: ObservableObject {
             return try sup.session()
         }
         let api = AtlasAPI(transport: connection, control: controlLane)
+        // Read-only diagnostics never share the conversation queue or the priority stop queue.
+        let diagnostics = AtlasConnection(timeout: 3, maxReconnects: 0) {
+            guard let sup else { throw SupervisorError.notRunning }
+            return try sup.session()
+        }
+        readiness = MacTestReadinessModel(api: AtlasAPI(transport: diagnostics))
         model = AtlasViewModel(api: api)
         setup = ProductSetupModel(api: api)
         voice = VoiceController(capture: NativeVoiceCapture(), output: NativeVoiceOutput())
@@ -61,6 +68,7 @@ final class AppController: ObservableObject {
             try await Task.detached { try sup.restart() }.value
             connection.reset()
             controlLane.reset()
+            diagnostics.reset()
         }
         model.serviceStatus = { [sup] in
             guard let sup else { return "Supervisor indisponível" }
@@ -128,6 +136,7 @@ struct AtlasApp: App {
         WindowGroup("Atlas") {
             RootView().environmentObject(controller).environmentObject(controller.model)
                 .environmentObject(controller.setup).environmentObject(controller.voice)
+                .environmentObject(controller.readiness)
                 .frame(minWidth: 900, minHeight: 600)
                 .task {
                     AppDelegate.onTerminateAsync = { [weak controller] in await controller?.shutdown() }
@@ -146,6 +155,7 @@ struct AtlasApp: App {
 }
 
 struct RootView: View {
+    @State private var showTestReadiness = false
     @EnvironmentObject var setup: ProductSetupModel
     @EnvironmentObject var controller: AppController
     @EnvironmentObject var model: AtlasViewModel
@@ -157,6 +167,7 @@ struct RootView: View {
                 Circle().fill(model.connection == .connected ? Color.green : Color.orange).frame(width: 8, height: 8)
                 Text(model.connection.text).foregroundStyle(.secondary).font(.callout)
                 Spacer()
+                Button("Preparar meu teste") { showTestReadiness = true }
                 Text("Inteligência: \(model.intelligenceText)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }.padding()
             if let boot = controller.bootError {
@@ -186,6 +197,8 @@ struct RootView: View {
                 HealthView().tabItem { Text("Saúde") }
             }.padding()
             }
+        }.sheet(isPresented: $showTestReadiness) {
+            MacTestReadinessView().environmentObject(controller.readiness)
         }
     }
 }
