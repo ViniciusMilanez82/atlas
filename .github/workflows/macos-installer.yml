@@ -1,7 +1,7 @@
 name: macos-installer
 on:
   push:
-    branches: ["feat/macos-easy-installer", "feat/mac-test-readiness"]
+    branches: ["feat/macos-easy-installer", "feat/mac-test-readiness", "fix/ai-connection-setup"]
   workflow_dispatch:
 permissions:
   contents: read

@@ -33,6 +33,7 @@ from collections.abc import Callable, Iterator
 from http.client import HTTPException, HTTPResponse
 from typing import Any
 
+from runtime.models.connection_status import HTTP_CODES
 from runtime.models.types import (
     Billing,
     FinishReason,
@@ -156,7 +157,7 @@ class OpenAIResponsesProvider:
                 return False
             kind = _STATUS_KIND.get(failure.status, ProviderErrorKind.UNAVAILABLE)
             raise ProviderCallError(
-                f"model check failed: HTTP {failure.status}", sent=False, kind=kind
+                f"model check failed: HTTP {failure.status} ({failure.error_type})", sent=False, kind=kind
             ) from None
         with resp:
             return bool(json.loads(resp.read().decode("utf-8")).get("id") == model_id)
@@ -292,11 +293,17 @@ class OpenAIResponsesProvider:
                 detail = json.loads(exc.read().decode("utf-8")).get("error", {})
             except Exception:
                 detail = {}
+            error_type = "unclassified_error"
+            if isinstance(detail, dict):
+                for candidate in (detail.get("code"), detail.get("type")):
+                    if isinstance(candidate, str) and candidate in HTTP_CODES:
+                        error_type = candidate
+                        break
             raise _HTTPFailure(
                 exc.code,
                 exc.headers.get("x-request-id"),
                 exc.headers.get("retry-after"),
-                str(detail.get("type") or detail.get("code") or ""),
+                error_type,
             ) from None
         except urllib.error.URLError as exc:
             reason = exc.reason

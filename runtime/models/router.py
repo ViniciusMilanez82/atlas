@@ -14,6 +14,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import timedelta
 
+from runtime.models.connection_status import QUOTA_CODES
 from runtime.models.pricing import PriceTable
 from runtime.models.types import (
     Billing,
@@ -340,6 +341,8 @@ class BudgetedModelClient:
                             "inference.billing_unknown",
                             f"attempt {attempt_id}: {kind}; reservation held for reconciliation",
                         )
+                if kind == ProviderErrorKind.RATE_LIMITED and any(c in response.error.message for c in QUOTA_CODES):
+                    raise AtlasError(ErrorCode.BUDGET_EXCEEDED, response.error.message, retryable=False)
                 if kind in (ProviderErrorKind.RATE_LIMITED, ProviderErrorKind.UNAVAILABLE):
                     breaker.failure()
                     last_error = AtlasError(
@@ -352,7 +355,7 @@ class BudgetedModelClient:
                 if kind == ProviderErrorKind.AUTH:
                     raise AtlasError(
                         ErrorCode.UNAUTHORIZED,
-                        "provider credential rejected",
+                        response.error.message,
                         recommended_action="ask the owner to re-authorize this provider",
                     )
                 if kind == ProviderErrorKind.POLICY:
@@ -393,6 +396,7 @@ class BudgetedModelClient:
                 response.finish_reason,
                 usage,
                 cost,
+                raw_extra={"usage_reported": response.usage is not None},
             )
         raise last_error or AtlasError(ErrorCode.PROVIDER_UNAVAILABLE, "no compatible model available")
 

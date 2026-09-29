@@ -17,15 +17,23 @@ import hashlib
 import json
 import sqlite3
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
+from runtime.models.connection_status import exception_code, message, safe_code
 from runtime.models.intelligence_check import SCHEMA as CHECK_SCHEMA
 from runtime.models.intelligence_check import IntelligenceReport
 from runtime.models.openai_responses import DEFAULT_BASE_URL, OpenAIResponsesProvider
 from runtime.models.pricing import SPEC_REFERENCE_TABLE, PriceTable
 from runtime.models.router import BudgetedModelClient, CatalogEntry, Consent, ModelRouter, Requirements
-from runtime.models.types import Message, ModelCapabilities, ModelRequest, ProviderCallError, Role
+from runtime.models.types import (
+    FinishReason,
+    Message,
+    ModelCapabilities,
+    ModelRequest,
+    ProviderCallError,
+    Role,
+)
 from security.budget.budget import BudgetError, BudgetManager
 from security.egress.guard import EgressGuard
 from security.vault.vault import SecretValue, Vault, VaultError
@@ -37,7 +45,7 @@ from storage import journal
 from storage.db import transaction
 
 PURPOSE = "model_inference"
-CAPS = ModelCapabilities(structured_output=True)
+CAPS = ModelCapabilities(structured_output=True, effort_levels=("low",))
 # Part of the validation binding (A3-29): changing what Atlas relies on requires a new check.
 CAPABILITY_VERSION = "caps-" + hashlib.sha256(repr(CAPS).encode()).hexdigest()[:12]
 # Provisional quality order of the profiles until Atlas evaluations with real models exist (N13, D-03):
@@ -99,7 +107,9 @@ class IntelligenceSetup:
             raise AtlasError(ErrorCode.UNAUTHORIZED, str(exc)) from None
 
     def key_provider(self) -> SecretValue:
-        ref = self._credential_ref()
+        return self._key_for_ref(self._credential_ref())
+
+    def _key_for_ref(self, ref: str) -> SecretValue:
         assert self.vault is not None
         with self.vault.use(
             ref,
@@ -107,7 +117,10 @@ class IntelligenceSetup:
             purpose=PURPOSE,
             destination=self.destination,
         ) as secret:
-            return SecretValue(secret.reveal())
+            value = secret.reveal().strip()
+            if not value or len(value) > 8192 or any(b < 33 or b > 126 for b in value):
+                raise AtlasError(ErrorCode.UNAUTHORIZED, "stored API key has invalid formatting; key was preserved")
+            return SecretValue(value)
 
     def _price_gate(self, cfg: dict[str, Any], model: str) -> str | None:
         try:
@@ -121,7 +134,7 @@ class IntelligenceSetup:
             )
         return None
 
-    def _preconditions(self) -> tuple[dict[str, Any], str] | str:
+    def _preconditions(self, model_id: str | None = None) -> tuple[dict[str, Any], str] | str:
         """Everything except the model validation. Returns (cfg, model) or the blocking reason."""
         if self.vault is None:
             return "credential store (Keychain service) is not available"
@@ -136,6 +149,11 @@ class IntelligenceSetup:
         if b["monthly_limit_minor"] is None or b["per_task_limit_minor"] is None:
             return "budget ceilings are not set (paid calls stay blocked)"
         provider, model = self._model(cfg)
+        if model_id is not None:
+            prof = next((p for p in cfg["intelligence"]["profiles"].values() if p["model_id"] == model_id), None)
+            if prof is None:
+                return "requested model is not configured"
+            provider, model = prof["provider"], prof["model_id"]
         if provider != "openai":
             return f"provider {provider} has no adapter yet"
         gate = self._price_gate(cfg, model)
@@ -182,7 +200,7 @@ class IntelligenceSetup:
             })
         return out
 
-    def status(self) -> IntelligenceStatus:
+    def _raw_status(self) -> IntelligenceStatus:
         pre = self._preconditions()
         if isinstance(pre, str):
             cfg = self.latest_config()
@@ -206,8 +224,60 @@ class IntelligenceSetup:
             )
         return IntelligenceStatus(True, "ready", model, self.prices.version, self.prices.verified)
 
+    def status(self) -> IntelligenceStatus:
+        # Existing IPC already returns reason. Prefix it with a fixed code; clients translate only
+        # that code, never free-form server/provider strings. No new privileged endpoint is needed.
+        raw = self._raw_status()
+        code = self.connection_details()["reason_code"]
+        return replace(raw, reason=f"{code}: {raw.reason}")
+
+    def connection_details(self) -> dict[str, Any]:
+        """Metadata only: no key values, prompt, arbitrary report fields or provider error text."""
+        cfg = self.latest_config()
+        try:
+            ref = self._credential_ref()
+        except AtlasError:
+            ref = None
+        st = self._raw_status()
+        code = "READY" if st.configured else "CHECK_FAILED"
+        if not st.configured:
+            reason = st.reason
+            if self.vault is None:
+                code = "KEYCHAIN_UNAVAILABLE"
+            elif ref is None:
+                code = "CREDENTIAL_MISSING"
+            elif cfg is None:
+                code = "SETTINGS_MISSING"
+            elif "budget ceilings" in reason:
+                code = "BUDGET_MISSING"
+            elif "no adapter" in reason:
+                code = "PROVIDER_UNSUPPORTED"
+            elif "no entry in price table" in reason:
+                code = "MODEL_UNPRICED"
+            elif "is not verified" in reason:
+                code = "PRICE_CONSENT_REQUIRED"
+            else:
+                code = "VALIDATION_REQUIRED"
+                row = self.conn.execute(
+                    "SELECT report_json FROM intelligence_validations WHERE provider='openai' AND model_id=?"
+                    " AND credential_ref=? AND endpoint=? AND capability_version=?"
+                    " ORDER BY checked_at DESC,rowid DESC LIMIT 1",
+                    (st.model_id, ref, self.destination, CAPABILITY_VERSION),
+                ).fetchone()
+                if row:
+                    try:
+                        report = json.loads(row[0])
+                        code = safe_code(report.get("reason_code")) if isinstance(report, dict) else "CHECK_FAILED"
+                    except (ValueError, TypeError):
+                        code = "CHECK_FAILED"
+                    if code == "READY":
+                        code = "CHECK_FAILED"  # a failure can never become success from its free-form report
+        return {"configured": st.configured, "credential_registered": ref is not None,
+                "settings_saved": cfg is not None, "reason_code": code, "message": message(code)}
+
     def _client(
-        self, cfg: dict[str, Any], model: str, per_call_cap: int | None = None, *, only_model: bool = False
+        self, cfg: dict[str, Any], model: str, per_call_cap: int | None = None, *, only_model: bool = False,
+        credential_ref: str | None = None
     ) -> BudgetedModelClient:
         """N13: the router gets every VALIDATED and priced profile, and the mode chosen by the owner
         really changes the selection (automatic by complexity, economic cheapest, max_quality strongest,
@@ -226,7 +296,8 @@ class IntelligenceSetup:
             if mode == "manual":
                 entries = [e for e in entries if e.model_id == model]
         provider = OpenAIResponsesProvider(
-            self.key_provider, capabilities={e.model_id: CAPS for e in entries}, base_url=self.base_url
+            (lambda: self._key_for_ref(credential_ref)) if credential_ref else self.key_provider,
+            capabilities={e.model_id: CAPS for e in entries}, base_url=self.base_url
         )
         router = ModelRouter(
             entries,
@@ -259,6 +330,9 @@ class IntelligenceSetup:
     def register_key(self, *, actor: Actor, employee_id: str, secret: bytes) -> str:
         if self.vault is None:
             raise AtlasError(ErrorCode.UNAUTHORIZED, "credential store (Keychain service) is not available")
+        secret = secret.strip()
+        if not secret or len(secret) > 8192 or any(b < 33 or b > 126 for b in secret):
+            raise AtlasError(ErrorCode.INVALID_INPUT, "A chave está vazia ou contém caracteres inválidos. A chave anterior foi preservada.")
         try:
             # A new key REPLACES the previous one for this endpoint (A3-29): the old reference is revoked
             # first, so a validation made with the old key can never vouch for the new one.
@@ -296,7 +370,7 @@ class IntelligenceSetup:
     def _run_check(
         self, actor: Actor, employee_id: str, model_id: str, max_cost_minor: int
     ) -> dict[str, Any]:
-        pre = self._preconditions()
+        pre = self._preconditions(model_id)
         if isinstance(pre, str):
             raise AtlasError(ErrorCode.MODEL_UNSUPPORTED, pre)
         cfg, _default_model = pre
@@ -314,19 +388,23 @@ class IntelligenceSetup:
         report = IntelligenceReport(
             "openai", model_id, self.prices.version, self.prices.verified, to_utc_str(self.clock.now())
         )
+        checked_ref = self._credential_ref()
         provider = OpenAIResponsesProvider(
-            self.key_provider, capabilities={model_id: CAPS}, base_url=self.base_url
+            lambda: self._key_for_ref(checked_ref), capabilities={model_id: CAPS}, base_url=self.base_url
         )
         try:
             report.model_listed = provider.check_model_access(model_id)
         except (AtlasError, ProviderCallError) as exc:
-            report.errors.append(f"model check failed: {type(exc).__name__}")
+            report.fail(exception_code(exc))
+        except (ValueError, TypeError, AttributeError):
+            report.fail("METADATA_INVALID")
         if report.model_listed:
-            client = self._client(cfg, model_id, per_call_cap=max_cost_minor, only_model=True)
+            client = self._client(cfg, model_id, per_call_cap=max_cost_minor, only_model=True, credential_ref=checked_ref)
             request = ModelRequest(
                 model_id,
                 (Message(Role.USER, 'Reply with JSON: {"ok": true, "word": "atlas"}.'),),
-                max_output_tokens=64,
+                max_output_tokens=2048,
+                effort="low",
                 json_schema=CHECK_SCHEMA,
                 timeout_s=60,
             )
@@ -351,15 +429,35 @@ class IntelligenceSetup:
                     report.currency = resp.estimated_cost.currency
                 try:
                     parsed: Any = json.loads(resp.output_text)
-                    report.output_valid = parsed.get("ok") is True and isinstance(parsed.get("word"), str)
+                    report.output_valid = (isinstance(parsed, dict) and parsed.get("ok") is True and parsed == {"ok": True, "word": "atlas"}
+                                           and resp.finish_reason == FinishReason.STOP
+                                           and resp.raw_extra.get("usage_reported") is True)
                 except (json.JSONDecodeError, AttributeError):
-                    report.errors.append("output was not the requested JSON")
+                    report.output_valid = False
+                if resp.finish_reason == FinishReason.LENGTH:
+                    report.fail("OUTPUT_LIMIT_REACHED")
+                elif resp.finish_reason == FinishReason.CONTENT_FILTER:
+                    report.fail("POLICY_REFUSAL")
+                elif resp.raw_extra.get("usage_reported") is not True:
+                    report.fail("USAGE_MISSING")
+                elif not report.output_valid:
+                    report.fail("OUTPUT_INVALID")
             except BudgetError as exc:
+                report.fail("LOCAL_BUDGET_BLOCKED")
                 report.errors.append(f"budget: {exc.reason}")
             except AtlasError as exc:
-                report.errors.append(f"call failed: {exc.code}: {exc.message}")
+                report.fail(exception_code(exc))
         elif report.model_listed is False:
-            report.errors.append("the account does not list this model id")
+            report.fail("MODEL_NOT_AVAILABLE")
+        try:
+            unchanged = self._credential_ref() == checked_ref
+        except AtlasError:
+            unchanged = False
+        if not unchanged:
+            report.output_valid = False
+            report.fail("CONFIG_CHANGED")
+        if report.passed:
+            report.reason_code = "READY"
         data: dict[str, Any] = json.loads(report.to_json())
         with transaction(self.conn):
             self.conn.execute(
@@ -376,7 +474,7 @@ class IntelligenceSetup:
                     report.currency,
                     to_utc_str(self.clock.now()),
                     f"{actor.kind}:{actor.id}",
-                    self._credential_ref(),
+                    checked_ref,
                     self.destination,
                     CAPABILITY_VERSION,
                 ),

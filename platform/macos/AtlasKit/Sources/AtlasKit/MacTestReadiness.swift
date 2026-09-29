@@ -144,10 +144,13 @@ public struct MacTestReport: Codable, Sendable {
             append(id, title, state, detail)
         }
         let intelligenceReady = components["intelligence"] as? String == "ready"
+        let rawReason = health?["intelligence_reason"] as? String ?? ""
+        let code = String(rawReason.prefix(80).split(separator: ":", maxSplits: 1).first ?? "")
+        let blockingDetail = (AIConnectionReason(rawValue: code) ?? .failed).message
         append("intelligence", "Configuração da inteligência",
                health == nil ? .notChecked : (intelligenceReady ? .passed : .blocked),
                intelligenceReady ? "O núcleo registra uma configuração validada. Esta verificação não chamou a IA."
-               : "Em Configurações, registre a chave, salve modelo e orçamento e autorize o teste de inteligência.")
+               : blockingDetail)
         append("distribution", "Limite desta distribuição", .limitation,
                "Alpha de desenvolvimento, sem notarização. Este diagnóstico não avalia Gatekeeper nem certifica segurança.")
         append("scope", "Funções ainda fora desta entrega", .limitation,

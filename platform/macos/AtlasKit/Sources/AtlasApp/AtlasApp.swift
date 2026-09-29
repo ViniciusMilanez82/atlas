@@ -34,6 +34,7 @@ final class AppController: ObservableObject {
     let model: AtlasViewModel
     let setup: ProductSetupModel
     let voice: VoiceController
+    let connectionSetup: AIConnectionSetupModel
     let readiness: MacTestReadinessModel
     private var timer: Timer?
 
@@ -50,13 +51,19 @@ final class AppController: ObservableObject {
             guard let sup else { throw SupervisorError.notRunning }
             return try sup.session()
         }
-        let api = AtlasAPI(transport: connection, control: controlLane)
+        // Model validation can take longer than the chat IPC timeout. Never queue it before Stop.
+        let validationLane = AtlasConnection(timeout: 90, maxReconnects: 0) {
+            guard let sup else { throw SupervisorError.notRunning }
+            return try sup.session()
+        }
+        let api = AtlasAPI(transport: connection, control: controlLane, validation: validationLane)
         // Read-only diagnostics never share the conversation queue or the priority stop queue.
         let diagnostics = AtlasConnection(timeout: 3, maxReconnects: 0) {
             guard let sup else { throw SupervisorError.notRunning }
             return try sup.session()
         }
         readiness = MacTestReadinessModel(api: AtlasAPI(transport: diagnostics))
+        connectionSetup = AIConnectionSetupModel(api: AtlasAPI(transport: validationLane))
         model = AtlasViewModel(api: api)
         setup = ProductSetupModel(api: api)
         voice = VoiceController(capture: NativeVoiceCapture(), output: NativeVoiceOutput())
@@ -69,6 +76,7 @@ final class AppController: ObservableObject {
             connection.reset()
             controlLane.reset()
             diagnostics.reset()
+            validationLane.reset()
         }
         model.serviceStatus = { [sup] in
             guard let sup else { return "Supervisor indisponível" }
@@ -156,6 +164,7 @@ struct AtlasApp: App {
 
 struct RootView: View {
     @State private var showTestReadiness = false
+    @State private var showAIConnection = false
     @EnvironmentObject var setup: ProductSetupModel
     @EnvironmentObject var controller: AppController
     @EnvironmentObject var model: AtlasViewModel
@@ -167,6 +176,7 @@ struct RootView: View {
                 Circle().fill(model.connection == .connected ? Color.green : Color.orange).frame(width: 8, height: 8)
                 Text(model.connection.text).foregroundStyle(.secondary).font(.callout)
                 Spacer()
+                Button("Conectar IA") { showAIConnection = true }
                 Button("Preparar meu teste") { showTestReadiness = true }
                 Text("Inteligência: \(model.intelligenceText)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }.padding()
@@ -199,6 +209,10 @@ struct RootView: View {
             }
         }.sheet(isPresented: $showTestReadiness) {
             MacTestReadinessView().environmentObject(controller.readiness)
+        }.sheet(isPresented: $showAIConnection, onDismiss: {
+            Task { await model.refresh(); await setup.load() }
+        }) {
+            AIConnectionSetupView().environmentObject(controller.connectionSetup)
         }
     }
 }
