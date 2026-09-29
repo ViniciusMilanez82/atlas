@@ -7,13 +7,11 @@ from typing import Any
 
 import pytest
 
-from tests.integration.test_alpha2 import (  # noqa: F401 - fixtures
+from tests.integration.test_alpha2 import (
     FAKE_KEY,
     Env,
-    api,
     base_config,
     configure_intelligence,
-    env,
     ok,
     save,
     send,

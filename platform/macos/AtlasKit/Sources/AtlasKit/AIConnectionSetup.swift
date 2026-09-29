@@ -100,7 +100,7 @@ import Combine
         defer { busy = false }
         error = nil
         do { try await fetchSettings(); stage = reason.message }
-        catch { connected = false; loaded = false; error = "Não foi possível ler a configuração. Use Verificar novamente." }
+        catch { connected = false; loaded = false; self.error = "Não foi possível ler a configuração. Use Verificar novamente." }
     }
 
     /// Called only after a visible confirmation stating the owner's chosen maximum cost.

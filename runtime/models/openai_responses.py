@@ -293,13 +293,17 @@ class OpenAIResponsesProvider:
                 detail = json.loads(exc.read().decode("utf-8")).get("error", {})
             except Exception:
                 detail = {}
+            error_type = "unclassified_error"
+            if isinstance(detail, dict):
+                for candidate in (detail.get("code"), detail.get("type")):
+                    if isinstance(candidate, str) and candidate in HTTP_CODES:
+                        error_type = candidate
+                        break
             raise _HTTPFailure(
                 exc.code,
                 exc.headers.get("x-request-id"),
                 exc.headers.get("retry-after"),
-                (detail.get("code") if isinstance(detail.get("code"), str) and detail.get("code") in HTTP_CODES
-                 else detail.get("type") if isinstance(detail.get("type"), str) and detail.get("type") in HTTP_CODES else "unclassified_error")
-                if isinstance(detail, dict) else "unclassified_error",
+                error_type,
             ) from None
         except urllib.error.URLError as exc:
             reason = exc.reason

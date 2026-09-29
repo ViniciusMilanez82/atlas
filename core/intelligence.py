@@ -18,7 +18,7 @@ import json
 import sqlite3
 import threading
 from dataclasses import dataclass, replace
-from typing import Any, cast
+from typing import Any
 
 from runtime.models.connection_status import exception_code, message, safe_code
 from runtime.models.intelligence_check import SCHEMA as CHECK_SCHEMA
@@ -26,7 +26,14 @@ from runtime.models.intelligence_check import IntelligenceReport
 from runtime.models.openai_responses import DEFAULT_BASE_URL, OpenAIResponsesProvider
 from runtime.models.pricing import SPEC_REFERENCE_TABLE, PriceTable
 from runtime.models.router import BudgetedModelClient, CatalogEntry, Consent, ModelRouter, Requirements
-from runtime.models.types import FinishReason, Message, ModelCapabilities, ModelRequest, ProviderCallError, Role
+from runtime.models.types import (
+    FinishReason,
+    Message,
+    ModelCapabilities,
+    ModelRequest,
+    ProviderCallError,
+    Role,
+)
 from security.budget.budget import BudgetError, BudgetManager
 from security.egress.guard import EgressGuard
 from security.vault.vault import SecretValue, Vault, VaultError
@@ -289,7 +296,7 @@ class IntelligenceSetup:
             if mode == "manual":
                 entries = [e for e in entries if e.model_id == model]
         provider = OpenAIResponsesProvider(
-            (lambda: self._key_for_ref(cast(str, credential_ref))) if credential_ref else self.key_provider,
+            (lambda: self._key_for_ref(credential_ref)) if credential_ref else self.key_provider,
             capabilities={e.model_id: CAPS for e in entries}, base_url=self.base_url
         )
         router = ModelRouter(
