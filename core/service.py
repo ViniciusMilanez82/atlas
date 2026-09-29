@@ -21,6 +21,7 @@ from core.conversation import ConversationService
 from core.health import WorkerMonitor
 from core.intelligence import IntelligenceSetup
 from core.ipc.sessions import Session
+from core.setup import SetupService
 from runtime.artifacts.manager import ArtifactManager
 from runtime.artifacts.uploads import UploadStore, staging_path
 from runtime.memory.manager import MemoryManager
@@ -37,6 +38,8 @@ from storage import journal
 from storage.db import transaction
 
 OWNER_ONLY = {
+    "identity.update",
+    "setup.complete",
     "tasks.pause",
     "tasks.resume",
     "tasks.cancel",
@@ -80,6 +83,7 @@ class CoreService:
         self.version = version
         self.intelligence = intelligence
         self.artifacts = artifacts
+        self.setup = SetupService(conn, clock, intelligence)
         self.conversation = ConversationService(conn, clock, broker, intelligence)
         self.handlers: dict[str, Callable[[Session, dict[str, Any]], dict[str, Any]]] = {
             "system.health": self._health,
@@ -99,7 +103,10 @@ class CoreService:
             "events.subscribe": self._events,
             "settings.validate": self._settings_validate,
             "settings.update": self._settings_update,
-            "identity.get": self._identity,
+            "identity.get": self.setup.identity,
+            "identity.update": self.setup.update_identity,
+            "setup.status": self.setup.status,
+            "setup.complete": self.setup.complete,
             "credentials.register": self._credentials_register,
             "intelligence.check": self._intelligence_check,
             "artifacts.list": self._artifacts_list,
@@ -510,24 +517,6 @@ class CoreService:
         }
 
     # ------------------------------------------------------------------ app support (Alpha)
-
-    def _identity(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
-        row = self.conn.execute(
-            "SELECT e.id, e.name, e.locale, e.timezone, o.display_name FROM employees e"
-            " JOIN owners o ON o.id = e.owner_id WHERE e.id = ?",
-            (s.employee_id,),
-        ).fetchone()
-        return {
-            "employee_id": row[0],
-            "name": row[1],
-            "locale": row[2],
-            "timezone": row[3],
-            "owner_name": row[4],
-            "actor_kind": s.actor.kind,
-            "settings_revision": int(
-                self.conn.execute("SELECT COALESCE(MAX(revision), 0) FROM settings").fetchone()[0]
-            ),
-        }
 
     def _credentials_register(self, s: Session, p: dict[str, Any]) -> dict[str, Any]:
         if self.intelligence is None:

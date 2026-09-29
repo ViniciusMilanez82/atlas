@@ -32,6 +32,10 @@ final class AppController: ObservableObject {
     @Published var starting = true
     let supervisor: Supervisor?
     let model: AtlasViewModel
+    let setup: ProductSetupModel
+    let voice: VoiceController
+    let connectionSetup: AIConnectionSetupModel
+    let readiness: MacTestReadinessModel
     private var timer: Timer?
 
     init() {
@@ -47,7 +51,22 @@ final class AppController: ObservableObject {
             guard let sup else { throw SupervisorError.notRunning }
             return try sup.session()
         }
-        model = AtlasViewModel(api: AtlasAPI(transport: connection, control: controlLane))
+        // Model validation can take longer than the chat IPC timeout. Never queue it before Stop.
+        let validationLane = AtlasConnection(timeout: 90, maxReconnects: 0) {
+            guard let sup else { throw SupervisorError.notRunning }
+            return try sup.session()
+        }
+        let api = AtlasAPI(transport: connection, control: controlLane, validation: validationLane)
+        // Read-only diagnostics never share the conversation queue or the priority stop queue.
+        let diagnostics = AtlasConnection(timeout: 3, maxReconnects: 0) {
+            guard let sup else { throw SupervisorError.notRunning }
+            return try sup.session()
+        }
+        readiness = MacTestReadinessModel(api: AtlasAPI(transport: diagnostics))
+        connectionSetup = AIConnectionSetupModel(api: AtlasAPI(transport: validationLane))
+        model = AtlasViewModel(api: api)
+        setup = ProductSetupModel(api: api)
+        voice = VoiceController(capture: NativeVoiceCapture(), output: NativeVoiceOutput())
         connection.onStateChange = { [weak model] state in
             Task { @MainActor in model?.setConnectionState(state) }
         }
@@ -56,6 +75,8 @@ final class AppController: ObservableObject {
             try await Task.detached { try sup.restart() }.value
             connection.reset()
             controlLane.reset()
+            diagnostics.reset()
+            validationLane.reset()
         }
         model.serviceStatus = { [sup] in
             guard let sup else { return "Supervisor indisponível" }
@@ -92,6 +113,7 @@ final class AppController: ObservableObject {
             }
             bootError = nil
             await model.start()
+            await setup.load()
             timer?.invalidate()
             timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
                 Task { @MainActor in await self?.model.refresh() }
@@ -105,6 +127,8 @@ final class AppController: ObservableObject {
     /// Bounded and off the main actor (A3-31). Says what had to be forced, if anything.
     func shutdown() async {
         timer?.invalidate()
+        voice.cancelRecording()
+        voice.stopSpeaking()
         guard let supervisor else { return }
         let report = await Task.detached(priority: .userInitiated) { supervisor.stop(grace: 8) }.value
         model.noteShutdown(forced: report.forced)
@@ -119,6 +143,8 @@ struct AtlasApp: App {
     var body: some Scene {
         WindowGroup("Atlas") {
             RootView().environmentObject(controller).environmentObject(controller.model)
+                .environmentObject(controller.setup).environmentObject(controller.voice)
+                .environmentObject(controller.readiness)
                 .frame(minWidth: 900, minHeight: 600)
                 .task {
                     AppDelegate.onTerminateAsync = { [weak controller] in await controller?.shutdown() }
@@ -137,6 +163,9 @@ struct AtlasApp: App {
 }
 
 struct RootView: View {
+    @State private var showTestReadiness = false
+    @State private var showAIConnection = false
+    @EnvironmentObject var setup: ProductSetupModel
     @EnvironmentObject var controller: AppController
     @EnvironmentObject var model: AtlasViewModel
 
@@ -147,6 +176,8 @@ struct RootView: View {
                 Circle().fill(model.connection == .connected ? Color.green : Color.orange).frame(width: 8, height: 8)
                 Text(model.connection.text).foregroundStyle(.secondary).font(.callout)
                 Spacer()
+                Button("Conectar IA") { showAIConnection = true }
+                Button("Preparar meu teste") { showTestReadiness = true }
                 Text("Inteligência: \(model.intelligenceText)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }.padding()
             if let boot = controller.bootError {
@@ -161,6 +192,9 @@ struct RootView: View {
             if let note = model.notice {
                 Text(note).foregroundStyle(.secondary).font(.callout).padding(.horizontal)
             }
+            if setup.loaded && !setup.completed {
+                OnboardingView()
+            } else {
             TabView {
                 ConversationView().tabItem { Text("Conversa") }
                 WorkView().tabItem { Text("Trabalho") }
@@ -168,8 +202,17 @@ struct RootView: View {
                 FilesView().tabItem { Text("Arquivos") }
                 ApprovalsView().tabItem { Text("Aprovações") }
                 SettingsView().tabItem { Text("Configurações") }
+                IdentityEditor().tabItem { Text("Identidade") }.task { await setup.load() }
+                PrivacyView().tabItem { Text("Privacidade") }.task { await setup.load() }
                 HealthView().tabItem { Text("Saúde") }
             }.padding()
+            }
+        }.sheet(isPresented: $showTestReadiness) {
+            MacTestReadinessView().environmentObject(controller.readiness)
+        }.sheet(isPresented: $showAIConnection, onDismiss: {
+            Task { await model.refresh(); await setup.load() }
+        }) {
+            AIConnectionSetupView().environmentObject(controller.connectionSetup)
         }
     }
 }
@@ -185,6 +228,7 @@ struct ConversationView: View {
 
     var body: some View {
         VStack(spacing: 8) {
+            VoiceComposer(text: $text)
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 10) {
@@ -323,13 +367,16 @@ struct ConversationView: View {
                                      UTType(filenameExtension: "docx") ?? .data,
                                      UTType(filenameExtension: "xlsx") ?? .data,
                                      UTType(filenameExtension: "pptx") ?? .data]
-        guard panel.runModal() == .OK else { return }
+        guard panel.runModal() == .OK, let url = panel.urls.first else { return }
         let urls = panel.urls
+        _ = url
         Task { await model.attach(fileURLs: urls) }
     }
 }
 
 struct Bubble: View {
+    @EnvironmentObject var voice: VoiceController
+    @EnvironmentObject var setup: ProductSetupModel
     @EnvironmentObject var model: AtlasViewModel
     let message: ChatMessage
     let preview: (String) -> Void
@@ -355,6 +402,10 @@ struct Bubble: View {
             VStack(alignment: .leading, spacing: 6) {
                 if let label { Text(label).font(.caption2).bold().foregroundStyle(.secondary) }
                 Text(message.content).textSelection(.enabled)
+                if !message.isOwner {
+                    Button("Ouvir resposta") { voice.speak(message.content, locale: setup.identity.locale) }
+                        .buttonStyle(.link).font(.caption).disabled(voice.recording)
+                }
                 HStack {
                     if message.kind == "memory", message.memoryId != nil {
                         Button("Confirmar memória") { Task { await model.confirmMemory(message) } }

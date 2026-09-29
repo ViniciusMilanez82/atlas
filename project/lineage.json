@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "main_snapshot": "942b5164d5a2dda510899cf7c8dc2b85d1848315",
+  "baseline_commit": "720be87af40ab7d94dfc756c4780800da1b1f5bd",
+  "baseline_tree": "ac5536d0d77e1837a3efac2e6a17f8dbee283515",
+  "baseline_archive_sha256": "465b6ac29e2d1307a7899aabb1f907a5c808483366c60e4d52628f645da1a47c",
+  "included_ancestors": [
+    {"pr": 6, "commit": "942b5164d5a2dda510899cf7c8dc2b85d1848315", "purpose": "main com correções R5 já integradas"},
+    {"pr": 7, "commit": "e899b7eebaca891604762cf73a08a7bf7f66ff10", "purpose": "precisão, configuração inicial, privacidade e voz revisável"},
+    {"pr": 9, "commit": "3c0aa3805cb7e88726e1ca7b97afd21c2af5f31c", "purpose": "instalador nativo Alpha"},
+    {"pr": 13, "commit": "8c6adbcc7a9aafa401b087ab1577055c6bc9e682", "purpose": "diagnóstico de teste"},
+    {"pr": 14, "commit": "720be87af40ab7d94dfc756c4780800da1b1f5bd", "purpose": "reparo de conexão com IA"}
+  ],
+  "excluded_heads": [
+    {"pr": 8, "commit": "cd6617d5ab0fe859478d5d67be5d8b52675e86fa", "reason": "Linha alternativa de configuração/voz; não misturar automaticamente com a implementação validada do PR7. Nenhum commit perdido: branch preservada."},
+    {"pr": 10, "commit": "31e9d0d0127cebd672308659d381950e5cc5a5e0", "reason": "Componente experimental sem integração Mac entregue; restrição de publicação registrada. Não copiar componente bloqueado nem usar host como alternativa."},
+    {"pr": 11, "commit": "24e713049ff43b4586115e24463a0396f19ee96e", "reason": "Compilação Mac/lint/tipos reprovados; correções bloqueadas. Não integrar, reenviar ou renomear conteúdo bloqueado."},
+    {"pr": null, "commit": "2bb3474426ddb65ac45910ae3c7e56dd303563ce", "reason": "Branch verified-procedures não contém entrega aprovada de habilidades; não é origem desta base."}
+  ],
+  "normative_backlog": "docs/spec/v2/BACKLOG_EXECUTAVEL.json",
+  "normative_scenarios": "docs/spec/v2/CENARIOS_ACEITE.json",
+  "normative_contract": "docs/spec/v2/ATLAS_CONTRATO_IMPLEMENTACAO_v2.md",
+  "unchanged_runtime": true,
+  "userdata_touched": false,
+  "foundation_allowed_changes": ["AGENTS.md", "README.md", "docs/PROGRESS.md", "project/README.md", "project/state.json", "project/lineage.json", "scripts/check_consolidation.py", "tests/regression/test_project_consolidation.py", ".github/workflows/consolidation.yml"]
+}

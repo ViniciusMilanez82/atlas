@@ -35,6 +35,7 @@ from runtime.models.context import (
     ContextOverflow,
     RequiredContextWithheld,
 )
+from runtime.models.profile import profile_context
 from runtime.models.router import BudgetedModelClient, Requirements
 from runtime.models.types import ModelRequest
 from runtime.notifications import texts
@@ -418,6 +419,7 @@ class AgentRunner:
         self, task: dict[str, Any], observations: list[Observation]
     ) -> list[ContextItem]:
         items = [ContextItem(Authority.POLICY, POLICY_SUMMARY, "policy", required=True)]
+        items.extend(profile_context(self.conn, task["employee_id"]))
         versions = self.tasks.instructions(task["task_id"])
         for v in versions:  # the owner's words, oldest first; the last revision prevails (A3-03)
             label = "CURRENT (prevails over earlier instructions)" if v is versions[-1] else "superseded context"

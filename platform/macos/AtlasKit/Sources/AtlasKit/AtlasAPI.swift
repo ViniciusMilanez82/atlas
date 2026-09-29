@@ -7,14 +7,16 @@ public final class AtlasAPI {
     /// Priority control lane (A3-04, spec 6.2): its own connection and serial queue, so "stop" is never
     /// queued behind a send, an upload, a reconnect or a slow model call on `transport`.
     public let control: AtlasTransport
+    public let validation: AtlasTransport
     /// Upload chunk: 512 KiB -> ~699 KB of base64, under the core's 700 000 character limit.
     public static let uploadChunk = 512 * 1024
     public static let readChunk = 512 * 1024
     public static let maxAttachmentBytes = 50 * 1024 * 1024
 
-    public init(transport: AtlasTransport, control: AtlasTransport? = nil) {
+    public init(transport: AtlasTransport, control: AtlasTransport? = nil, validation: AtlasTransport? = nil) {
         self.transport = transport
         self.control = control ?? transport
+        self.validation = validation ?? transport
     }
 
     private var employeeId: String { transport.employeeId ?? "" }
@@ -213,7 +215,7 @@ public final class AtlasAPI {
     }
 
     public func testIntelligence(modelId: String, maxCents: Int) async throws -> [String: Any] {
-        try await write("intelligence.check", ["model_id": modelId, "max_cost_minor": maxCents])["report"]
+        try await validation.call("intelligence.check", ["model_id": modelId, "max_cost_minor": maxCents], retrySafe: false)["report"]
             as? [String: Any] ?? [:]
     }
 

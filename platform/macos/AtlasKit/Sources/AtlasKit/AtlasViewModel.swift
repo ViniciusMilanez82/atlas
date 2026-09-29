@@ -205,6 +205,7 @@ public final class AtlasViewModel: ObservableObject {
     public private(set) var conversationId = ""
     public var restartServices: (() async throws -> Void)?
     public var serviceStatus: (() -> String)?
+    private var savedSettingsDocument: [String: Any] = [:]
     private var refreshing = false
     private var errorFromRefresh = false
     private var importQueue: [URL] = []
@@ -649,6 +650,7 @@ public final class AtlasViewModel: ObservableObject {
         form.revision = r["revision"] as? Int ?? 0
         form.priceTable = r["price_table"] as? String ?? ""
         form.pricesVerified = r["prices_verified"] as? Bool ?? false
+        savedSettingsDocument = r["settings"] as? [String: Any] ?? [:]
         if let s = r["settings"] as? [String: Any] {
             let budget = s["budget"] as? [String: Any] ?? [:]
             form.monthlyMinor = budget["monthly_limit_minor"] as? Int ?? form.monthlyMinor
@@ -671,6 +673,10 @@ public final class AtlasViewModel: ObservableObject {
         settings = form
     }
 
+    public func refreshIdentity() async {
+        await attempt { name = try await api.identity()["name"] as? String ?? name }
+    }
+
     public func registerKey(_ key: String) async {
         await attempt {
             try await api.registerKey(key)
@@ -689,7 +695,9 @@ public final class AtlasViewModel: ObservableObject {
                                             acceptReferencePrices: form.acceptReferencePrices, mode: form.mode,
                                             lightModelId: form.lightModelId, deepModelId: form.deepModelId)
         do {
-            let revision = try await api.saveSettings(doc, expectedRevision: form.revision)
+            let merged = ConfigurationMerge.intelligence(original: savedSettingsDocument, edited: doc)
+            let revision = try await api.saveSettings(merged, expectedRevision: form.revision)
+            savedSettingsDocument = merged
             settings.revision = revision
             notice = "Configurações salvas (revisão \(revision))."
             lastError = nil

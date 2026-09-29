@@ -33,6 +33,7 @@ from runtime.models.context import (
     ContextOverflow,
     RequiredContextWithheld,
 )
+from runtime.models.profile import profile_context
 from runtime.models.router import Requirements
 from runtime.models.types import ModelRequest
 from runtime.tasks.engine import TaskEngine
@@ -1085,12 +1086,13 @@ class ConversationService:
                 Authority.POLICY,
                 "You are chatting with your owner. Decide if the latest message asks "
                 "you to DO work (intent=delegate, objective=short task statement) or is conversation "
-                "(intent=chat, reply=your answer in Portuguese). Never claim to have started work; "
+                "(intent=chat, reply=your answer in the configured language). Never claim to have started work; "
                 "the system creates tasks, not you.",
                 "policy",
                 required=True,
             )
         ]
+        items.extend(profile_context(self.conn, employee_id))
         excluded = {
             r[0]
             for r in self.conn.execute(

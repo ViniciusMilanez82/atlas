@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "repository": "ViniciusMilanez82/atlas",
+  "canonical_branch": "integration/atlas-base-unificada",
+  "baseline_commit": "720be87af40ab7d94dfc756c4780800da1b1f5bd",
+  "snapshot_date": "2026-09-29",
+  "complete_product": false,
+  "scope": "Tarefa 1: consolidação da base; não implementar as tarefas 2–12 nesta mudança.",
+  "status_semantics": "implemented descreve implementação, NÃO aceite. Aceite da tarefa 1 depende do CI desta revisão; nenhuma validação real de provedor ou Mac do dono é presumida.",
+  "roles_are_running_agents": false,
+  "roles": {
+    "coordinator": "Coordenador e integrador — único responsável por conflitos, migrações compartilhadas e promoção da base.",
+    "intelligence": "Inteligência — conexão, compatibilidade, modos e custos.",
+    "tasks_policy": "Tarefas e autoridade — instruções, planos, parada, aprovações e recuperação.",
+    "memory_documents": "Memória e documentos — contexto, extração, cálculos e entregas.",
+    "workspace_browser": "Ambiente e navegador — somente após resolução das restrições aplicáveis.",
+    "identity_comms": "Contas e comunicação — identidade operacional e canal remoto.",
+    "mac_ux_voice": "Mac, experiência e voz — interface, áudio e ciclo de vida.",
+    "security_review": "Segurança independente — privacidade, isolamento, cofre e revisão.",
+    "release_qa": "Testes e distribuição — evidências, build, instalação e release."
+  },
+  "tasks": [
+    {"id": 1, "title": "Consolidar o projeto em uma única versão", "owner": "coordinator", "state": "implemented", "depends_on": [], "contract_items": ["N01"], "scenarios": [], "acceptance": "Base única; ancestralidade e ausência de alterações de runtime comprovadas; CI Linux/macOS do mesmo commit aprovado."},
+    {"id": 2, "title": "Validar a inteligência com a conta já cadastrada", "owner": "intelligence", "state": "partial", "depends_on": [1], "contract_items": ["N13", "A3-19", "A3-29"], "scenarios": ["T04", "T19", "T20", "T23", "T24", "T29"], "acceptance": "Conversa e tarefa reais autorizadas, consumo informado, limites respeitados. Chave fica no aplicativo."},
+    {"id": 3, "title": "Integrar conversa, memória, documentos e tarefas", "owner": "tasks_policy", "state": "partial", "depends_on": [1, 2], "contract_items": ["N02", "N03", "N06", "N07", "N08", "N09", "N10", "N11", "N12", "A3-01", "A3-03", "A3-04", "A3-06", "A3-07", "A3-08", "A3-09", "A3-10", "A3-11", "A3-12", "A3-13", "A3-14", "A3-15", "A3-16", "A3-18", "A3-21", "A3-22", "A3-23", "A3-24", "A3-25", "A3-27", "A3-30", "A3-32"], "scenarios": ["T03", "T04", "T05", "T06", "T07", "T08", "T09", "T10", "T11", "T12", "T13", "T14", "T15", "T16", "T17", "T18", "T19", "T20", "T22", "T23", "T27", "T30", "T31", "T32"], "acceptance": "Jornada integrada com memória após reinício, documentos completos, correção, parada e resultado verificado."},
+    {"id": 4, "title": "Entregar o computador próprio e a Execution Box", "owner": "workspace_browser", "state": "blocked", "depends_on": [1, 11], "contract_items": ["N14", "N15"], "scenarios": ["T02", "T33", "T37"], "acceptance": "Inicialização, isolamento e recuperação demonstrados no Mac. Integrações anteriormente bloqueadas exigem revisão oficial."},
+    {"id": 5, "title": "Completar navegador e Ver trabalhando", "owner": "workspace_browser", "state": "blocked", "depends_on": [4], "contract_items": ["N16"], "scenarios": ["T34", "T35"], "acceptance": "Pesquisa e navegação reais no ambiente separado, fontes verificáveis e controle humano exclusivo."},
+    {"id": 6, "title": "Implementar contas próprias e e-mail operacional", "owner": "identity_comms", "state": "not_implemented", "depends_on": [3, 4, 5, 11], "contract_items": ["N17"], "scenarios": ["T36"], "acceptance": "Conta dedicada recebe solicitação e entrega resposta com anexos/recibos e autorizações corretas."},
+    {"id": 7, "title": "Completar habilidades e solicitação de recursos", "owner": "tasks_policy", "state": "blocked", "depends_on": [3, 4, 11], "contract_items": ["N18", "N19"], "scenarios": ["T25", "T36", "T37"], "acceptance": "Proposta, testes, aprovação, reutilização, quarentena e revogação da mesma versão. Sem contornar bloqueios."},
+    {"id": 8, "title": "Completar conversa natural por voz", "owner": "mac_ux_voice", "state": "partial", "depends_on": [2, 3], "contract_items": ["N20"], "scenarios": ["T38"], "acceptance": "Conversa pelo microfone real com interrupção, correção e continuidade, sem duplicação."},
+    {"id": 9, "title": "Implementar acesso pelo celular", "owner": "identity_comms", "state": "not_implemented", "depends_on": [3, 10, 11], "contract_items": ["N21"], "scenarios": ["T18", "T39"], "acceptance": "Pareamento, envio, resultado, fila offline e revogação entre Mac e celular com criptografia."},
+    {"id": 10, "title": "Completar operação com janela fechada e recuperação", "owner": "mac_ux_voice", "state": "partial", "depends_on": [1, 3, 11], "contract_items": ["N04", "N22", "A3-05", "A3-28", "A3-31"], "scenarios": ["T01", "T02", "T07", "T21", "T22", "T28", "T31", "T40"], "acceptance": "Serviço autorizado continua com janela fechada e recupera interrupções sem duplicar ações."},
+    {"id": 11, "title": "Concluir proteção de dados e recuperação segura", "owner": "security_review", "state": "partial", "depends_on": [1], "contract_items": ["N05", "A3-02", "A3-17", "A3-20", "A3-26"], "scenarios": ["T07", "T08", "T24", "T25", "T26", "T27", "T29"], "acceptance": "Criptografia, permissões, saída de dados, exclusão e backup/restauração testados independentemente."},
+    {"id": 12, "title": "Validar conjunto e entregar instalador final", "owner": "release_qa", "state": "partial", "depends_on": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], "contract_items": ["N23", "N24"], "scenarios": ["T01", "T02", "T03", "T04", "T05", "T06", "T07", "T08", "T09", "T10", "T11", "T12", "T13", "T14", "T15", "T16", "T17", "T18", "T19", "T20", "T21", "T22", "T23", "T24", "T25", "T26", "T27", "T28", "T29", "T30", "T31", "T32", "T33", "T34", "T35", "T36", "T37", "T38", "T39", "T40"], "acceptance": "Mesma revisão passa pelos cenários T01–T40 aplicáveis, validação real e instalação/atualização com distribuição autorizada."}
+  ],
+  "write_policy": {"single_writer_per_path": true, "shared_files_owner": "coordinator", "claim_before_edit": true, "rule": "Antes de editar, registrar tarefa e caminhos exatos em active_assignments. Apenas um escritor por caminho. Sem curingas; listar cada arquivo. Mudanças compartilhadas passam pelo coordenador."},
+  "active_assignments": []
+}

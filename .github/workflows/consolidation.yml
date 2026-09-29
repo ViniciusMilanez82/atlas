@@ -1,0 +1,42 @@
+name: consolidation
+on:
+  push:
+    branches: ["integration/atlas-base-unificada"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify-foundation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify actual lineage and unchanged runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/check_consolidation.py --foundation | tee "$RUNNER_TEMP/CONSOLIDATION.json"
+      - name: Archive tracked candidate source only
+        shell: bash
+        run: |
+          set -euo pipefail
+          git archive --format=zip --prefix=Atlas/ --output="$RUNNER_TEMP/Atlas_Base_Unificada.zip" HEAD
+          git rev-parse HEAD > "$RUNNER_TEMP/SOURCE_COMMIT.txt"
+          cd "$RUNNER_TEMP"
+          sha256sum Atlas_Base_Unificada.zip > SHA256SUMS_BASE.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Atlas-Base-Unificada-source
+          path: |
+            ${{ runner.temp }}/Atlas_Base_Unificada.zip
+            ${{ runner.temp }}/SOURCE_COMMIT.txt
+            ${{ runner.temp }}/SHA256SUMS_BASE.txt
+            ${{ runner.temp }}/CONSOLIDATION.json
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,64 @@
+name: ai-connection-evidence
+on:
+  push:
+    branches: ["fix/ai-connection-setup"]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: |
+          git archive --format=zip --output="$RUNNER_TEMP/atlas-source.zip" HEAD
+          git rev-parse HEAD > "$RUNNER_TEMP/SOURCE_COMMIT.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Atlas-api-source
+          path: |
+            ${{ runner.temp }}/atlas-source.zip
+            ${{ runner.temp }}/SOURCE_COMMIT.txt
+          retention-days: 7
+  tls:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build actual embedded runtime
+        run: bash packaging/macos/build_app.sh "$RUNNER_TEMP/atlas-api-tls"
+      - name: Check public TLS endpoint without credentials or model calls
+        run: |
+          "$RUNNER_TEMP/atlas-api-tls/Atlas.app/Contents/Resources/python/bin/python3" - <<'PY'
+          import json, os, ssl, urllib.request, urllib.error
+          from pathlib import Path
+          report = {"credential_used": False, "model_called": False,
+                    "trust_roots": len(ssl.create_default_context().get_ca_certs())}
+          try:
+              urllib.request.urlopen("https://api.openai.com/v1/models", timeout=15).close()
+              report["tls"] = "verified"
+          except urllib.error.HTTPError as exc:
+              report["tls"] = "verified"
+              report["http_status"] = exc.code
+          except urllib.error.URLError as exc:
+              report["tls"] = "failed"
+              report["error_kind"] = type(exc.reason).__name__
+          except Exception as exc:
+              report["tls"] = "failed"
+              report["error_kind"] = type(exc).__name__
+          Path(os.environ["RUNNER_TEMP"], "atlas-tls.json").write_text(json.dumps(report, indent=2))
+          print(json.dumps(report))
+          if report["tls"] != "verified":
+              raise SystemExit(1)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Atlas-api-tls
+          path: ${{ runner.temp }}/atlas-tls.json
+          if-no-files-found: warn
+          retention-days: 7
