@@ -1,3 +1,16 @@
+# Índice operacional após a consolidação — 29/09/2026
+
+**Fonte única de acompanhamento: [project/state.json](../project/state.json).**
+Origem e exclusões: [project/lineage.json](../project/lineage.json).
+Guia e critérios de aceite: [project/README.md](../project/README.md).
+
+O CI do commit candidato é a evidência de compilação/testes, não a palavra `implemented` no registro.
+Nenhuma tarefa de V1 foi promovida a concluída por esta reorganização.
+O texto abaixo é o registro histórico original de 25/09, preservado integralmente; suas expressões
+como “próxima validação” se referem àquela revisão e não ao estado operacional vigente.
+
+---
+
 # ATLAS — Progresso atual
 
 Atualização: 2026-09-25. Contrato vigente: [v2 integral](spec/v2/ATLAS_CONTRATO_IMPLEMENTACAO_v2.md).

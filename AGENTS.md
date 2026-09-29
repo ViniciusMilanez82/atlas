@@ -1,3 +1,20 @@
+# Ponto de entrada da base unificada
+
+Use `project/state.json` como registro operacional único das 12 tarefas, responsáveis, dependências
+e reservas de arquivos. `project/lineage.json` registra a origem e as exclusões. Regras e contrato
+v2 abaixo permanecem válidos; o registro operacional não modifica o contrato.
+
+Antes de editar, reserve os caminhos exatos em `active_assignments`, valide com
+`python scripts/check_consolidation.py` e coordene alterações compartilhadas com o integrador.
+Não considerar responsáveis como subagentes já em execução. Nesta consolidação não há tarefas
+paralelas despachadas nem autorização nova de API, contas, pagamentos ou acesso ao Mac pessoal.
+
+PR10/11 e conteúdo com publicação bloqueada permanecem fora da base. Não contornar restrições.
+Para tarefa 1, `--foundation` exige histórico Git real e código de produção idêntico ao PR14.
+Esse modo é exclusivo da consolidação inicial, não substitui os testes das mudanças futuras.
+
+---
+
 # Regras para agentes de programação do Atlas
 
 Fonte: `docs/spec/v2/AGENTS_ATLAS.md` (contrato v2.0), adotado pela ADR-015. Não substitui o contrato

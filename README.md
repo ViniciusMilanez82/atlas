@@ -1,3 +1,15 @@
+# Base unificada de desenvolvimento do Atlas
+
+A partir desta consolidação, a branch de trabalho é **`integration/atlas-base-unificada`**.
+O estado único, os responsáveis e as dependências estão em [project/state.json](project/state.json);
+veja [o guia da consolidação](project/README.md). A especificação v2 permanece normativa.
+
+Esta mudança conclui a organização da base, condicionada ao CI do commit; **não entrega a V1**.
+As funcionalidades executáveis são as do PR14 (`720be87`), sem incluir as branches experimentais.
+A `main`, os PRs anteriores e os dados do proprietário não são alterados por esta branch.
+
+---
+
 # ATLAS — Funcionário Digital
 
 Aplicativo macOS de um funcionário digital persistente, com identidade, memória, contas e
